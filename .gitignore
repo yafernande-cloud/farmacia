@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Entorno y secretos
+.env
+.env.*
+!.env.example
+
+# Node / frontend
+node_modules/
+dist/
+
+# Archivos privados (fotos de adjuntos, volcados de datos)
+/uploads/
+*.dump
+
+# SO / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Fotografías recibidas (privadas)
+.storage/
+
+# Respaldos de la base (contienen datos)
+.backups/

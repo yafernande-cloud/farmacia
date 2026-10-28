@@ -1,0 +1,4575 @@
+{
+ "openapi": "3.1.0",
+ "info": {
+  "title": "Farmacia Parque Lantaño — Asistente de Compras",
+  "version": "0.1.0"
+ },
+ "paths": {
+  "/api/v1/health": {
+   "get": {
+    "tags": [
+     "salud"
+    ],
+    "summary": "Liveness",
+    "description": "Liveness: el proceso responde. No toca la base de datos.",
+    "operationId": "liveness_api_v1_health_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object",
+         "title": "Response Liveness Api V1 Health Get"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/health/ready": {
+   "get": {
+    "tags": [
+     "salud"
+    ],
+    "summary": "Readiness",
+    "description": "Readiness: dependencias críticas. Informa honestamente si la base no responde.",
+    "operationId": "readiness_api_v1_health_ready_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object",
+         "title": "Response Readiness Api V1 Health Ready Get"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/me": {
+   "get": {
+    "tags": [
+     "faltantes"
+    ],
+    "summary": "Identidad activa",
+    "operationId": "me_api_v1_me_get",
+    "parameters": [
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MeOut"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/demand-items": {
+   "get": {
+    "tags": [
+     "faltantes"
+    ],
+    "summary": "Lista compartida de faltantes (paginada por cursor)",
+    "operationId": "list_demand_items_api_v1_demand_items_get",
+    "parameters": [
+     {
+      "name": "status",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "string",
+       "pattern": "^(active|cancelled|fulfilled)$",
+       "default": "active",
+       "title": "Status"
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 200,
+       "minimum": 1,
+       "default": 50,
+       "title": "Limit"
+      }
+     },
+     {
+      "name": "cursor",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Cursor"
+      }
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DemandItemList"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/demand-items/{item_id}": {
+   "get": {
+    "tags": [
+     "faltantes"
+    ],
+    "summary": "Detalle: observaciones e historial de cantidad",
+    "operationId": "get_demand_item_api_v1_demand_items__item_id__get",
+    "parameters": [
+     {
+      "name": "item_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Item Id"
+      }
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DemandItemDetail"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/observations": {
+   "post": {
+    "tags": [
+     "faltantes"
+    ],
+    "summary": "Registrar un aviso de faltante (deduplica; nunca suma cantidades)",
+    "operationId": "create_observation_api_v1_observations_post",
+    "parameters": [
+     {
+      "name": "Idempotency-Key",
+      "in": "header",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "minLength": 8,
+       "maxLength": 128,
+       "description": "Repetir la misma clave y contenido devuelve el resultado original.",
+       "title": "Idempotency-Key"
+      },
+      "description": "Repetir la misma clave y contenido devuelve el resultado original."
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ObservationIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ObservationResultOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   },
+   "get": {
+    "tags": [
+     "faltantes"
+    ],
+    "summary": "Avisos pendientes de revisión",
+    "operationId": "pending_observations_api_v1_observations_get",
+    "parameters": [
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 200,
+       "minimum": 1,
+       "default": 50,
+       "title": "Limit"
+      }
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/ObservationOut"
+         },
+         "title": "Response Pending Observations Api V1 Observations Get"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/observations/{observation_id}/resolve": {
+   "post": {
+    "tags": [
+     "faltantes"
+    ],
+    "summary": "Resolver una coincidencia dudosa (nunca une productos incompatibles)",
+    "operationId": "resolve_observation_api_v1_observations__observation_id__resolve_post",
+    "parameters": [
+     {
+      "name": "observation_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Observation Id"
+      }
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ResolveIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ObservationResultOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/demand-items/{item_id}/quantity-commands": {
+   "post": {
+    "tags": [
+     "faltantes"
+    ],
+    "summary": "SET / ADD / CLEAR con If-Match e Idempotency-Key",
+    "operationId": "quantity_command_api_v1_demand_items__item_id__quantity_commands_post",
+    "parameters": [
+     {
+      "name": "item_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Item Id"
+      }
+     },
+     {
+      "name": "Idempotency-Key",
+      "in": "header",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "minLength": 8,
+       "maxLength": 128,
+       "description": "Repetir la misma clave y contenido devuelve el resultado original.",
+       "title": "Idempotency-Key"
+      },
+      "description": "Repetir la misma clave y contenido devuelve el resultado original."
+     },
+     {
+      "name": "If-Match",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Versión actual, p. ej. \"7\"",
+       "title": "If-Match"
+      },
+      "description": "Versión actual, p. ej. \"7\""
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/QuantityCommandIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/QuantityResultOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/demand-items/{item_id}/resolve": {
+   "post": {
+    "tags": [
+     "faltantes"
+    ],
+    "summary": "Confirmar unidad, forma, contenido… de una necesidad (If-Match)",
+    "operationId": "confirm_attributes_api_v1_demand_items__item_id__resolve_post",
+    "parameters": [
+     {
+      "name": "item_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Item Id"
+      }
+     },
+     {
+      "name": "If-Match",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Versión actual, p. ej. \"7\"",
+       "title": "If-Match"
+      },
+      "description": "Versión actual, p. ej. \"7\""
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ConfirmAttributesIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DemandItemOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/product-aliases": {
+   "get": {
+    "tags": [
+     "faltantes",
+     "memoria verificada"
+    ],
+    "summary": "Aliases confirmados por una persona (revisables)",
+    "operationId": "product_aliases_api_v1_product_aliases_get",
+    "parameters": [
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/AliasOut"
+         },
+         "title": "Response Product Aliases Api V1 Product Aliases Get"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "catálogo verificado y canal"
+    ],
+    "summary": "Crear un alias de expresión («la D» = «vitamina d»)",
+    "operationId": "create_alias_api_v1_product_aliases_post",
+    "parameters": [
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ExpressionAliasIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/product-aliases/{alias_id}/deactivate": {
+   "post": {
+    "tags": [
+     "faltantes",
+     "memoria verificada"
+    ],
+    "summary": "Desactivar un alias",
+    "operationId": "deactivate_alias_api_v1_product_aliases__alias_id__deactivate_post",
+    "parameters": [
+     {
+      "name": "alias_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Alias Id"
+      }
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AliasOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/pharma-identities": {
+   "post": {
+    "tags": [
+     "catálogo verificado y canal"
+    ],
+    "summary": "Registrar una identidad farmacéutica verificada",
+    "operationId": "create_pharma_identity_api_v1_pharma_identities_post",
+    "parameters": [
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PharmaIdentityIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/commercial-references": {
+   "post": {
+    "tags": [
+     "catálogo verificado y canal"
+    ],
+    "summary": "Registrar una referencia comercial verificada (marca + laboratorio → identidad)",
+    "operationId": "create_commercial_reference_api_v1_commercial_references_post",
+    "parameters": [
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CommercialReferenceIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/catalog": {
+   "get": {
+    "tags": [
+     "catálogo verificado y canal"
+    ],
+    "summary": "Catálogo verificado de la farmacia",
+    "operationId": "get_catalog_api_v1_catalog_get",
+    "parameters": [
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/attachments": {
+   "get": {
+    "tags": [
+     "catálogo verificado y canal"
+    ],
+    "summary": "Fotos recibidas y su estado de procesamiento",
+    "operationId": "list_attachments_api_v1_attachments_get",
+    "parameters": [
+     {
+      "name": "status",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Status"
+      }
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/AttachmentOut"
+         },
+         "title": "Response List Attachments Api V1 Attachments Get"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/channel/status": {
+   "get": {
+    "tags": [
+     "catálogo verificado y canal"
+    ],
+    "summary": "Canal: quién reporta, pendientes de atribución, fotos por estado",
+    "operationId": "channel_status_api_v1_channel_status_get",
+    "parameters": [
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/staff": {
+   "get": {
+    "tags": [
+     "personal"
+    ],
+    "summary": "Listado COMPLETO del personal (incluye no disponibles y desactivadas)",
+    "operationId": "list_staff_api_v1_staff_get",
+    "parameters": [
+     {
+      "name": "include_inactive",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "boolean",
+       "default": true,
+       "title": "Include Inactive"
+      }
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/StaffOut"
+         },
+         "title": "Response List Staff Api V1 Staff Get"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "personal"
+    ],
+    "summary": "Crear una persona",
+    "operationId": "create_staff_api_v1_staff_post",
+    "parameters": [
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/StaffCreateIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StaffOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/staff/{user_id}": {
+   "patch": {
+    "tags": [
+     "personal"
+    ],
+    "summary": "Cambiar el nombre visible (la autoría histórica no cambia)",
+    "operationId": "rename_staff_api_v1_staff__user_id__patch",
+    "parameters": [
+     {
+      "name": "user_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "User Id"
+      }
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/StaffRenameIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StaffOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/staff/{user_id}/deactivate": {
+   "post": {
+    "tags": [
+     "personal"
+    ],
+    "summary": "Desactivar (no elimina; cierra sus sesiones)",
+    "operationId": "deactivate_api_v1_staff__user_id__deactivate_post",
+    "parameters": [
+     {
+      "name": "user_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "User Id"
+      }
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StaffChangeOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/staff/{user_id}/activate": {
+   "post": {
+    "tags": [
+     "personal"
+    ],
+    "summary": "Reactivar",
+    "operationId": "activate_api_v1_staff__user_id__activate_post",
+    "parameters": [
+     {
+      "name": "user_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "User Id"
+      }
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StaffChangeOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/staff/{user_id}/availability": {
+   "put": {
+    "tags": [
+     "personal"
+    ],
+    "summary": "Marcar disponibilidad para reportar (vacaciones, licencia, día libre u otro)",
+    "operationId": "availability_api_v1_staff__user_id__availability_put",
+    "parameters": [
+     {
+      "name": "user_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "User Id"
+      }
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AvailabilityIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/StaffChangeOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/integrations/telegram/webhook": {
+   "post": {
+    "tags": [
+     "telegram"
+    ],
+    "summary": "Webhook de Telegram (solo con TELEGRAM_BOT_TOKEN y TELEGRAM_WEBHOOK_SECRET)",
+    "operationId": "telegram_webhook_api_v1_integrations_telegram_webhook_post",
+    "parameters": [
+     {
+      "name": "x-telegram-bot-api-secret-token",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Telegram-Bot-Api-Secret-Token"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "components": {
+  "schemas": {
+   "AbsenceReason": {
+    "type": "string",
+    "enum": [
+     "vacation",
+     "sick_leave",
+     "day_off",
+     "other"
+    ],
+    "title": "AbsenceReason"
+   },
+   "AliasOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "ingredient": {
+      "type": "string",
+      "title": "Ingredient"
+     },
+     "source_value": {
+      "type": "string",
+      "title": "Source Value"
+     },
+     "assignment": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Assignment"
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "ingredient",
+     "source_value",
+     "assignment",
+     "status",
+     "created_at"
+    ],
+    "title": "AliasOut"
+   },
+   "AttachmentOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "extraction_mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Extraction Mode"
+     },
+     "vision_provider": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Vision Provider"
+     },
+     "uncertainties": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Uncertainties"
+     },
+     "caption": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Caption"
+     },
+     "mime_type": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mime Type"
+     },
+     "data_origin": {
+      "type": "string",
+      "title": "Data Origin"
+     },
+     "extraction_provenance": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Extraction Provenance"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "duplicate_of_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Duplicate Of Id"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "status",
+     "extraction_mode",
+     "vision_provider",
+     "uncertainties",
+     "caption",
+     "mime_type",
+     "data_origin",
+     "created_at"
+    ],
+    "title": "AttachmentOut"
+   },
+   "AttributesOut": {
+    "properties": {
+     "strengths": {
+      "items": {
+       "$ref": "#/components/schemas/StrengthOut"
+      },
+      "type": "array",
+      "title": "Strengths"
+     },
+     "content": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ContentOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "form": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/TextAttrOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "packaging": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/TextAttrOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "release": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/TextAttrOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "unassigned": {
+      "items": {
+       "$ref": "#/components/schemas/MeasureOut"
+      },
+      "type": "array",
+      "title": "Unassigned",
+      "description": "Medidas sin unidad o sin rol: pendientes"
+     },
+     "pending_validation": {
+      "items": {
+       "$ref": "#/components/schemas/PendingOut"
+      },
+      "type": "array",
+      "title": "Pending Validation"
+     },
+     "identity_complete": {
+      "type": "boolean",
+      "title": "Identity Complete"
+     },
+     "identity": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Identity",
+      "description": "Identidad farmacéutica (principio+potencia+forma) y comercial (marca, laboratorio, fabricante, titular, comercializador, GTIN, registro) por separado, con procedencia. null = desconocido"
+     }
+    },
+    "type": "object",
+    "required": [
+     "strengths",
+     "content",
+     "form",
+     "packaging",
+     "release",
+     "unassigned",
+     "pending_validation",
+     "identity_complete",
+     "identity"
+    ],
+    "title": "AttributesOut",
+    "description": "Potencia, contenido y presentación SEPARADOS, cada uno con su procedencia."
+   },
+   "AvailabilityIn": {
+    "properties": {
+     "available": {
+      "type": "boolean",
+      "title": "Available"
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/AbsenceReason"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Obligatorio si available=false"
+     },
+     "note": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 200
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Note"
+     }
+    },
+    "type": "object",
+    "required": [
+     "available"
+    ],
+    "title": "AvailabilityIn"
+   },
+   "Candidate": {
+    "properties": {
+     "demand_item_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Demand Item Id"
+     },
+     "display_name": {
+      "type": "string",
+      "title": "Display Name"
+     },
+     "relation": {
+      "type": "string",
+      "title": "Relation"
+     },
+     "reasons": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Reasons",
+      "description": "Por qué no se asoció sola (p. ej. unit_unconfirmed)",
+      "default": []
+     }
+    },
+    "type": "object",
+    "required": [
+     "demand_item_id",
+     "display_name",
+     "relation"
+    ],
+    "title": "Candidate"
+   },
+   "CommercialReferenceIn": {
+    "properties": {
+     "brand": {
+      "type": "string",
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Brand",
+      "examples": [
+       "Migranol"
+      ]
+     },
+     "laboratory": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 200
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Laboratory",
+      "examples": [
+       "Laboratorio Bagó de Chile S.A."
+      ]
+     },
+     "pharma_identity_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Pharma Identity Id",
+      "description": "null = principio activo aún desconocido"
+     },
+     "form": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Form"
+     },
+     "content_text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Content Text",
+      "examples": [
+       "10 comprimidos"
+      ]
+     },
+     "gtin": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 14
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Gtin"
+     },
+     "sanitary_registration": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sanitary Registration"
+     }
+    },
+    "type": "object",
+    "required": [
+     "brand"
+    ],
+    "title": "CommercialReferenceIn"
+   },
+   "ConfirmAttributesIn": {
+    "properties": {
+     "ingredient": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 200
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ingredient",
+      "description": "Principio activo confirmado (reemplaza un ancla por marca)."
+     },
+     "strengths": {
+      "anyOf": [
+       {
+        "items": {
+         "$ref": "#/components/schemas/MeasureIn"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Strengths",
+      "description": "Reemplaza las potencias."
+     },
+     "form": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 30
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Form",
+      "examples": [
+       "comprimido"
+      ]
+     },
+     "content": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/MeasureIn"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Contenido: unit 'un' = unidades."
+     },
+     "release": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 30
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Release"
+     },
+     "packaging": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 30
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Packaging"
+     },
+     "confirm_inferred": {
+      "items": {
+       "type": "string",
+       "enum": [
+        "strength",
+        "form",
+        "content",
+        "packaging",
+        "release"
+       ]
+      },
+      "type": "array",
+      "title": "Confirm Inferred",
+      "description": "Pasa a confirmado lo que el sistema había deducido, sin cambiarlo.",
+      "default": []
+     },
+     "remember_alias": {
+      "type": "boolean",
+      "title": "Remember Alias",
+      "default": false
+     }
+    },
+    "type": "object",
+    "title": "ConfirmAttributesIn",
+    "description": "Lo que la persona autorizada confirma. Cada campo entregado queda como CONFIRMADO."
+   },
+   "ContentOut": {
+    "properties": {
+     "label": {
+      "type": "string",
+      "title": "Label",
+      "description": "Como se escribió, con unidad canónica"
+     },
+     "as_written": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "As Written",
+      "description": "value/unit/per_value/per_unit/original_text tal como se dijo"
+     },
+     "normalized": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/NormalizedOut"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Solo para comparar; null si no hay unidad"
+     },
+     "basis": {
+      "type": "string",
+      "enum": [
+       "explicit",
+       "inferred",
+       "confirmed"
+      ],
+      "title": "Basis"
+     }
+    },
+    "type": "object",
+    "required": [
+     "label",
+     "as_written",
+     "normalized",
+     "basis"
+    ],
+    "title": "ContentOut"
+   },
+   "DemandItemDetail": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "display_name": {
+      "type": "string",
+      "title": "Display Name"
+     },
+     "ingredient": {
+      "type": "string",
+      "title": "Ingredient"
+     },
+     "attributes": {
+      "$ref": "#/components/schemas/AttributesOut"
+     },
+     "identity_complete": {
+      "type": "boolean",
+      "title": "Identity Complete"
+     },
+     "pending_validation": {
+      "items": {
+       "$ref": "#/components/schemas/PendingOut"
+      },
+      "type": "array",
+      "title": "Pending Validation"
+     },
+     "target_quantity": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Target Quantity",
+      "description": "null = cantidad desconocida (no 0 ni 1)"
+     },
+     "quantity_unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Quantity Unit"
+     },
+     "quantity_status": {
+      "type": "string",
+      "enum": [
+       "unknown",
+       "defined"
+      ],
+      "title": "Quantity Status"
+     },
+     "needs_quantity": {
+      "type": "boolean",
+      "title": "Needs Quantity"
+     },
+     "data_origin": {
+      "type": "string",
+      "title": "Data Origin",
+      "description": "simulated | captured | ai_derived | unclassified",
+      "default": "unclassified"
+     },
+     "suggestions": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Suggestions",
+      "description": "Candidatos de catálogo verificado para medidas sin unidad. Solo sugieren: nada está confirmado.",
+      "default": []
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "version": {
+      "type": "integer",
+      "title": "Version"
+     },
+     "observation_count": {
+      "type": "integer",
+      "title": "Observation Count"
+     },
+     "reporters": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Reporters"
+     },
+     "last_observed_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Last Observed At"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "observations": {
+      "items": {
+       "$ref": "#/components/schemas/ObservationOut"
+      },
+      "type": "array",
+      "title": "Observations"
+     },
+     "quantity_events": {
+      "items": {
+       "$ref": "#/components/schemas/QuantityEventOut"
+      },
+      "type": "array",
+      "title": "Quantity Events"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "display_name",
+     "ingredient",
+     "attributes",
+     "identity_complete",
+     "pending_validation",
+     "target_quantity",
+     "quantity_unit",
+     "quantity_status",
+     "needs_quantity",
+     "status",
+     "version",
+     "observation_count",
+     "reporters",
+     "last_observed_at",
+     "created_at",
+     "observations",
+     "quantity_events"
+    ],
+    "title": "DemandItemDetail"
+   },
+   "DemandItemList": {
+    "properties": {
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/DemandItemOut"
+      },
+      "type": "array",
+      "title": "Items"
+     },
+     "next_cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Next Cursor"
+     },
+     "pending_review_count": {
+      "type": "integer",
+      "title": "Pending Review Count"
+     }
+    },
+    "type": "object",
+    "required": [
+     "items",
+     "next_cursor",
+     "pending_review_count"
+    ],
+    "title": "DemandItemList"
+   },
+   "DemandItemOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "display_name": {
+      "type": "string",
+      "title": "Display Name"
+     },
+     "ingredient": {
+      "type": "string",
+      "title": "Ingredient"
+     },
+     "attributes": {
+      "$ref": "#/components/schemas/AttributesOut"
+     },
+     "identity_complete": {
+      "type": "boolean",
+      "title": "Identity Complete"
+     },
+     "pending_validation": {
+      "items": {
+       "$ref": "#/components/schemas/PendingOut"
+      },
+      "type": "array",
+      "title": "Pending Validation"
+     },
+     "target_quantity": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Target Quantity",
+      "description": "null = cantidad desconocida (no 0 ni 1)"
+     },
+     "quantity_unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Quantity Unit"
+     },
+     "quantity_status": {
+      "type": "string",
+      "enum": [
+       "unknown",
+       "defined"
+      ],
+      "title": "Quantity Status"
+     },
+     "needs_quantity": {
+      "type": "boolean",
+      "title": "Needs Quantity"
+     },
+     "data_origin": {
+      "type": "string",
+      "title": "Data Origin",
+      "description": "simulated | captured | ai_derived | unclassified",
+      "default": "unclassified"
+     },
+     "suggestions": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Suggestions",
+      "description": "Candidatos de catálogo verificado para medidas sin unidad. Solo sugieren: nada está confirmado.",
+      "default": []
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "version": {
+      "type": "integer",
+      "title": "Version"
+     },
+     "observation_count": {
+      "type": "integer",
+      "title": "Observation Count"
+     },
+     "reporters": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Reporters"
+     },
+     "last_observed_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Last Observed At"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "display_name",
+     "ingredient",
+     "attributes",
+     "identity_complete",
+     "pending_validation",
+     "target_quantity",
+     "quantity_unit",
+     "quantity_status",
+     "needs_quantity",
+     "status",
+     "version",
+     "observation_count",
+     "reporters",
+     "last_observed_at",
+     "created_at"
+    ],
+    "title": "DemandItemOut"
+   },
+   "ErrorBody": {
+    "properties": {
+     "code": {
+      "type": "string",
+      "title": "Code"
+     },
+     "message": {
+      "type": "string",
+      "title": "Message"
+     },
+     "correlation_id": {
+      "type": "string",
+      "title": "Correlation Id"
+     },
+     "details": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Details",
+      "default": {}
+     }
+    },
+    "type": "object",
+    "required": [
+     "code",
+     "message",
+     "correlation_id"
+    ],
+    "title": "ErrorBody"
+   },
+   "ErrorResponse": {
+    "properties": {
+     "error": {
+      "$ref": "#/components/schemas/ErrorBody"
+     }
+    },
+    "type": "object",
+    "required": [
+     "error"
+    ],
+    "title": "ErrorResponse"
+   },
+   "ExpressionAliasIn": {
+    "properties": {
+     "phrase": {
+      "type": "string",
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Phrase",
+      "examples": [
+       "la D"
+      ]
+     },
+     "ingredient": {
+      "type": "string",
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Ingredient",
+      "examples": [
+       "vitamina d"
+      ]
+     }
+    },
+    "type": "object",
+    "required": [
+     "phrase",
+     "ingredient"
+    ],
+    "title": "ExpressionAliasIn"
+   },
+   "HTTPValidationError": {
+    "properties": {
+     "detail": {
+      "items": {
+       "$ref": "#/components/schemas/ValidationError"
+      },
+      "type": "array",
+      "title": "Detail"
+     }
+    },
+    "type": "object",
+    "title": "HTTPValidationError"
+   },
+   "MeOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "display_name": {
+      "type": "string",
+      "title": "Display Name"
+     },
+     "roles": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Roles"
+     },
+     "organization_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Organization Id"
+     },
+     "identity_level": {
+      "type": "string",
+      "const": "declared",
+      "title": "Identity Level",
+      "default": "declared"
+     },
+     "organization_kind": {
+      "type": "string",
+      "title": "Organization Kind",
+      "description": "simulation | real_test | production | legacy_mixed"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "display_name",
+     "roles",
+     "organization_id",
+     "organization_kind"
+    ],
+    "title": "MeOut"
+   },
+   "MeasureIn": {
+    "properties": {
+     "value": {
+      "anyOf": [
+       {
+        "type": "number",
+        "exclusiveMinimum": 0.0
+       },
+       {
+        "type": "string"
+       }
+      ],
+      "title": "Value",
+      "examples": [
+       "400"
+      ]
+     },
+     "unit": {
+      "type": "string",
+      "maxLength": 20,
+      "minLength": 1,
+      "title": "Unit",
+      "examples": [
+       "mg",
+       "mg/5 ml",
+       "%",
+       "UI"
+      ]
+     }
+    },
+    "type": "object",
+    "required": [
+     "value",
+     "unit"
+    ],
+    "title": "MeasureIn"
+   },
+   "MeasureOut": {
+    "properties": {
+     "label": {
+      "type": "string",
+      "title": "Label",
+      "description": "Como se escribió, con unidad canónica"
+     },
+     "as_written": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "As Written",
+      "description": "value/unit/per_value/per_unit/original_text tal como se dijo"
+     },
+     "normalized": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/NormalizedOut"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Solo para comparar; null si no hay unidad"
+     }
+    },
+    "type": "object",
+    "required": [
+     "label",
+     "as_written",
+     "normalized"
+    ],
+    "title": "MeasureOut"
+   },
+   "NormalizedOut": {
+    "properties": {
+     "dimension": {
+      "type": "string",
+      "title": "Dimension"
+     },
+     "value": {
+      "type": "string",
+      "title": "Value"
+     },
+     "unit": {
+      "type": "string",
+      "title": "Unit"
+     }
+    },
+    "type": "object",
+    "required": [
+     "dimension",
+     "value",
+     "unit"
+    ],
+    "title": "NormalizedOut"
+   },
+   "ObservationIn": {
+    "properties": {
+     "text": {
+      "type": "string",
+      "maxLength": 500,
+      "minLength": 2,
+      "title": "Text",
+      "examples": [
+       "falta ibuprofeno de 400"
+      ]
+     },
+     "declared_quantity": {
+      "anyOf": [
+       {
+        "type": "number",
+        "exclusiveMinimum": 0.0
+       },
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Declared Quantity",
+      "description": "Sugerencia del declarante. NUNCA se aplica al objetivo."
+     },
+     "declared_unit": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/QuantityUnit"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "type": "object",
+    "required": [
+     "text"
+    ],
+    "title": "ObservationIn"
+   },
+   "ObservationOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "demand_item_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Demand Item Id"
+     },
+     "author": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Author"
+     },
+     "raw_text": {
+      "type": "string",
+      "title": "Raw Text"
+     },
+     "declared_quantity": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Declared Quantity"
+     },
+     "declared_unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Declared Unit"
+     },
+     "match_status": {
+      "type": "string",
+      "title": "Match Status"
+     },
+     "candidates": {
+      "items": {
+       "$ref": "#/components/schemas/Candidate"
+      },
+      "type": "array",
+      "title": "Candidates",
+      "default": []
+     },
+     "attributes": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/AttributesOut"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Lo interpretado de este aviso"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "demand_item_id",
+     "raw_text",
+     "declared_quantity",
+     "declared_unit",
+     "match_status",
+     "created_at"
+    ],
+    "title": "ObservationOut"
+   },
+   "ObservationResultOut": {
+    "properties": {
+     "outcome": {
+      "type": "string",
+      "enum": [
+       "created_item",
+       "attached_existing",
+       "needs_review",
+       "resolved_manual"
+      ],
+      "title": "Outcome"
+     },
+     "replayed": {
+      "type": "boolean",
+      "title": "Replayed"
+     },
+     "quantity_changed": {
+      "type": "boolean",
+      "const": false,
+      "title": "Quantity Changed",
+      "description": "Un aviso nunca cambia la cantidad (HLD inv. 1).",
+      "default": false
+     },
+     "message": {
+      "type": "string",
+      "title": "Message"
+     },
+     "pending_validation": {
+      "items": {
+       "$ref": "#/components/schemas/PendingOut"
+      },
+      "type": "array",
+      "title": "Pending Validation",
+      "description": "Qué falta o no está confirmado. El aviso ya quedó registrado: no es una pregunta."
+     },
+     "alias_created": {
+      "type": "boolean",
+      "title": "Alias Created",
+      "default": false
+     },
+     "observation": {
+      "$ref": "#/components/schemas/ObservationOut"
+     },
+     "item": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/DemandItemOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "type": "object",
+    "required": [
+     "outcome",
+     "replayed",
+     "message",
+     "pending_validation",
+     "observation",
+     "item"
+    ],
+    "title": "ObservationResultOut"
+   },
+   "PendingOut": {
+    "properties": {
+     "attribute": {
+      "type": "string",
+      "title": "Attribute"
+     },
+     "reason": {
+      "type": "string",
+      "enum": [
+       "not_stated",
+       "unit_not_stated",
+       "role_not_stated",
+       "inferred_needs_confirmation"
+      ],
+      "title": "Reason"
+     },
+     "value": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Value"
+     }
+    },
+    "type": "object",
+    "required": [
+     "attribute",
+     "reason"
+    ],
+    "title": "PendingOut"
+   },
+   "PharmaIdentityIn": {
+    "properties": {
+     "text": {
+      "type": "string",
+      "maxLength": 200,
+      "minLength": 3,
+      "title": "Text",
+      "examples": [
+       "vitamina d 50000 UI cápsulas"
+      ]
+     }
+    },
+    "type": "object",
+    "required": [
+     "text"
+    ],
+    "title": "PharmaIdentityIn"
+   },
+   "QuantityCommandIn": {
+    "properties": {
+     "operation": {
+      "$ref": "#/components/schemas/QuantityOp"
+     },
+     "value": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Value",
+      "examples": [
+       "5"
+      ]
+     },
+     "unit": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/QuantityUnit"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 300
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     }
+    },
+    "type": "object",
+    "required": [
+     "operation"
+    ],
+    "title": "QuantityCommandIn"
+   },
+   "QuantityEventOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "operation": {
+      "type": "string",
+      "title": "Operation"
+     },
+     "value": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Value"
+     },
+     "unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Unit"
+     },
+     "before_value": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Before Value"
+     },
+     "before_unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Before Unit"
+     },
+     "after_value": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "After Value"
+     },
+     "after_unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "After Unit"
+     },
+     "version_after": {
+      "type": "integer",
+      "title": "Version After"
+     },
+     "actor": {
+      "type": "string",
+      "title": "Actor"
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "operation",
+     "value",
+     "unit",
+     "before_value",
+     "before_unit",
+     "after_value",
+     "after_unit",
+     "version_after",
+     "actor",
+     "reason",
+     "created_at"
+    ],
+    "title": "QuantityEventOut"
+   },
+   "QuantityOp": {
+    "type": "string",
+    "enum": [
+     "SET",
+     "ADD",
+     "CLEAR"
+    ],
+    "title": "QuantityOp"
+   },
+   "QuantityResultOut": {
+    "properties": {
+     "replayed": {
+      "type": "boolean",
+      "title": "Replayed"
+     },
+     "previous_quantity": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Previous Quantity"
+     },
+     "previous_unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Previous Unit"
+     },
+     "item": {
+      "$ref": "#/components/schemas/DemandItemOut"
+     },
+     "event": {
+      "$ref": "#/components/schemas/QuantityEventOut"
+     }
+    },
+    "type": "object",
+    "required": [
+     "replayed",
+     "previous_quantity",
+     "previous_unit",
+     "item",
+     "event"
+    ],
+    "title": "QuantityResultOut"
+   },
+   "QuantityUnit": {
+    "type": "string",
+    "enum": [
+     "box",
+     "package",
+     "unit",
+     "bottle"
+    ],
+    "title": "QuantityUnit"
+   },
+   "ResolveIn": {
+    "properties": {
+     "demand_item_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Demand Item Id"
+     },
+     "create_new": {
+      "type": "boolean",
+      "title": "Create New",
+      "default": false
+     },
+     "apply_observed_attributes": {
+      "type": "boolean",
+      "title": "Apply Observed Attributes",
+      "description": "Confirma en la necesidad los datos explícitos del aviso que ella no tenía (p. ej. la unidad). Solo toma lo que el aviso escribió; no completa nada más.",
+      "default": false
+     },
+     "remember_alias": {
+      "type": "boolean",
+      "title": "Remember Alias",
+      "description": "Recuerda «cifra sin unidad = lo confirmado» para ese principio activo.",
+      "default": false
+     }
+    },
+    "type": "object",
+    "title": "ResolveIn"
+   },
+   "SessionState": {
+    "properties": {
+     "active": {
+      "type": "boolean",
+      "title": "Active",
+      "description": "¿Está reportando AHORA en un chat de Telegram? (deriva de la sesión)"
+     },
+     "expires_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expires At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "active",
+     "expires_at"
+    ],
+    "title": "SessionState"
+   },
+   "StaffChangeOut": {
+    "properties": {
+     "staff": {
+      "$ref": "#/components/schemas/StaffOut"
+     },
+     "sessions_revoked": {
+      "type": "integer",
+      "title": "Sessions Revoked",
+      "description": "Sesiones de Telegram que se cerraron por este cambio"
+     }
+    },
+    "type": "object",
+    "required": [
+     "staff",
+     "sessions_revoked"
+    ],
+    "title": "StaffChangeOut"
+   },
+   "StaffCreateIn": {
+    "properties": {
+     "display_name": {
+      "type": "string",
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Display Name",
+      "examples": [
+       "María"
+      ]
+     },
+     "roles": {
+      "items": {
+       "type": "string",
+       "enum": [
+        "auxiliary",
+        "purchasing",
+        "approver",
+        "admin"
+       ]
+      },
+      "type": "array",
+      "title": "Roles",
+      "default": [
+       "auxiliary"
+      ]
+     }
+    },
+    "type": "object",
+    "required": [
+     "display_name"
+    ],
+    "title": "StaffCreateIn"
+   },
+   "StaffOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "display_name": {
+      "type": "string",
+      "title": "Display Name"
+     },
+     "roles": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Roles"
+     },
+     "member_active": {
+      "type": "boolean",
+      "title": "Member Active",
+      "description": "PERTENECE a la farmacia (desactivar no elimina historial)"
+     },
+     "available": {
+      "type": "boolean",
+      "title": "Available",
+      "description": "DISPONIBLE para reportar (no está de vacaciones, con licencia, etc.)"
+     },
+     "absence_reason": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/AbsenceReason"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "absence_label": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Absence Label"
+     },
+     "absence_note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Absence Note"
+     },
+     "unavailable_since": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Unavailable Since"
+     },
+     "can_report": {
+      "type": "boolean",
+      "title": "Can Report",
+      "description": "activa Y disponible Y con rol que permite reportar: aparece en los botones"
+     },
+     "telegram_session": {
+      "$ref": "#/components/schemas/SessionState"
+     },
+     "observations_authored": {
+      "type": "integer",
+      "title": "Observations Authored",
+      "description": "Con historial no se elimina nunca"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Updated At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "display_name",
+     "roles",
+     "member_active",
+     "available",
+     "absence_reason",
+     "absence_label",
+     "absence_note",
+     "unavailable_since",
+     "can_report",
+     "telegram_session",
+     "observations_authored",
+     "created_at",
+     "updated_at"
+    ],
+    "title": "StaffOut"
+   },
+   "StaffRenameIn": {
+    "properties": {
+     "display_name": {
+      "type": "string",
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Display Name"
+     }
+    },
+    "type": "object",
+    "required": [
+     "display_name"
+    ],
+    "title": "StaffRenameIn"
+   },
+   "StrengthOut": {
+    "properties": {
+     "label": {
+      "type": "string",
+      "title": "Label",
+      "description": "Como se escribió, con unidad canónica"
+     },
+     "as_written": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "As Written",
+      "description": "value/unit/per_value/per_unit/original_text tal como se dijo"
+     },
+     "normalized": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/NormalizedOut"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Solo para comparar; null si no hay unidad"
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "amount_per_unit",
+       "concentration"
+      ],
+      "title": "Kind"
+     },
+     "basis": {
+      "type": "string",
+      "enum": [
+       "explicit",
+       "inferred",
+       "confirmed"
+      ],
+      "title": "Basis"
+     },
+     "role_rule": {
+      "type": "string",
+      "title": "Role Rule"
+     }
+    },
+    "type": "object",
+    "required": [
+     "label",
+     "as_written",
+     "normalized",
+     "kind",
+     "basis",
+     "role_rule"
+    ],
+    "title": "StrengthOut"
+   },
+   "TextAttrOut": {
+    "properties": {
+     "value": {
+      "type": "string",
+      "title": "Value"
+     },
+     "basis": {
+      "type": "string",
+      "enum": [
+       "explicit",
+       "inferred",
+       "confirmed"
+      ],
+      "title": "Basis"
+     }
+    },
+    "type": "object",
+    "required": [
+     "value",
+     "basis"
+    ],
+    "title": "TextAttrOut"
+   },
+   "ValidationError": {
+    "properties": {
+     "loc": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        }
+       ]
+      },
+      "type": "array",
+      "title": "Location"
+     },
+     "msg": {
+      "type": "string",
+      "title": "Message"
+     },
+     "type": {
+      "type": "string",
+      "title": "Error Type"
+     },
+     "input": {
+      "title": "Input"
+     },
+     "ctx": {
+      "type": "object",
+      "title": "Context"
+     }
+    },
+    "type": "object",
+    "required": [
+     "loc",
+     "msg",
+     "type"
+    ],
+    "title": "ValidationError"
+   }
+  }
+ }
+}

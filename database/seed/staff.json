@@ -1,0 +1,10 @@
+{
+  "_comentario": "Personal inicial del demo. Son DATOS (no código): se cargan en PostgreSQL con `python -m app.cli seed-real-test` / `seed-demo`. Después se administran por la API /api/v1/staff. Pao tiene rol administrador además de compras (decisión de demo; el HLD separa ambos roles).",
+  "staff": [
+    {"display_name": "Pao", "roles": ["purchasing", "admin"]},
+    {"display_name": "Danny", "roles": ["auxiliary"]},
+    {"display_name": "Julio", "roles": ["auxiliary"]},
+    {"display_name": "Iván", "roles": ["auxiliary"]},
+    {"display_name": "Pato", "roles": ["auxiliary"]}
+  ]
+}
