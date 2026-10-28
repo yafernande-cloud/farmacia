@@ -23,7 +23,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     logging.basicConfig(level=settings.log_level)
     app = FastAPI(
-        title="Farmacia Parque Lantaño — Asistente de Compras",
+        title="Faltantes Farmacia — Asistente de Compras",
         version="0.1.0",
         lifespan=lifespan,
     )

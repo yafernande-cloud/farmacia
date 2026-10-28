@@ -1,7 +1,7 @@
-# Farmacia Parque Lantaño — Asistente Inteligente de Compras
+# Faltantes Farmacia — Asistente Inteligente de Compras
 
-Demo funcional de validación comercial. Requisitos completos: `docs/Farmacia_Parque_Lantano_HLD_LLD.md`
-(inmutable). Arquitectura: `docs/ARQUITECTURA.md`. Decisiones: `docs/decisions/`. Roadmap: `docs/ROADMAP.md`.
+Demo funcional de validación comercial. Documentación técnica disponible en `docs/`.
+Arquitectura: `docs/ARQUITECTURA.md`. Decisiones: `docs/decisions/`. Roadmap: `docs/ROADMAP.md`.
 
 ## Ejecutar el backend
 
