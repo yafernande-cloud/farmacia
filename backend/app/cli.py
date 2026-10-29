@@ -13,6 +13,9 @@
   unlink-auth-subject <app_user_id> --org sim|real --by <app_user_id> --confirm
   create-admin "<nombre>" --org sim|real --confirm
                                   bootstrap: la PRIMERA administradora web (solo rol admin, sin enlace)
+  catalog-load <archivo.jsonl> --org sim|real --by <app_user_id> [--dry-run]
+                                  carga inicial técnica del catálogo propio: artículos y vínculos SKU
+                                  desde un archivo de datos (D-101); no crea ofertas ni lee planillas
   telegram-check | telegram-poll
 
 Nada aquí usa la organización real por defecto: cada comando nombra la suya y no hay valor implícito.
@@ -33,7 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import dispose_engine, get_engine
 from app.models import AppUser, ChannelBinding, Organization, PurchaseCycle, TelegramAccount
-from app.services import access, identity, staff
+from app.services import access, catalog_load, identity, staff
 from app.services.actors import Actor, load_actor
 from app.services.provenance import OrgKind, validate_account, validate_binding, vision_guard
 
@@ -42,6 +45,7 @@ REAL_ORG = "Farmacia Parque Lantaño — Prueba real"
 SIM_CHAT = "5550001"
 STAFF_FILE = Path(__file__).resolve().parents[2] / "database" / "seed" / "staff.json"
 ORGS = {"sim": (SIM_ORG, OrgKind.SIMULATION), "real": (REAL_ORG, OrgKind.REAL_TEST)}
+MAX_ERRORS = 50  # se listan los primeros rechazos; el resumen siempre informa el total
 
 
 def _load_staff() -> list[dict]:
@@ -376,6 +380,39 @@ async def create_admin(display_name: str, which: str, a: list[str]) -> None:
     await dispose_engine()
 
 
+async def catalog_load_file(path: str, which: str, a: list[str]) -> None:
+    """Carga inicial del catálogo propio (D-101). Es un mecanismo técnico, no la administración diaria (D-097)."""
+    by = _arg(a, "--by")
+    if not by:
+        raise SystemExit("Indica quién carga el catálogo con --by <app_user_id>.")
+    actor, name = await _admin(which, by)
+    file = Path(path).expanduser()
+    if not file.is_file():
+        raise SystemExit(f"No existe el archivo {file}.")
+    dry = "--dry-run" in a
+    try:
+        lines = file.read_text(encoding="utf-8-sig").splitlines()
+        async with AsyncSession(get_engine(), expire_on_commit=False) as s, s.begin():
+            report = await catalog_load.load_catalog(s, actor, lines, dry_run=dry)
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(getattr(e, "message", str(e))) from None
+    print(f"Catálogo de «{name}» desde {file.name}:")
+    print(f"  artículos: {report.articles_created} creado(s), {report.articles_unchanged} sin cambios, "
+          f"{report.articles_conflicting} en conflicto")  # fmt: skip
+    print(f"  vínculos:  {report.mappings_created} creado(s), {report.mappings_unchanged} sin cambios, "
+          f"{report.mappings_conflicting} en conflicto")  # fmt: skip
+    print(f"  rechazos:  {len(report.errors)}")
+    for e in report.errors[:MAX_ERRORS]:
+        print(f"    línea {e['line']} [{e['type'] or 'archivo'}/{e['code']}] {e['message']}")
+    if len(report.errors) > MAX_ERRORS:
+        print(f"    … y {len(report.errors) - MAX_ERRORS} rechazo(s) más.")
+    if dry:
+        print("  Vista previa (--dry-run): no se escribió nada.")
+    elif report.errors:
+        print("  Lo demás quedó registrado; los artículos y vínculos nuevos están auditados.")
+    await dispose_engine()
+
+
 async def telegram_check() -> None:
     """getMe: comprueba que el token funciona SIN mostrarlo."""
     from app.core.config import get_settings
@@ -446,6 +483,8 @@ def main() -> None:
         asyncio.run(unlink_auth_subject(a[1], _org_arg(a), a))
     elif len(a) >= 2 and a[0] == "create-admin":
         asyncio.run(create_admin(a[1], _org_arg(a), a))
+    elif len(a) >= 2 and a[0] == "catalog-load":
+        asyncio.run(catalog_load_file(a[1], _org_arg(a), a))
     elif a == ["telegram-check"]:
         asyncio.run(telegram_check())
     elif a == ["telegram-poll"]:
@@ -461,6 +500,7 @@ def main() -> None:
             "link-auth-subject <id> --org sim|real --by <id> [--subject <sub>] | "
             "unlink-auth-subject <id> --org sim|real --by <id> --confirm | "
             "create-admin \"<nombre>\" --org sim|real --confirm | "
+            "catalog-load <archivo.jsonl> --org sim|real --by <id> [--dry-run] | "
             "telegram-check | telegram-poll"
         )
 
