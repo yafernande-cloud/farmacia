@@ -383,5 +383,56 @@ cadenas (C6).
 
 **Estado documental resultante:** D-076 cerrada con el esquema definido y con la adenda `chain_product` del 2026-10-29
 (la 0008 crea **10** tablas); D-094 tomada; D-095 y D-096 diferidas; D-097 pendiente; D-077 sigue abierta. La migración
-0008 queda **por autorizar** y no se escribió.
+0008 quedaba **por autorizar** y no se escribió en ese momento; se aplicó el mismo día con autorización expresa
+(ver «Aplicación de la migración 0008 a `farmacia`», D-098).
 
+## Aplicación de la migración 0008 a `farmacia` (2026-10-29)
+
+| ID | Estado | Decisión |
+|---|---|---|
+| D-098 | Tomada (2026-10-29) | **La migración 0008 se aplicó a `farmacia` y la fase C1 queda cerrada.** El usuario autorizó, por pasos y por separado, el respaldo (A1), el ensayo de subida (A2), el ensayo de reversión (A2-bis) y la aplicación (A3). Resultado: `alembic current` = **0008**, **32 tablas** en `public`, las **10** tablas de C1 vacías, **219** registros previos intactos y **ningún objeto de 0007 alterado**. No se creó ningún endpoint, conector, `catalog-load` ni dato de catálogo: C2 sigue sin empezar y el contrato C0 no se modificó. El respaldo y las bases de ensayo **no se eliminan** sin autorización nueva. |
+
+**Procedimiento y evidencia (cada paso con autorización explícita del usuario):**
+
+1. **A1 — respaldo y verificación de recuperabilidad.** `pg_dump -Fc` del estado 0007, guardado en `.backups/` y
+   copiado **fuera del repositorio** (`~/respaldos-farmacia/`), con SHA-256 `b176e73d…52bdc0` verificado en ambas
+   copias. `pg_restore --list` confirmó formato `CUSTOM` y las 22 tablas; la restauración en una base desechable
+   devolvió la misma versión, las mismas tablas, los mismos conteos y la misma huella de contenido por tabla.
+2. **A2 — ensayo de la subida.** Se clonó la copia anterior (`CREATE DATABASE … TEMPLATE`) en
+   `farmacia_rehearsal_0008` y se aplicó `upgrade 0008`: **0008** con **32** tablas. Las 22 tablas originales
+   conservaron sus 219 registros y su comportamiento (`audit_event` de solo agregar, `organization.kind` inmutable),
+   las 14 comprobaciones de invariantes de la migración pasaron y el inventario de **948** objetos coincidió con el
+   de una instalación desde cero.
+3. **A2-bis — ensayo de la reversión.** `downgrade 0007` dejó **22** tablas, **559** objetos idénticos al 0007
+   prístino, **219** registros intactos y **sin residuos** (ni tablas, ni tipos, ni funciones); `upgrade 0008`
+   volvió a **948** objetos idénticos y a los mismos invariantes. La reversión queda validada.
+4. **A3 — aplicación.** `alembic upgrade 0008` sobre `farmacia`, con guarda que abortaba si el destino no era
+   exactamente `farmacia`, y con la API y el bot detenidos. Verificación **por consultas reales**, no por la salida
+   de Alembic: `0008 (head)`, 32 tablas, 10 tablas nuevas presentes y vacías, conteos y huellas MD5 idénticos a la
+   línea base (única diferencia: `alembic_version`), 9 funciones, 30 triggers, 306 restricciones, 120 índices y
+   **559/559 objetos previos con nombre, tipo y definición sin cambios**.
+5. **Comprobación funcional de la API.** Con autorización expresa, `TestClient` de Starlette **en proceso** (sin
+   puerto, sin servidor y sin red externa) y **solo peticiones GET** contra `farmacia`: **27/27 casos** con el
+   estado esperado —401 sin identidad, 403 por permiso faltante, 404/400 con el contrato de error, 200 en salud,
+   catálogo, listas, fotos, canal y personal para `simulation`, y **403 `STRONG_AUTH_REQUIRED`** al usar
+   `demo_header` sobre `real_test` (D-071/D-072)—. La instantánea de las 32 tablas (filas + MD5 por tabla) resultó
+   **idéntica** antes y después: la comprobación no escribió nada. El bot **no** se probó en vivo: `telegram-check`
+   y `telegram-poll` hacen llamadas externas o escriben en la base, así que su comportamiento sigue cubierto por
+   los simuladores de la suite.
+
+**Pruebas:** 365 pruebas en verde, entre ellas las 13 de `tests/test_migration_0008.py` y
+`test_modelos_y_migracion_estan_sincronizados`, ejecutadas sobre una base de pruebas dedicada en 0008 (no sobre
+`farmacia`). La compatibilidad del módulo de faltantes se comprobó con esa misma suite y con la ausencia de
+cualquier FK o trigger nuevo sobre sus tablas (D-095/D-096 siguen diferidas y su esquema no se tocó).
+
+**Límites explícitos:** la 0008 no crea endpoints, no carga datos, no toca `commercial_reference` ni el módulo de
+faltantes, y no habilita la compra (sigue `blocked`). El primer uso del catálogo (C2) deberá declarar `data_origin`
+coherente: `real_test` solo admite `captured` y `ai_derived`. `alembic` no imprime nada en `upgrade`/`downgrade`,
+de modo que el éxito se verifica **siempre** por catálogo (`alembic current` + conteos), nunca por la ausencia de
+salida.
+
+## Pendiente de seguridad antes del despliegue (2026-10-29)
+
+| ID | Estado | Decisión |
+|---|---|---|
+| D-099 | Pendiente (2026-10-29) | **`AUTH_MODE=demo_header` no debe permitir el acceso a datos reales en un entorno público.** La comprobación funcional de C1 confirmó el alcance real: con `demo_header` y una persona de `real_test`, la API **sí** responde **lecturas** de datos reales (`GET /api/v1/me` y `GET /api/v1/demand-items` devuelven 200 con datos de `real_test`); `StrongActor` solo bloquea las operaciones **administrativas** (`/staff`, cuentas y solicitudes de Telegram), que responden 403 `STRONG_AUTH_REQUIRED`. Es el comportamiento diseñado (D-069; D-086 ya documenta que `StrongActor` **no** es MFA ni re-autenticación), y la validación de arranque impide `demo_header` con `APP_ENV=staging|production` (`app/core/config.py`), de modo que el riesgo se materializa solo si se publica un entorno con `APP_ENV=local` o `demo`. **Antes de cualquier despliegue accesible públicamente** hay que decidir e implementar una de estas dos salidas: que `demo_header` resuelva **solo** personas de la organización `simulation` y rechace cualquier otra con 403, o que el modo demo no exista fuera de `local`/`demo`. **No se implementa ahora**: no se modifica `app/api/deps.py`, la matriz de permisos ni la configuración; requiere autorización y decisión propia. |

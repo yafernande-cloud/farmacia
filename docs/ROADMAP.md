@@ -8,7 +8,7 @@ desarrollo. Las fases `C*` son el camino crítico; las `H*` siguen vigentes pero
 | Fase | Contenido | Criterios | Estado |
 |---|---|---|---|
 | **C0** | Contrato integral del cotizador (E1–E9): búsqueda, ofertas, comparación, proveedores, fuentes y **criterios comerciales con anotación (sin aplicación)**. Documento: `docs/contracts/cotizador-v0.md` | C0-01 a C0-19 | **Completada — contrato aprobado y congelado** (2026-10-29, D-078 a D-093) |
-| **C1** | Modelo de datos del cotizador, **diseño cerrado** (D-076/D-094, con adenda `chain_product`): artículo neutral al tipo de producto (`trade_item`), ficha publicada por cadena, proveedor, fuente, mapping, ofertas, despacho, referencias, importación, comparaciones, criterios y búsquedas. Se reparte en tres migraciones (**0008** catálogo y ofertas, 10 tablas; **0009** comparaciones y criterios; **0010** búsquedas) y suma `catalog-load` (carga inicial técnica, no administración cotidiana; D-097) | AC16–AC20 (base), AC29–AC31 (base) | **Diseño definido** (2026-10-29); migración **0008 por autorizar** |
+| **C1** | Modelo de datos del cotizador, **diseño cerrado** (D-076/D-094, con adenda `chain_product`): artículo neutral al tipo de producto (`trade_item`), ficha publicada por cadena, proveedor, fuente, mapping, ofertas, despacho, referencias, importación, comparaciones, criterios y búsquedas. Se reparte en tres migraciones (**0008** catálogo y ofertas, 10 tablas; **0009** comparaciones y criterios; **0010** búsquedas) y suma `catalog-load` (carga inicial técnica, no administración cotidiana; D-097) | AC16–AC20 (base), AC29–AC31 (base) | **Hecha** (2026-10-29): migración **0008 aplicada** a `farmacia` con respaldo verificado y ensayo de subida y reversión (D-098). Sin endpoints: `catalog-load` y conectores son C2 |
 | **C2** | Contrato de conector + `manual_import` (Excel) + fuente `fixture` etiquetada | AC16, AC17 | Pendiente; contrato de Excel abierto (D-077) |
 | **C3** | Comparador determinista: elegibilidad, cantidades con mínimo/múltiplo, impuestos/descuentos/despacho, total parcial, cota inferior (LB-1…LB-8), explicabilidad y **anotación de criterios (sin alterar números)**; incluye la migración **0009**, con la que recién pasan a tener persistencia real las notas y criterios | AC18–AC20, AC31 (base) | Pendiente |
 | **C4** | API de búsqueda y cotización (síncrona, D-075) y E9 `/commercial-criteria` (alta, edición, confirmación y desactivación auditadas); incluye la migración **0010** | AC16–AC19, AC29–AC31 | Pendiente |
@@ -119,7 +119,7 @@ Tres límites explícitos:
 
 | Pista | Contenido | Depende de |
 |---|---|---|
-| **A · Backend cotizador** | C0 → C1 → C2 → C3 → C4 | Autorización de la **migración 0008** (C1) y del contrato de Excel (C2) |
+| **A · Backend cotizador** | C0 → C1 → C2 → C3 → C4 | C1 **cerrado** (0008 aplicada, 2026-10-29); falta el contrato de Excel para C2 (D-077) |
 | **B · Diseño Lovable** | Buscador y cotizador contra el contrato v0, con datos `fixture` etiquetados | C0 **cerrada** (contrato congelado el 2026-10-29): puede comenzar |
 | **C · Telegram** | H1-B.5 con el bot real (lo crea el usuario) | Token del bot |
 | **D · Operación** | Contrato generado desde FastAPI, `supabase_jwt` en demo, URL HTTPS + CORS, CI | Autorización de configuración y despliegue |
@@ -271,3 +271,42 @@ perezosa, `/api/v1/health` (liveness) y `/health/ready` (503 honesto si falta/ca
 5. **Pruebas:** `backend/tests` (6 pasan; 1 contra Postgres real se omite sin `TEST_DATABASE_URL`).
 6. **Aceptación:** app arranca, salud responde, pruebas pasan. 7. **Riesgos:** PostgreSQL no verificado en vivo
 (Docker no estaba corriendo); Alembic no probado contra una BD. 8. **Continuar:** ver README y D-002/D-005.
+
+## C1 — aplicación de la migración 0008 (2026-10-29, D-098)
+
+**Hecho:** la migración **0008** (catálogo comercial, fichas de cadena, precios públicos y ofertas de proveedores,
+**10 tablas**) está **aplicada a `farmacia`**. La fase C1 queda cerrada: el esquema del cotizador existe, sin
+endpoints, sin `catalog-load` y sin conectores (eso es C2).
+
+Procedimiento ejecutado, cada paso con autorización explícita del usuario:
+
+1. **Respaldo (A1).** `pg_dump -Fc` de `farmacia` en 0007, guardado en `.backups/` y en `~/respaldos-farmacia/`
+   (fuera del repo), con SHA-256 `b176e73d…52bdc0`. Restaurado en una base desechable y comparado: misma versión,
+   22 tablas, 219 filas y huella de contenido idéntica por tabla.
+2. **Ensayo de subida (A2).** Copia de la base anterior → `farmacia_rehearsal_0008`; `upgrade 0008` → 32 tablas;
+   las 22 tablas originales conservaron sus 219 registros y su comportamiento; 14 comprobaciones de invariantes
+   aprobadas; inventario de 948 objetos idéntico al de una instalación desde cero.
+3. **Ensayo de reversión (A2-bis).** `downgrade 0007` → 22 tablas, 219 registros y 559 objetos idénticos al 0007
+   prístino, sin residuos; `upgrade 0008` de nuevo → 948 objetos idénticos y los mismos invariantes operativos.
+4. **Aplicación (A3).** `alembic upgrade 0008` sobre `farmacia` con guarda de destino, API y bot detenidos.
+   Verificación por catálogo: **0008**, **32 tablas**, 10 tablas nuevas vacías, **219 registros intactos**, 9
+   funciones, 30 triggers, 306 restricciones, 120 índices, y **ningún objeto previo alterado** (559/559 idénticos).
+5. **Comprobación funcional de la API (en proceso, solo GET).** `TestClient` de Starlette dentro del mismo
+   proceso —sin puerto, sin servidor y sin llamadas externas— sobre `farmacia`: **27/27 casos** con el estado
+   esperado. Salud y `ready` en 200; identidad por cabecera con 401 sin actor y con actor inexistente; listas,
+   catálogo, fotos, canal, personal y cuentas en 200 para la organización `simulation`; 403 `FORBIDDEN` cuando
+   falta el permiso (auxiliar en catálogo y observaciones); 404 y 400 con el contrato de error; y **403
+   `STRONG_AUTH_REQUIRED`** para `demo_header` sobre la organización `real_test` (D-071/D-072). Las 10 tablas
+   nuevas no se exponen: ninguna ruta del cotizador en el contrato. Instantánea de las 32 tablas (filas + MD5 por
+   tabla) **idéntica** antes y después: la comprobación no escribió nada.
+
+**Pruebas:** 365 pruebas automatizadas en verde sobre una base de pruebas dedicada en 0008, incluidas las 13 de
+`test_migration_0008.py` y `test_modelos_y_migracion_estan_sincronizados`.
+
+**Riesgos:** los invariantes nuevos exigen `data_origin` coherente con la organización en la primera carga
+(`real_test` solo admite `captured`/`ai_derived`); la 0008 no es idempotente; `alembic` no imprime nada en
+`upgrade`/`downgrade`, así que el éxito se verifica siempre por catálogo. El respaldo de A1 y las bases de ensayo
+se conservan hasta que el usuario autorice su eliminación. **Pendiente de seguridad antes del despliegue (D-099):**
+`AUTH_MODE=demo_header` permite hoy **leer** datos reales con una persona de `real_test` (solo bloquea la
+administración con `STRONG_AUTH_REQUIRED`); la publicación de un entorno con `APP_ENV=local`/`demo` exige antes
+restringir el modo demo a `simulation` o retirarlo. No se implementa en C1.
