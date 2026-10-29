@@ -196,7 +196,7 @@ aclaró que el cotizador es una **herramienta interna usada solo por los jefes d
 |---|---|---|
 | D-078 | Tomada (2026-10-29) | **C0 es integral y se congela completo; la implementación se reparte en C1–C5.** El contrato define E1 búsqueda, E2 consulta de búsqueda, E3 detalle de artículo, E4 fuentes, E5 comparación, E6 proveedores, E7 administración de fuentes y E8 importación de listas de precios. C1 implementa el modelo, C2 conectores/importación, C3 el comparador, C4 la API de búsqueda y C5 Lovable. Las **cadenas** quedan definidas en el contrato pero su ingesta real sigue en C6. Ninguna operación queda sin fase asignada. |
 | D-079 | Tomada (2026-10-29) | **El cotizador tiene un único rol autorizado: `admin`.** Los jefes de farmacia buscan, consultan ofertas y referencias, comparan, importan Excel y administran proveedores y fuentes con ese rol. **No se crea el rol `purchasing` ni permisos nuevos o diferenciados** para el cotizador, y **no se modifican los roles de otros módulos**. Se mantienen los mecanismos existentes: `Actor` resuelto en el servidor, organización desde `app_user`, `StrongActor` para organizaciones reales y `X-Demo-User-Id` solo en `simulation`. |
-| D-080 | Tomada (2026-10-29) | **Granularidad y centro del resultado (K1 y K4).** Un artículo es una **presentación comercial** (`trade_item`): caja de 10 y de 20 son artículos distintos. El resultado de búsqueda se centra en el artículo y cuelga sus ofertas y referencias. El esquema definitivo de tablas sigue en D-076. |
+| D-080 | Tomada (2026-10-29) | **Granularidad y centro del resultado (K1 y K4).** Un artículo es una **presentación comercial** (`trade_item`): caja de 10 y de 20 son artículos distintos. El resultado de búsqueda se centra en el artículo y cuelga sus ofertas y referencias. El esquema definitivo de tablas quedó definido en D-076 (cerrada el 2026-10-29). |
 | D-081 | Tomada (2026-10-29) | **Dinero e impuestos (K2 y K10).** Todo importe viaja como string decimal con moneda obligatoria y nunca como número flotante; el precio declara `basis` (por unidad comercial o por unidad base), `tax_included` y `discount_included` en tri-estado (`true`/`false`/`unknown`). No se asume CLP por configuración. |
 | D-082 | Tomada (2026-10-29) | **Búsqueda síncrona (K3).** E1 responde `200` con el resultado; `202 + job_id` queda reservado para cuando existan conectores externos que lo justifiquen (D-075). Una búsqueda que excede el tiempo objetivo responde `503 SEARCH_TIMEOUT`, error tipado; no se devuelve un resultado parcial silencioso. |
 | D-083 | Tomada (2026-10-29) | **Estados de fuente y fallo (K5 y K7).** Cada fuente informa `ok`, `stale`, `failed` o `not_configured`. Si todas las fuentes externas fallan pero la API funciona, la respuesta es `200` con `status=failed` y errores por fuente (AC17); `503` se reserva a fallo del subsistema o de la base. Una fuente no configurada no es una fuente vacía ni una fuente caída. |
@@ -235,16 +235,153 @@ consciente— se registran en **D-092**.
 (con C0-06, C0-07 y C0-17 precisados por D-092); E9 con fase C4 (modelo en C1, anotación en C3) y
 `recommendation: null` + `recommendation_status="not_evaluated"` reservados para H4.
 
-**Siguen abiertas:** D-076 (esquema definitivo del catálogo comercial y migración 0008, **no autorizada**) y D-077
+**Quedaban abiertas en esa revisión:** D-076 (esquema definitivo del catálogo comercial y migración 0008, **no
+autorizada**), cerrada el 2026-10-29 en el apartado «Diseño del modelo de datos del cotizador (C1)», y D-077
 (contrato y formato de la planilla Excel; E8 define solo el transporte).
 
 ## Aprobación final del contrato y cierre de C0 (2026-10-29)
 
 | ID | Estado | Decisión |
 |---|---|---|
-| D-093 | Tomada (2026-10-29) | **El contrato del cotizador v0 queda aprobado y congelado y la fase C0 se cierra.** El usuario autorizó formalmente el cierre de C0 el 2026-10-29. `docs/contracts/cotizador-v0.md` pasa a **APROBADO Y CONGELADO** y los criterios **C0-01 a C0-19** se dan por cumplidos por revisión del documento; **C0-13 queda cumplido** con esta aprobación. El congelamiento alcanza al contrato completo (E1–E9, tres planos, esquemas, errores, invariantes y AC), con las precisiones de D-086 a D-092 incorporadas y verificadas entre contrato, registro de decisiones y roadmap. **No se modificó código, modelo, endpoint, base de datos, migración ni OpenAPI; la migración 0008 no se ejecutó y C1 no se inició.** Consecuencias: (a) Lovable y el backend implementan el contrato tal cual; cualquier cambio de alcance, esquema o semántica exige **decisión nueva** (D-094 en adelante) y versión nueva del documento; (b) las decisiones comerciales y de cálculo siguen sin poder alterarse por criterios registrados (§1.1 y D-091); (c) D-076 y D-077 siguen abiertas sin bloquear C1–C4; (d) el siguiente paso es **C1** (modelo de datos), que requiere **autorización explícita de migración**; (e) la compra real sigue `blocked` y el LLM no decide dinero, cantidades ni permisos. |
+| D-093 | Tomada (2026-10-29) | **El contrato del cotizador v0 queda aprobado y congelado y la fase C0 se cierra.** El usuario autorizó formalmente el cierre de C0 el 2026-10-29. `docs/contracts/cotizador-v0.md` pasa a **APROBADO Y CONGELADO** y los criterios **C0-01 a C0-19** se dan por cumplidos por revisión del documento; **C0-13 queda cumplido** con esta aprobación. El congelamiento alcanza al contrato completo (E1–E9, tres planos, esquemas, errores, invariantes y AC), con las precisiones de D-086 a D-092 incorporadas y verificadas entre contrato, registro de decisiones y roadmap. **No se modificó código, modelo, endpoint, base de datos, migración ni OpenAPI; la migración 0008 no se ejecutó y C1 no se inició.** Consecuencias: (a) Lovable y el backend implementan el contrato tal cual; cualquier cambio de alcance, esquema o semántica exige **decisión nueva** (D-094 en adelante) y versión nueva del documento; (b) las decisiones comerciales y de cálculo siguen sin poder alterarse por criterios registrados (§1.1 y D-091); (c) D-076 y D-077 quedaban abiertas sin bloquear C1–C4 (D-076 se cierra el mismo 2026-10-29 en el apartado siguiente;
+D-077 sigue abierta); (d) el siguiente paso es **C1** (modelo de datos), que requiere **autorización explícita de migración**; (e) la compra real sigue `blocked` y el LLM no decide dinero, cantidades ni permisos. |
 
 **Estado documental resultante:** contrato congelado (`docs/contracts/cotizador-v0.md`), C0 cerrada con C0-01 a C0-19
 verificados (`docs/ROADMAP.md`) y decisiones D-078 a D-093 registradas en este archivo. Los tres documentos declaran
 la misma fecha (2026-10-29) y el mismo alcance.
+
+## Diseño del modelo de datos del cotizador (C1) y cierre de D-076 (2026-10-29)
+
+Contexto: tras la propuesta de C1, el usuario aprobó la **alternativa A** de D-094 (catálogo neutral al tipo de
+producto), la **separación de migraciones** 0008/0009/0010 y **`catalog-load`** como carga inicial técnica.
+**No se implementó código, modelo, endpoint, migración ni cambio de base de datos; la migración 0008 no se escribió ni
+se ejecutó y el contrato C0 no se modificó.** Este apartado cierra D-076 y deja el diseño listo para autorizar la 0008
+por separado. **Adenda del mismo día:** el usuario aprobó incorporar `chain_product` —la ficha publicada por cada
+cadena— con lo que la 0008 pasa a **10 tablas** (§ «Adenda a D-076 — ficha publicada por cadena»); el contrato C0 y el
+alcance de C1 no cambian.
+
+| ID | Estado | Decisión |
+|---|---|---|
+| D-076 | Tomada (2026-10-29) | **Esquema del catálogo comercial y del cotizador: definido y cerrado.** El artículo del cotizador es `trade_item` (presentación comercial, D-080) y es la tabla canónica del catálogo; `pharma_identity` se enlaza **opcionalmente** cuando el producto es medicamento. El esquema completo se reparte en tres migraciones por fase (§ «Diseño aprobado»). Se respetan las convenciones del repo: `organization_id` en todas las tablas, FK compuestas `(x_id, organization_id)`, `version` para `If-Match`, dinero `NUMERIC(18,4)` con moneda `CHAR(3)`, fechas `TIMESTAMPTZ` y auditoría/outbox existentes (`services/events.emit`). **No se tocan** `demand_item`, `demand_observation`, `pharma_identity`, `commercial_reference` ni `product_alias`. Con la **adenda del 2026-10-29** (§ «Adenda a D-076 — ficha publicada por cadena») la migración 0008 crea **10** tablas: se añade `chain_product`, la ficha que publica cada cadena, separada del artículo canónico. |
+| D-094 | Tomada (2026-10-29) | **Catálogo neutral al tipo de producto (alternativa A).** `trade_item.product_kind` admite `medicine`, `medical_device`, `cosmetic`, `personal_care`, `veterinary`, `food_supplement`, `other`; es **nullable** y `NULL` significa «no clasificado» (nunca se infiere). Nace `NULL` y solo lo fija una persona. Ningún atributo farmacéutico es obligatorio: `ingredient`, `strengths`, `form`, `release`, `route`, `sanitary_registration` y `pharma_identity_id` pueden faltar, de modo que un cepillo, un cosmético o un producto veterinario se catalogan sin atributos que no les corresponden. `product_kind` **no es** la `category` rechazada por D-091: no segmenta criterios, precios ni ámbitos; solo indica qué atributos aplican. En esta variante **no se expone** en E1 ni E3 y **el contrato C0 no se modifica**; exponerlo (filtro en E1, campo en E3) exigiría una decisión nueva y una versión nueva del contrato. Los criterios con `target.level=ingredient` solo alcanzan artículos con principio de procedencia `explicit` o `confirmed`; para productos sin principio, el ámbito útil es `article`, `supplier` o `organization`. |
+| D-095 | Diferida (2026-10-29) | **Productos no farmacéuticos en el módulo de faltantes.** Hoy `demand_item.ingredient` es `NOT NULL` (y lo mismo en `pharma_identity` y `product_alias`), así que un cepillo no puede reportarse como faltante. Sigue incompatibilidad conocida y **explícitamente diferida**: no se amplía ese módulo ni se modifica su esquema. Requiere decisión propia antes de tocarlo. |
+| D-096 | Diferida (2026-10-29) | **Unificación de catálogos.** `commercial_reference` (puente histórico del lado de faltantes) y `trade_item` (canónico del cotizador) coexisten sin fusión automática. `commercial_reference` **no se toca** y el cotizador no la lee. Fusionarlas o retirar una queda para una decisión posterior. |
+| D-097 | Pendiente (2026-10-29) | **Administración cotidiana del catálogo.** `catalog-load` es un mecanismo **técnico de carga inicial**, no la interfaz habitual: Pao necesitará dar de alta y editar artículos, mappings y alias desde la interfaz, y hoy no existe operación para eso en E1–E9. Se registra como necesidad pendiente y **no se agrega endpoint ni se modifica C0** por ahora; resolverlo exige decidir entre un comando administrativo, una operación nueva (p. ej. E10 en una versión v0.1 del contrato) o ambas. |
+
+### Diseño aprobado (resumen)
+
+**Migraciones y dependencias** (cada una se crea cuando su fase la consume; 0009 y 0010 heredan de 0008):
+
+| Migración | Fase | Tablas |
+|---|---|---|
+| **0008** catálogo y ofertas | C1/C2 | `trade_item`, `trade_item_alias`, `supplier`, `source`, `supplier_product_mapping`, `shipping_terms_snapshot`, `offer_snapshot`, `chain_product`, `reference_price`, `import_run` (**10**) |
+| **0009** comparaciones y criterios | C3 | `comparison_run`, `comparison_line`, `comparison_candidate`, `comparison_supplier_total`, `commercial_criterion` (5) |
+| **0010** búsquedas | C4 | `search_run`, `search_source_result`, `search_result` (3) |
+
+**Reutilización:** `organization` (aislamiento y moneda), `app_user` (actor y autores), `audit_event`/`outbox_event`
+(toda alta, edición, confirmación y desactivación, en la misma transacción), `pharma_identity` (enlace opcional) y el
+patrón de cursor de `services/queries.py`.
+
+**Reglas de integridad acordadas:**
+
+- **Entre organizaciones:** `UniqueConstraint(id, organization_id)` en cada padre y FK compuestas. Claves auxiliares que
+  evitan incoherencias que hoy solo cazaría el servicio: `source(id, supplier_id, organization_id)` para que una oferta
+  no declare un proveedor distinto del de su fuente, y `comparison_line(id, comparison_run_id, organization_id)` para
+  que un candidato no pertenezca a otra corrida.
+- **Inmutabilidad:** triggers que bloquean `UPDATE`/`DELETE` en `offer_snapshot`, `shipping_terms_snapshot`,
+  `chain_product`, `reference_price`, `comparison_run`, `comparison_line`, `comparison_candidate` y
+  `comparison_supplier_total`; `import_run` se inserta una sola vez con su estado final. Una corrección se hace con un
+  snapshot nuevo, no editando. **Única excepción:** en `chain_product` el trigger permite modificar solo las columnas
+  del vínculo con el catálogo (`trade_item_id`, `match_status`, `version` y la confirmación), y solo por acción
+  explícita auditada; el contenido publicado y la foto nunca se reescriben.
+- **Procedencia:** trigger `enforce_data_origin` en `trade_item`, `supplier_product_mapping`, `offer_snapshot`,
+  `shipping_terms_snapshot`, `chain_product` y `reference_price` (en `simulation` solo `simulated`).
+- **Criterios:** `source_note_criterion_id` con índice único parcial (un criterio derivado por nota), columna interna
+  `superseded_by_criterion_id` además del texto de `deactivation_reason`, y trigger que impide **nota y criterio
+  derivado activos a la vez** (`CRITERION_NOTE_SUPERSEDED`). Checks: `note ⇒ effect=note_only y sin confirmación`;
+  `criterion ⇒ effect válido, origin=explicit, reason_text no vacío y confirmed_by/at`; `inactive ⇒ motivo y fechas`;
+  XOR de `target_level`; `version >= 1`.
+- **Comparaciones históricas:** los números se persisten como `NUMERIC(18,4)` y **no se recalculan al leer**; la oferta
+  referenciada es inmutable, de modo que el historial no cambia de significado; se guardan `computed_at`,
+  `criteria_evaluated_at` y las anotaciones como snapshot. Invariantes en la base: `complete ⇔ total NOT NULL`
+  (AC19), `is_global_claim = false`, y `lower_bound` presente si y solo si `bound_status=valid`.
+- **Dinero y cantidades:** `NUMERIC`, nunca float; moneda `^[A-Z]{3}$`; `requested > 0`, `minimum >= 0`, `multiple >= 1`;
+  `tax_included` y `discount_included` como booleano nullable, donde `NULL` = `unknown`.
+
+**Carga inicial (`catalog-load`):** comando de `app/cli.py` con el patrón `_admin(--org, --by)` ya existente;
+lee un archivo de **datos** JSONL con registros `article` y `mapping`; idempotente por `trade_item.identity_key` y
+`(source_id, external_id)`; informa un resumen y admite `--dry-run`; escribe auditoría y outbox; respeta la procedencia
+por tipo de organización. No crea artículos por inferencia, no sustituye E8 (que mantiene `UNMAPPED_PRODUCT`) y **no es
+la administración cotidiana del catálogo** (D-097).
+
+**Consideraciones registradas:**
+
+1. **Criterios y notas sin persistencia real hasta la 0009.** Hasta que exista esa migración, E9 no tiene dónde guardar
+   nada. El prototipo de Lovable **puede mostrarlos como demostración**, pero no debe presentarse como funcionalidad
+   operativa ni como algo que Pao pueda usar; conforme a §2.5 y HLD §22, todo dato mostrado así se etiqueta como
+   `fixture`/`simulated` y nunca se presenta como real.
+2. **`catalog-load` no reemplaza la administración del catálogo.** Es carga inicial y recuperación; la necesidad de
+   alta y edición diaria queda registrada como D-097, sin endpoint nuevo y sin cambiar C0.
+
+### Adenda a D-076 — ficha publicada por cadena (`chain_product`, 2026-10-29)
+
+Motivo: las tarjetas de cadenas externas del prototipo de Lovable deben mostrar, además del logo y el precio, la
+**fotografía y la ficha descriptiva que publica cada cadena** («Losartan (B) 50 mg, 30 comprimidos recubiertos, de
+Laboratorio Chile», con foto del envase, principio activo, forma farmacéutica y dosis). El usuario aprobó incorporar
+`chain_product` al diseño de C1 **sin modificar el contrato C0 congelado ni ampliar el alcance de C1**.
+
+**Dos planos separados:**
+
+| Plano | Tabla | Qué guarda | Quién lo fija |
+|---|---|---|---|
+| Canónico | `trade_item` | La presentación comercial del catálogo (D-080) | Nosotros, con procedencia |
+| Publicado | `chain_product` | La ficha tal como la publica una cadena | La cadena |
+
+`reference_price` deja de colgar del artículo canónico: **`reference_price.chain_product_id` es obligatorio**. El vínculo
+con `trade_item` vive solo en `chain_product.trade_item_id` (nullable), con `match_status`
+(`exact`/`needs_review`/`unmapped`) y causas; **nunca** se crea por coincidencia de principio activo y dosis, y exige
+procedencia `explicit` o `confirmed`.
+
+**Campos de `chain_product`** (snapshot por contenido): `source_id` (cadena), `external_id`, `source_url`,
+`published_name` (verbatim, «(B)» incluido), `description`, `laboratory_as_published`, `presentation_as_published`,
+`published_attributes JSONB` (principio, dosis, forma y contenido **como se escribieron**), `image_url`, `image_hash`,
+`image_object_key` (nullable, reservado), `content_hash`, `observed_at`, `data_origin` y `evidence`/`raw_payload`.
+`reference_price` conserva precio normal y de promoción, moneda, condiciones, despacho informado, stock informado,
+`source_url` del momento, `observed_at`, `evidence` y `data_origin`.
+
+**Trazabilidad fotografía ↔ ficha ↔ precio:**
+
+1. `reference_price` apunta a **una fila exacta** de `chain_product`, no a un artículo: foto y precio no pueden
+   desincronizarse, aunque entre medio cambie la ficha publicada.
+2. La ficha es **inmutable en su contenido**: si la cadena cambia foto, presentación o descripción, se inserta otra fila
+   con distinto `content_hash`, y las observaciones de precio anteriores siguen apuntando a la ficha con la que se
+   tomaron. Solo son mutables las columnas del vínculo con el catálogo, por acción explícita auditada (ver «Reglas de
+   integridad»).
+3. Clave auxiliar `chain_product(id, source_id, organization_id)` y FK compuesta
+   `reference_price(chain_product_id, source_id, organization_id)`: el precio de una cadena no puede apuntar a la ficha
+   de otra.
+4. **Vigencia sin mutar el snapshot:** `first_seen_at` y `last_seen_at` **no se guardan como columnas mutables**, porque
+   un `UPDATE` contradiría la inmutabilidad y reescribiría la historia. Se derivan por consulta como
+   `MIN(observed_at)` y `MAX(observed_at)` agrupando por `(source_id, external_id)`; la vigencia de una ficha concreta se
+   obtiene con el mismo agregado agrupando por `(source_id, external_id, content_hash)`. Si algún día hace falta un
+   caché, será una tabla derivada decidida entonces, nunca una escritura sobre la ficha.
+
+**Límite de la fotografía:** `image_url` e `image_hash` **conservan la referencia y permiten detectar cambios**, pero
+**no garantizan la disponibilidad futura** de la imagen: la cadena puede retirarla, reemplazarla o bloquear el enlace, y
+sin guardar los bytes el hash no se puede reverificar. La tarjeta debe tratarla como referencia de terceros, con un
+reemplazo visible cuando no cargue, y **no** deducir de la imagen identidad, presentación ni precio. El **almacenamiento
+propio** queda pendiente para **C6** (junto con las condiciones de uso de las imágenes) y exige decisión propia.
+
+**Qué no cambia:** `offers[]` y `reference_prices[]` siguen separados (D-084); una referencia de cadena nunca es
+comparable, nunca entra en totales ni en `lowest_verified_total`; E1/E3 no exponen `image_url`, `description` ni
+`product_kind`; el contrato C0 congelado no se toca.
+
+**Fuera de este diseño:** cambios en el módulo de faltantes (D-095), unificación de catálogos (D-096), endpoints nuevos,
+roles o permisos, `pg_trgm`, `category`, conversión de moneda, migración o carga de datos, cualquier cambio al contrato
+C0, la exposición de la foto y la ficha publicada en E3/E4, el almacenamiento propio de imágenes y la ingesta real de
+cadenas (C6).
+
+**Estado documental resultante:** D-076 cerrada con el esquema definido y con la adenda `chain_product` del 2026-10-29
+(la 0008 crea **10** tablas); D-094 tomada; D-095 y D-096 diferidas; D-097 pendiente; D-077 sigue abierta. La migración
+0008 queda **por autorizar** y no se escribió.
 

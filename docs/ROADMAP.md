@@ -8,11 +8,11 @@ desarrollo. Las fases `C*` son el camino crítico; las `H*` siguen vigentes pero
 | Fase | Contenido | Criterios | Estado |
 |---|---|---|---|
 | **C0** | Contrato integral del cotizador (E1–E9): búsqueda, ofertas, comparación, proveedores, fuentes y **criterios comerciales con anotación (sin aplicación)**. Documento: `docs/contracts/cotizador-v0.md` | C0-01 a C0-19 | **Completada — contrato aprobado y congelado** (2026-10-29, D-078 a D-093) |
-| **C1** | Modelo de datos del cotizador: `supplier`, `source`, `supplier_product_mapping`, `offer_snapshot`, `reference_price`, `shipping_terms_snapshot`, `search_run`, `comparison_run` y `commercial_criterion` (nota/criterio con versión y auditoría) (migración nueva) | AC16–AC20 (base), AC29–AC31 (base) | Pendiente; **requiere autorización de migración** |
+| **C1** | Modelo de datos del cotizador, **diseño cerrado** (D-076/D-094, con adenda `chain_product`): artículo neutral al tipo de producto (`trade_item`), ficha publicada por cadena, proveedor, fuente, mapping, ofertas, despacho, referencias, importación, comparaciones, criterios y búsquedas. Se reparte en tres migraciones (**0008** catálogo y ofertas, 10 tablas; **0009** comparaciones y criterios; **0010** búsquedas) y suma `catalog-load` (carga inicial técnica, no administración cotidiana; D-097) | AC16–AC20 (base), AC29–AC31 (base) | **Diseño definido** (2026-10-29); migración **0008 por autorizar** |
 | **C2** | Contrato de conector + `manual_import` (Excel) + fuente `fixture` etiquetada | AC16, AC17 | Pendiente; contrato de Excel abierto (D-077) |
-| **C3** | Comparador determinista: elegibilidad, cantidades con mínimo/múltiplo, impuestos/descuentos/despacho, total parcial, cota inferior (LB-1…LB-8), explicabilidad y **anotación de criterios (sin alterar números)** | AC18–AC20, AC31 (base) | Pendiente |
-| **C4** | API de búsqueda y cotización (síncrona, D-075) y E9 `/commercial-criteria` (alta, edición, confirmación y desactivación auditadas) | AC16–AC19, AC29–AC31 | Pendiente |
-| **C5** | Lovable: buscador y cotizador | AC20, AC31 (parcial) | Diseño en paralelo desde C0; integración tras C4 |
+| **C3** | Comparador determinista: elegibilidad, cantidades con mínimo/múltiplo, impuestos/descuentos/despacho, total parcial, cota inferior (LB-1…LB-8), explicabilidad y **anotación de criterios (sin alterar números)**; incluye la migración **0009**, con la que recién pasan a tener persistencia real las notas y criterios | AC18–AC20, AC31 (base) | Pendiente |
+| **C4** | API de búsqueda y cotización (síncrona, D-075) y E9 `/commercial-criteria` (alta, edición, confirmación y desactivación auditadas); incluye la migración **0010** | AC16–AC19, AC29–AC31 | Pendiente |
+| **C5** | Lovable: buscador y cotizador | AC20, AC31 (parcial) | Diseño en paralelo desde C0; **criterios y notas solo como demostración no operativa hasta C3 (0009)**; integración tras C4 |
 | **C6** | Referencias de cadenas (precio público separado de la oferta) | AC20 | **Mecanismo abierto** (§9.3) |
 | **F0** | Base: repo, FastAPI, salud, config, Alembic, pruebas | — | **Hecha** (2026-10-28) |
 | **H1-A** | Persistencia y reglas de demanda (sin Telegram): modelos, migraciones, deduplicación determinista, SET/ADD/CLEAR, auditoría/outbox, API de faltantes | AC03–AC12 (núcleo) | **Hecha** (2026-10-28) |
@@ -80,15 +80,46 @@ Qué implica el congelamiento:
   interferencia y recomendación futura en H4) no se mezclan.
 - Un cambio de alcance, esquema o semántica posterior exige una **decisión nueva** (D-094 en adelante) y una versión
   nueva del contrato; no se edita en silencio.
-- Siguen abiertas, sin bloquear C1–C4: **D-076** (esquema definitivo del catálogo comercial y migración 0008, **no
-  autorizada**) y **D-077** (contrato y formato de la planilla Excel).
+- Quedaron abiertas sin bloquear C1–C4: **D-076** (esquema del catálogo), **cerrada el 2026-10-29** con el diseño de
+  C1 (sección siguiente), y **D-077** (contrato y formato de la planilla Excel), que sigue abierta.
 - El siguiente paso es **C1** (modelo de datos), que requiere **autorización explícita de migración**.
+
+## Diseño de C1 — 2026-10-29 (D-076, D-094, adenda `chain_product`)
+
+**Hecho:** cerrado el diseño del modelo de datos del cotizador y registradas D-076 (esquema, con la adenda del mismo día
+que incorpora la ficha publicada por cadena), D-094 (catálogo neutral al tipo de producto, alternativa A), D-095 y D-096
+(diferidas) y D-097 (administración cotidiana del catálogo, pendiente). **No se escribió código, modelo, endpoint,
+migración ni cambio de base de datos; la 0008 no se ejecutó y el contrato C0 no se modificó.**
+
+Qué queda definido:
+- **Artículo neutro:** `trade_item` admite medicamentos y productos no farmacéuticos; `product_kind` es interno,
+  nullable y nunca inferido; ningún atributo farmacéutico es obligatorio. No se expone en E1/E3 (D-094).
+- **Ficha publicada por cadena:** `chain_product` guarda lo que publica cada cadena (nombre tal como se escribe,
+  descripción, laboratorio, presentación, `image_url`/`image_hash`, URL y fecha de consulta) como snapshot inmutable por
+  `content_hash`; `reference_price.chain_product_id` es obligatorio y el vínculo con `trade_item` es explícito o
+  confirmado, nunca inferido por principio activo y dosis. E1/E3 no exponen esos campos.
+- **Tres migraciones por fase:** 0008 catálogo y ofertas (**10** tablas) → C2; 0009 comparaciones y criterios (5) → C3;
+  0010 búsquedas (3) → C4. Cada tabla nace cuando su fase la consume.
+- **Integridad:** FK compuestas por organización con claves auxiliares (`source`, `chain_product`, `comparison_line`),
+  snapshots inmutables por trigger, `enforce_data_origin` en las tablas con datos externos, exclusividad nota ↔ criterio
+  derivado y `complete ⇔ total` en la base (AC19).
+- **Carga inicial:** `catalog-load` (CLI, idempotente, auditado, `--dry-run`), no un endpoint.
+
+Tres límites explícitos:
+1. **Notas y criterios no tienen persistencia real hasta la 0009.** El prototipo de Lovable puede mostrarlos como
+   demostración, pero **no** deben presentarse como funcionalidad operativa; todo dato así se etiqueta `fixture` o
+   `simulated` (HLD §22).
+2. **`catalog-load` no es la administración del catálogo.** El alta y edición diaria queda como **D-097 pendiente**, sin
+   endpoint nuevo y sin cambiar C0.
+3. **La fotografía de una cadena es una referencia, no un archivo propio.** `image_url` e `image_hash` permiten señalar la
+   imagen y detectar cambios, pero no garantizan que siga disponible; el almacenamiento propio queda pendiente para C6,
+   con decisión aparte.
 
 ## Trabajo paralelo
 
 | Pista | Contenido | Depende de |
 |---|---|---|
-| **A · Backend cotizador** | C0 → C1 → C2 → C3 → C4 | Autorización de migración (C1) y del contrato de Excel (C2) |
+| **A · Backend cotizador** | C0 → C1 → C2 → C3 → C4 | Autorización de la **migración 0008** (C1) y del contrato de Excel (C2) |
 | **B · Diseño Lovable** | Buscador y cotizador contra el contrato v0, con datos `fixture` etiquetados | C0 **cerrada** (contrato congelado el 2026-10-29): puede comenzar |
 | **C · Telegram** | H1-B.5 con el bot real (lo crea el usuario) | Token del bot |
 | **D · Operación** | Contrato generado desde FastAPI, `supabase_jwt` en demo, URL HTTPS + CORS, CI | Autorización de configuración y despliegue |
@@ -133,10 +164,16 @@ registrar criterios no crea permisos nuevos: es el mismo rol administrativo exis
 
 ## Decisiones abiertas (no bloquean C1–C4)
 
-- **D-076 (en análisis):** relación entre catálogo farmacéutico y comercial, presentaciones, GTIN y vínculo con proveedores.
+- ~~**D-076**~~ **cerrada el 2026-10-29** (esquema del catálogo, ver «Diseño de C1»).
 - **D-077 (pendiente):** carga de Excel **desde la interfaz administrativa**; contrato técnico y formato de planilla sin
   definir.
+- **D-097 (pendiente):** **administración cotidiana del catálogo** (alta y edición de artículos, mappings y alias desde
+  la interfaz). `catalog-load` es solo carga inicial; no se agrega endpoint ni se modifica C0 hasta decidirlo.
+- **D-095 (diferida):** productos no farmacéuticos en el módulo de faltantes (`demand_item.ingredient` es `NOT NULL`).
+- **D-096 (diferida):** unificación de `commercial_reference` y `trade_item`.
 - Mecanismo de extracción de precios públicos de cadenas (API, archivo, captura o navegador; sin eludir CAPTCHA/MFA).
+- **Almacenamiento propio de las imágenes y fichas publicadas por las cadenas (C6)**: hoy solo se conservan `image_url`,
+  `image_hash` y la ficha, sin garantía de disponibilidad futura ni condiciones de uso resueltas.
 - Acceso a portales privados de proveedores.
 - Cupos de crédito y condiciones comerciales (sin modelo de datos; requisito exploratorio).
 - Despliegue definitivo y escalado.
