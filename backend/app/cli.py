@@ -11,6 +11,8 @@
   list-auth-subjects --org sim|real --by <app_user_id>
   link-auth-subject <app_user_id> --org sim|real --by <app_user_id> [--subject <sub>]
   unlink-auth-subject <app_user_id> --org sim|real --by <app_user_id> --confirm
+  create-admin "<nombre>" --org sim|real --confirm
+                                  bootstrap: la PRIMERA administradora web (solo rol admin, sin enlace)
   telegram-check | telegram-poll
 
 Nada aquí usa la organización real por defecto: cada comando nombra la suya y no hay valor implícito.
@@ -31,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import dispose_engine, get_engine
 from app.models import AppUser, ChannelBinding, Organization, PurchaseCycle, TelegramAccount
-from app.services import access, identity
+from app.services import access, identity, staff
 from app.services.actors import Actor, load_actor
 from app.services.provenance import OrgKind, validate_account, validate_binding, vision_guard
 
@@ -337,6 +339,43 @@ async def unlink_auth_subject(user_id: str, which: str, a: list[str]) -> None:
     await dispose_engine()
 
 
+async def _org_id(which: str) -> tuple[uuid.UUID, str]:
+    """Organización explícita, sin actor: solo para el bootstrap, que ocurre cuando todavía no hay sesión."""
+    name, _ = ORGS[which]
+    async with AsyncSession(get_engine()) as s:
+        org = (
+            await s.execute(select(Organization).where(Organization.name == name))
+        ).scalar_one_or_none()
+        if org is None:
+            raise SystemExit(
+                f"No existe «{name}». Ejecuta primero seed-{'demo' if which == 'sim' else 'real-test'}."
+            )
+        return org.id, name
+
+
+async def create_admin(display_name: str, which: str, a: list[str]) -> None:
+    """Bootstrap: la PRIMERA administradora web. No enlaza identidad ni crea usuarios de Supabase."""
+    if "--confirm" not in a:
+        raise SystemExit(
+            "create-admin es solo para el bootstrap (una administradora activa por organización, solo "
+            "rol admin). Repite con --confirm."
+        )
+    org_id, name = await _org_id(which)
+    try:
+        async with AsyncSession(get_engine(), expire_on_commit=False) as s, s.begin():
+            u = await staff.bootstrap_admin(
+                s, organization_id=org_id, display_name=display_name
+            )
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(getattr(e, "message", str(e))) from None
+    print(f"Administradora de bootstrap creada en «{name}»: {u.display_name} ({u.id})")
+    print("  Roles: admin (sin purchasing: no reporta faltantes ni aparece en el bot).")
+    print("  Sin enlace de identidad: sin acceso web hasta enlazar el sub de Supabase.")
+    print(f"  Siguiente paso: ingresa con Google, obtén el sub y ejecuta "
+          f"`link-auth-subject {u.id} --org {which} --by {u.id}`.")
+    await dispose_engine()
+
+
 async def telegram_check() -> None:
     """getMe: comprueba que el token funciona SIN mostrarlo."""
     from app.core.config import get_settings
@@ -405,6 +444,8 @@ def main() -> None:
         asyncio.run(link_auth_subject(a[1], _org_arg(a), a))
     elif len(a) >= 2 and a[0] == "unlink-auth-subject":
         asyncio.run(unlink_auth_subject(a[1], _org_arg(a), a))
+    elif len(a) >= 2 and a[0] == "create-admin":
+        asyncio.run(create_admin(a[1], _org_arg(a), a))
     elif a == ["telegram-check"]:
         asyncio.run(telegram_check())
     elif a == ["telegram-poll"]:
@@ -419,6 +460,7 @@ def main() -> None:
             "list-auth-subjects --org sim|real --by <id> | "
             "link-auth-subject <id> --org sim|real --by <id> [--subject <sub>] | "
             "unlink-auth-subject <id> --org sim|real --by <id> --confirm | "
+            "create-admin \"<nombre>\" --org sim|real --confirm | "
             "telegram-check | telegram-poll"
         )
 

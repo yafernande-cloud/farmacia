@@ -3,6 +3,10 @@
 Tres conceptos separados (ver app/core/staff.py): pertenecer, estar disponible y tener sesión activa.
 Todo cambio que deja a una persona sin poder reportar (desactivarla o marcarla no disponible) REVOCA sus
 sesiones activas en la misma transacción: el siguiente mensaje del teléfono compartido exigirá elegir otra identidad.
+
+`bootstrap_admin` es la única alta sin sesión administrativa: sirve para el PRIMER acceso web cuando ninguna
+administradora puede iniciar sesión todavía. No crea enlaces ni usuarios de Supabase y queda auditada como
+acción del operador (`actor_id = NULL`), no de una persona.
 """
 
 import uuid
@@ -14,10 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import DomainError, not_found
 from app.core.permissions import Permission, Role, can_report, require
 from app.core.staff import AbsenceReason, absence_label
-from app.models import ActorSession, AppUser, DemandObservation
+from app.models import ActorSession, AppUser, AuditEvent, DemandObservation
 from app.services import sessions
 from app.services.actors import Actor
 from app.services.events import advisory_lock, emit
+from app.services.provenance import OrgKind, org_kind
 
 ASSIGNABLE_ROLES = {r.value for r in Role}
 
@@ -171,6 +176,84 @@ async def create_staff(
     await session.flush()
     emit(session, org_id=org, actor_id=actor.id, action="staff.created", entity_type="app_user", entity_id=u.id,
          event_type="staff.updated", aggregate_version=None, payload={"user_id": str(u.id)}, after=_snap(u))  # fmt: skip
+    return u
+
+
+BOOTSTRAP_ROLES = [Role.ADMIN.value]
+
+
+async def bootstrap_admin(
+    session: AsyncSession, *, organization_id: uuid.UUID, display_name: str
+) -> AppUser:
+    """Crea la primera administradora web cuando todavía no existe ninguna vía de acceso administrativa.
+
+    Restricciones deliberadas (no es un mantenedor de personal):
+    * Solo `admin`, sin otros roles: no puede reportar faltantes y no aparece en el selector del bot.
+    * Solo en `simulation` y `real_test`: producción (y el archivo `legacy_mixed`) se administran por la API
+      autenticada.
+    * Se niega si ya hay una persona activa con rol `admin` **y** `auth_subject` enlazado: ya existe una
+      vía de entrada y no corresponde un bootstrap.
+    * Una sola administradora de bootstrap **activa** por organización (se detecta por auditoría); si se
+      desactiva, se permite recuperar el acceso con un nuevo bootstrap.
+    * No enlaza `auth_subject`, no crea usuarios de Supabase ni envía correo.
+
+    La acción se audita con `actor_id = NULL`: la ejecuta el operador, no una persona de la farmacia.
+    """
+    if await org_kind(session, organization_id) not in (OrgKind.SIMULATION, OrgKind.REAL_TEST):
+        raise DomainError(
+            "BOOTSTRAP_NOT_ALLOWED",
+            "El bootstrap por CLI solo se permite en simulación y en prueba real: en producción (o en el "
+            "archivo) las altas se hacen por la API autenticada.",
+            status_code=409,
+        )
+    name = _clean_name(display_name)
+    await advisory_lock(session, f"staff:{organization_id}")
+
+    linked = (
+        await session.execute(
+            select(AppUser.roles).where(
+                AppUser.organization_id == organization_id,
+                AppUser.active,
+                AppUser.auth_subject.is_not(None),
+            )
+        )
+    ).scalars()
+    if any(Role.ADMIN.value in (roles or []) for roles in linked):
+        raise DomainError(
+            "ADMIN_ACCESS_EXISTS",
+            "Ya hay una administradora activa con acceso web. Crea al resto del personal desde la API "
+            "autenticada.",
+            status_code=409,
+        )
+
+    previous = (
+        await session.execute(
+            select(AppUser.id)
+            .join(AuditEvent, AuditEvent.entity_id == AppUser.id)
+            .where(
+                AuditEvent.organization_id == organization_id,
+                AuditEvent.entity_type == "app_user",
+                AuditEvent.action == "staff.bootstrap_created",
+                AppUser.active,
+            )
+        )
+    ).first()
+    if previous is not None:
+        raise DomainError(
+            "BOOTSTRAP_ALREADY_DONE",
+            "Ya existe una administradora creada por bootstrap. Gestiónala o desactívala antes de "
+            "repetir el comando.",
+            status_code=409,
+        )
+
+    await _assert_unique_name(session, organization_id, name)
+    u = AppUser(organization_id=organization_id, display_name=name, roles=list(BOOTSTRAP_ROLES))
+    session.add(u)
+    await session.flush()
+    emit(session, org_id=organization_id, actor_id=None, action="staff.bootstrap_created",
+         entity_type="app_user", entity_id=u.id, event_type="staff.updated",
+         aggregate_version=None, payload={"user_id": str(u.id), "origin": "cli_bootstrap"},
+         after=_snap(u))  # fmt: skip
     return u
 
 
