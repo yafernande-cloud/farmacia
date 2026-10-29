@@ -20,6 +20,9 @@ class Permission(StrEnum):
     MANAGE_STAFF = (
         "manage_staff"  # personal: crear, renombrar, activar, disponibilidad (rol administrador)
     )
+    MANAGE_ACCOUNTS = (
+        "manage_accounts"  # aprobar solicitudes y bloquear/rehabilitar cuentas de Telegram (rol admin)
+    )
     CONFIRM_ATTRIBUTES = "confirm_attributes"  # confirmar unidad/forma/contenido; gestionar alias
 
 
@@ -34,7 +37,11 @@ _GRANTS: dict[Role, set[Permission]] = {
         Permission.CONFIRM_ATTRIBUTES,
     },
     Role.APPROVER: {Permission.VIEW_LIST},
-    Role.ADMIN: {Permission.VIEW_LIST, Permission.MANAGE_STAFF},  # no implica permisos de compras
+    Role.ADMIN: {
+        Permission.VIEW_LIST,
+        Permission.MANAGE_STAFF,
+        Permission.MANAGE_ACCOUNTS,
+    },  # no implica permisos de compras
 }
 
 

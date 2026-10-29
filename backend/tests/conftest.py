@@ -219,10 +219,11 @@ def make_rt(sessions, tg_api, tmp_path):
     from app.telegram.handler import TelegramRuntime
     from tests.tgsim import TOKEN
 
-    def build(vision=None, idle=10, pending_age=15, ai=None):
+    def build(vision=None, idle=10, pending_age=15, ai=None, access_org=None):
         client = TelegramClient(TOKEN, "http://tg.test", transport=tg_api.transport)
         cfg = ChannelConfig(idle=timedelta(minutes=idle), pending_max_age=timedelta(minutes=pending_age),
-                            page_size=3, vision_enabled=vision is not None, ai=ai)  # fmt: skip
+                            page_size=3, vision_enabled=vision is not None, ai=ai,
+                            access_org_id=access_org)  # fmt: skip
         return TelegramRuntime(
             sessions,
             client,

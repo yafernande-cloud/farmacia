@@ -101,7 +101,8 @@ def _end(session, binding, sess: ActorSession, when: datetime, reason: str, acto
          entity_type="actor_session", entity_id=sess.id, event_type=f"session.{reason}",
          aggregate_version=None,
          payload={"session_id": str(sess.id), "auxiliary_id": str(sess.auxiliary_id),
-                  "binding_id": str(binding.id)})  # fmt: skip
+                  "binding_id": str(binding.id),
+                  "account_id": str(sess.account_id) if sess.account_id else None})  # fmt: skip
 
 
 async def active_session(
@@ -171,9 +172,15 @@ async def select_auxiliary(
     *,
     event_id: uuid.UUID | None = None,
     pin_verified: bool = False,
+    identity_level: str | None = None,
+    account_id: uuid.UUID | None = None,
 ) -> ActorSession:
-    """Identifica al auxiliar activo (cierra la sesión anterior). `declared` salvo que el llamador
-    haya verificado un PIN con `verify_pin_attempt` (entonces `pin`)."""
+    """Identifica al auxiliar activo (cierra la sesión anterior).
+
+    `declared` salvo que el llamador haya verificado un PIN (`pin`) o la cuenta personal ya esté
+    autorizada (`account`, identidad fija sin selección). `account_id` deja trazabilidad de la cuenta
+    de Telegram que envía, también en el teléfono compartido.
+    """
     await _lock_chat(session, binding)
     org = binding.organization_id
     user = (
@@ -185,7 +192,13 @@ async def select_auxiliary(
     if err is not None:  # un botón antiguo no puede elegir a quien ya no está disponible
         raise err
     assert user is not None
-    level = "pin" if pin_verified else "declared"
+    level = identity_level or ("pin" if pin_verified else "declared")
+    if level not in ("declared", "pin", "account"):
+        raise DomainError("INVALID_IDENTITY_LEVEL", "Nivel de identidad inválido.", status_code=400)
+    if level == "account" and account_id is None:
+        raise DomainError(
+            "ACCOUNT_REQUIRED", "Una identidad de cuenta requiere la cuenta autorizada.", status_code=400
+        )
     prev = await _active_row(session, binding)
     changed = False
     if prev is not None:
@@ -197,7 +210,8 @@ async def select_auxiliary(
         await session.flush()
     sess = ActorSession(
         organization_id=org, channel_binding_id=binding.id, auxiliary_id=user_id, identity_level=level,
-        started_at=now, last_activity_at=now, expires_at=now + idle, selected_by_event_id=event_id,
+        account_id=account_id, started_at=now, last_activity_at=now, expires_at=now + idle,
+        selected_by_event_id=event_id,
     )  # fmt: skip
     session.add(sess)
     await session.flush()
@@ -205,6 +219,7 @@ async def select_auxiliary(
          entity_type="actor_session", entity_id=sess.id, event_type="session.selected",
          aggregate_version=None,
          payload={"session_id": str(sess.id), "auxiliary_id": str(user_id), "identity_level": level,
+                  "account_id": str(account_id) if account_id else None,
                   "previous_auxiliary_id": str(prev.auxiliary_id) if prev else None},
          after={"auxiliary": user.display_name, "identity_level": level, "declared_not_authenticated": level == "declared"})  # fmt: skip
     return sess
@@ -259,6 +274,33 @@ async def revoke_person_sessions(
     ).all()
     for sess, binding in rows:
         await advisory_lock(session, f"chan:{binding.id}")
+        _end(session, binding, sess, now, "revoked", actor_id=by)
+    await session.flush()
+    return len(rows)
+
+
+async def revoke_binding_sessions(
+    session: AsyncSession,
+    binding: ChannelBinding,
+    now: datetime,
+    *,
+    by: uuid.UUID | None = None,
+) -> int:
+    """Cierra la sesión activa de un chat (al revocar la cuenta que lo autorizó)."""
+    await _lock_chat(session, binding)
+    rows = list(
+        (
+            await session.execute(
+                select(ActorSession)
+                .where(
+                    ActorSession.channel_binding_id == binding.id,
+                    ActorSession.ended_at.is_(None),
+                )
+                .with_for_update()
+            )
+        ).scalars()
+    )
+    for sess in rows:
         _end(session, binding, sess, now, "revoked", actor_id=by)
     await session.flush()
     return len(rows)

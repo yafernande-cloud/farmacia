@@ -30,12 +30,15 @@ from app.models import (
     OutboundMessage,
 )
 from app.services import queries, sessions
+from app.services.access import AccountContext
 from app.services.actors import Actor, load_actor
 from app.services.demand import ObservationResult, Origin, record_observation
 from app.services.events import advisory_lock, emit
 from app.services.provenance import org_kind, origin_for
 
 KEYBOARD = [["Ver lista", "Cambiar auxiliar"], ["Finalizar reportes", "¿Quién soy?"]]
+# En un teléfono personal no hay selector de identidad: la cuenta autorizada ya la fija.
+KEYBOARD_PERSONAL = [["Ver lista", "¿Quién soy?"], ["Ayuda"]]
 CMD_LIST = {"/lista", "ver lista", "lista"}
 CMD_CHANGE = {"/cambiar", "cambiar auxiliar", "cambiar"}
 CMD_WHO = {"/quien", "¿quién soy?", "quien soy", "¿quien soy?", "/yo"}
@@ -78,6 +81,9 @@ class ChannelEvent:
     photo: PhotoRef | None = None
     callback_data: str | None = None
     callback_id: str | None = None
+    # Quién envía (cuenta de Telegram) y tipo de chat. Sin esto no se puede validar la cuenta.
+    sender_id: str | None = None
+    chat_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -87,13 +93,27 @@ class ChannelConfig:
     page_size: int = 8
     vision_enabled: bool = False  # hay un proveedor de visión (real o simulado) conectado
     ai: AIInterpreter | None = None
+    # Organización que recibe las solicitudes de acceso. Sin ella, el bot lo dice con honestidad.
+    access_org_id: uuid.UUID | None = None
 
 
 # ------------------------------------------------------------------ textos
 
 
-def _footer(name: str) -> str:
-    return f"— Reportando como {name}"
+def _footer(name: str, personal: bool = False) -> str:
+    return f"— Reportando como {name}" + (" (cuenta autorizada)" if personal else "")
+
+
+def _is_personal(account: AccountContext | None) -> bool:
+    return account is not None and account.personal
+
+
+def _keyboard(account: AccountContext | None) -> list[list[str]]:
+    return KEYBOARD_PERSONAL if _is_personal(account) else KEYBOARD
+
+
+def _account_id(account: AccountContext | None) -> uuid.UUID | None:
+    return account.account_id if account else None
 
 
 def _selector(auxs: list[AppUser], text: str) -> Reply:
@@ -144,13 +164,13 @@ def line_for(r: ObservationResult, raw: str) -> str:
 
 
 async def _store_message(session, binding, inbound: InboundEvent, ev: ChannelEvent, *, kind, text, status,
-                         author=None, sess=None, basis=None, now: datetime) -> ChannelMessage:  # fmt: skip
+                         author=None, sess=None, basis=None, account_id=None, now: datetime) -> ChannelMessage:  # fmt: skip
     m = ChannelMessage(
         organization_id=binding.organization_id, channel_binding_id=binding.id, inbound_event_id=inbound.id,
         external_message_id=ev.message_id, kind=kind, text=text, sent_at=ev.sent_at,
         received_at=now,  # el MISMO reloj que las sesiones: la antigüedad de un pendiente no depende de la base
         attribution_status=status, author_id=author.id if author else None,
-        session_id=sess.id if sess else None, attribution_basis=basis,
+        session_id=sess.id if sess else None, account_id=account_id, attribution_basis=basis,
         attributed_at=now if status == "attributed" else None,
         data_origin=origin_for(await org_kind(session, binding.organization_id)),  # captura real o simulación
     )  # fmt: skip
@@ -167,15 +187,65 @@ async def _auxiliary_actor(session, sess: ActorSession) -> Actor | None:
     return await load_actor(session, sess.auxiliary_id)
 
 
+async def _personal_identity(
+    session, binding, account: AccountContext, now: datetime, idle: timedelta,
+    event_id: uuid.UUID | None = None,
+) -> tuple[ActorSession | None, Actor | None, DomainError | None]:  # fmt: skip
+    """Identidad FIJA de una cuenta personal: la persona ligada, sin selector ni pasos extra.
+
+    La sesión sigue expirando por inactividad, pero se renueva sola en el siguiente mensaje. Si la
+    persona deja de estar activa/disponible, no se identifica (el mensaje queda pendiente).
+    """
+    person = await session.get(AppUser, account.app_user_id) if account.app_user_id else None
+    err = sessions.ineligibility(person)
+    if err is not None:
+        return None, None, err
+    sess = await sessions.active_session(session, binding, now, idle)
+    if sess is None or sess.identity_level != "account" or sess.account_id != account.account_id:
+        sess = await sessions.select_auxiliary(
+            session, binding, account.app_user_id, now, idle, event_id=event_id,
+            identity_level="account", account_id=account.account_id,
+        )  # fmt: skip
+    else:
+        await sessions.touch(session, sess, now, idle)
+    actor = await load_actor(session, account.app_user_id)
+    if actor is None:
+        return None, None, DomainError("PERSON_NOT_FOUND", "La persona ya no está activa.", status_code=403)
+    return sess, actor, None
+
+
+async def _resolve_identity(
+    session, binding, account: AccountContext | None, now: datetime, idle: timedelta,
+    event_id: uuid.UUID | None = None,
+) -> tuple[ActorSession | None, Actor | None, DomainError | None]:  # fmt: skip
+    if _is_personal(account):
+        return await _personal_identity(session, binding, account, now, idle, event_id)
+    sess = await sessions.active_session(session, binding, now, idle)  # expira si corresponde
+    actor = await _auxiliary_actor(session, sess) if sess else None
+    if sess and actor is None:  # el auxiliar dejó de estar habilitado
+        await sessions.end_session(session, binding, now)
+        sess = None
+    return sess, actor, None
+
+
+def _identity_error_text(err: DomainError | None) -> str:
+    return (
+        err.message
+        if err is not None
+        else "Nadie ha elegido identidad todavía (o la sesión expiró)."
+    )
+
+
 async def _record_segments(session, binding, actor: Actor, sess, msg: ChannelMessage, text: str,
-                           key_prefix: str, cfg: ChannelConfig, basis_level: str = "declared") -> list[str]:  # fmt: skip
+                           key_prefix: str, cfg: ChannelConfig, basis_level: str = "declared",
+                           account_id: uuid.UUID | None = None) -> list[str]:  # fmt: skip
     segs, truncated = split_segments(text)
     lines: list[str] = []
     for i, seg in enumerate(segs):
         try:
             r = await record_observation(
                 session, actor, text=seg, idempotency_key=f"{key_prefix}:{i}", ai=cfg.ai,
-                origin=Origin("telegram_text", basis_level, sess.id, msg.id),
+                origin=Origin("telegram_text", basis_level, sess.id, msg.id, account_id=account_id),
             )  # fmt: skip
             lines.append(line_for(r, seg))
         except DomainError as e:
@@ -202,134 +272,197 @@ async def _pending_messages(session, binding) -> list[ChannelMessage]:
 
 
 async def handle_event(session: AsyncSession, binding: ChannelBinding, ev: ChannelEvent,
-                       inbound: InboundEvent, now: datetime, cfg: ChannelConfig) -> list[Reply]:  # fmt: skip
+                       inbound: InboundEvent, now: datetime, cfg: ChannelConfig,
+                       account: AccountContext | None = None) -> list[Reply]:  # fmt: skip
     await advisory_lock(session, f"chan:{binding.id}")  # un evento por chat a la vez
     org = binding.organization_id
+    personal = _is_personal(account)
+    keyboard = _keyboard(account)
     ack = [Reply("", answer_callback_id=ev.callback_id)] if ev.callback_id else []
 
     if ev.kind == "edited":
         return [
             Reply(
-                "Vi que editaste un mensaje; no cambié nada. Si era otro producto, envíalo de nuevo."
+                "Vi que editaste un mensaje; no cambié nada. Si era otro producto, envíalo de nuevo.",
+                keyboard=keyboard,
             )
         ]
     if ev.kind == "other":
-        return [Reply("Por ahora solo entiendo texto y fotos.")]
+        return [Reply("Por ahora solo entiendo texto y fotos.", keyboard=keyboard)]
 
     if ev.kind == "callback":
-        return ack + await _on_callback(session, binding, ev, inbound, now, cfg)
+        return ack + await _on_callback(session, binding, ev, inbound, now, cfg, account)
 
     text = (ev.text or "").strip()
     low = text.lower()
     if ev.kind == "start" or low in ("/start",):
-        sess = await sessions.active_session(session, binding, now, cfg.idle)
-        if sess:
-            return [await _whoami(session, sess, cfg, prefix="Hola de nuevo. ")]
-        return [
-            _selector(
-                await sessions.list_reporters(session, org), "Hola. ¿Quién va a reportar ahora?"
-            )
-        ]
+        sess, _actor, err = await _resolve_identity(
+            session, binding, account, now, cfg.idle, event_id=inbound.id
+        )
+        if sess is None:
+            if personal:
+                return [Reply(f"Hola. {_identity_error_text(err)}", keyboard=keyboard)]
+            auxs = await sessions.list_reporters(session, org)
+            if not auxs:
+                return [_selector(auxs, "Hola.")]
+            return [
+                Reply(
+                    f"Hola. {_identity_error_text(err)} ¿Quién va a reportar ahora?",
+                    _selector_buttons(auxs),
+                    keyboard,
+                )
+            ]
+        return [await _whoami(session, sess, cfg, prefix="Hola de nuevo. ", personal=personal)]
     if ev.kind == "text":
         if low in CMD_LIST:
-            return [await _list_reply(session, org, 0, cfg)]
+            return [await _list_reply(session, org, 0, cfg, keyboard)]
         if low in CMD_CHANGE:
+            if personal:
+                return [
+                    Reply(
+                        f"Esta cuenta está vinculada a {account.display_label}: la identidad se fija "
+                        "automáticamente y no se cambia desde aquí. Para elegir otra persona, usa el "
+                        "teléfono compartido.",
+                        keyboard=keyboard,
+                    )
+                ]
             return [
                 _selector(
                     await sessions.list_reporters(session, org), "¿Quién va a reportar ahora?"
                 )
             ]
         if low in CMD_WHO:
-            sess = await sessions.active_session(session, binding, now, cfg.idle)
-            return [await _whoami(session, sess, cfg)]
+            sess, _actor, err = await _resolve_identity(
+                session, binding, account, now, cfg.idle, event_id=inbound.id
+            )
+            if sess is None:
+                return [Reply(_identity_error_text(err), keyboard=keyboard)]
+            return [await _whoami(session, sess, cfg, personal=personal)]
         if low in CMD_HELP:
-            return [Reply(_HELP, keyboard=KEYBOARD)]
+            return [Reply(_HELP_PERSONAL if personal else _HELP, keyboard=keyboard)]
         if low in CMD_LOGOUT:
+            if personal:
+                return [
+                    Reply(
+                        "Esta cuenta autorizada se identifica automáticamente: no queda sin identidad. "
+                        "Si no quieres reportar, simplemente no envíes mensajes.",
+                        keyboard=keyboard,
+                    )
+                ]
             done = await sessions.end_session(session, binding, now)
             return [
                 Reply(
                     "Reportes finalizados: nadie queda identificado. Para volver a reportar, elige tu nombre en «Cambiar auxiliar»."
                     if done
                     else "No había una sesión activa.",
-                    keyboard=KEYBOARD,
+                    keyboard=keyboard,
                 )
             ]
 
-    sess = await sessions.active_session(session, binding, now, cfg.idle)  # expira si corresponde
-    actor = await _auxiliary_actor(session, sess) if sess else None
-    if sess and actor is None:  # el auxiliar dejó de estar habilitado
-        await sessions.end_session(session, binding, now)
-        sess = None
+    sess, actor, err = await _resolve_identity(
+        session, binding, account, now, cfg.idle, event_id=inbound.id
+    )
 
     if ev.kind == "photo":
-        return await _on_photo(session, binding, ev, inbound, sess, actor, now, cfg)
+        return await _on_photo(session, binding, ev, inbound, sess, actor, now, cfg, account, err)
 
     if sess is None or actor is None:
-        await _store_message(
-            session,
-            binding,
-            inbound,
-            ev,
-            kind="text",
-            text=text,
-            status="pending_attribution",
-            now=now,
-        )
+        msg = await _store_message(
+            session, binding, inbound, ev, kind="text", text=text,
+            status="pending_attribution", account_id=_account_id(account), now=now,
+        )  # fmt: skip
         emit(session, org_id=org, actor_id=None, action="message.pending_attribution", entity_type="inbound_event",
              entity_id=inbound.id, event_type="message.pending_attribution", aggregate_version=None,
-             payload={"binding_id": str(binding.id)})  # fmt: skip
+             payload={"binding_id": str(binding.id),
+                      "account_id": str(_account_id(account)) if account else None})  # fmt: skip
+        if personal:
+            return [Reply(
+                f"Guardé tu mensaje, pero no lo anoto: {_identity_error_text(err)}",
+                buttons=[[Button(f"Anotar a nombre de {account.display_label}", "att:ok"),
+                          Button("Descartar", "att:no")]],
+                keyboard=keyboard,
+            )]  # fmt: skip
         return [_selector(await sessions.list_reporters(session, org),
                           "Guardé tu mensaje, pero no lo anoto a nombre de nadie hasta saber quién eres. ¿Quién eres?")]  # fmt: skip
 
     intent = classify_intent(text)
     await sessions.touch(session, sess, now, cfg.idle)
+    basis = "authorized_account" if personal else "session_at_receipt"
     msg = await _store_message(session, binding, inbound, ev, kind="text", text=text, status="attributed",
-                               author=actor, sess=sess, basis="session_at_receipt", now=now)  # fmt: skip
+                               author=actor, sess=sess, basis=basis,
+                               account_id=_account_id(account), now=now)  # fmt: skip
     if intent is Intent.CHITCHAT or intent is Intent.EMPTY:
         return [
             Reply(
                 f"Hola, {actor.display_name}. Escribe lo que falta (ej.: «falta ibuprofeno 400 mg») o envía una foto del envase.",
-                keyboard=KEYBOARD,
+                keyboard=keyboard,
             )
         ]
     if intent is Intent.QUESTION:
         return [
             Reply(
                 "No registro preguntas. Para anotar un faltante escribe el producto; para consultar, usa «Ver lista».",
-                keyboard=KEYBOARD,
+                keyboard=keyboard,
             )
         ]
     lines = await _record_segments(session, binding, actor, sess, msg, text,
-                                   f"tg:{binding.id}:{ev.event_id}", cfg)  # fmt: skip
-    return [Reply("\n".join(lines) + f"\n{_footer(actor.display_name)}", keyboard=KEYBOARD)]
+                                   f"tg:{binding.id}:{ev.event_id}", cfg,
+                                   basis_level="account" if personal else "declared",
+                                   account_id=_account_id(account))  # fmt: skip
+    return [Reply("\n".join(lines) + f"\n{_footer(actor.display_name, personal)}", keyboard=keyboard)]
+
+
+def _selector_buttons(auxs: list[AppUser]) -> list[list[Button]]:
+    rows, row = [], []
+    for u in auxs:
+        row.append(Button(u.display_name, f"sel:{u.id}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return rows
 
 
 _HELP = (
     "Escribe lo que falta («falta ibuprofeno 400 mg») o envía una foto del envase. "
     "«Ver lista» muestra lo que ya está anotado; «Cambiar auxiliar» cambia quién reporta."
 )
+_HELP_PERSONAL = (
+    "Escribe lo que falta («falta ibuprofeno 400 mg») o envía una foto del envase. "
+    "«Ver lista» muestra lo que ya está anotado. Esta cuenta está vinculada a una persona: "
+    "no necesitas elegir identidad en cada mensaje."
+)
 
 
 async def _whoami(
-    session, sess: ActorSession | None, cfg: ChannelConfig, prefix: str = ""
+    session, sess: ActorSession | None, cfg: ChannelConfig, prefix: str = "", personal: bool = False
 ) -> Reply:
     if sess is None:
         return Reply(
             "Nadie ha elegido identidad todavía (o la sesión expiró). Usa «Cambiar auxiliar».",
-            keyboard=KEYBOARD,
+            keyboard=KEYBOARD_PERSONAL if personal else KEYBOARD,
         )
     u = await session.get(AppUser, sess.auxiliary_id)
+    if personal:
+        return Reply(
+            f"{prefix}Estás reportando como {u.display_name} (cuenta de Telegram autorizada; "
+            "la identidad se fija automáticamente).",
+            keyboard=KEYBOARD_PERSONAL,
+        )
     mins = int(cfg.idle.total_seconds() // 60)
     return Reply(f"{prefix}Estás reportando como {u.display_name} (identidad declarada; "
                  f"expira tras {mins} min sin uso).", keyboard=KEYBOARD)  # fmt: skip
 
 
-async def _list_reply(session, org, page: int, cfg: ChannelConfig) -> Reply:
+async def _list_reply(
+    session, org, page: int, cfg: ChannelConfig, keyboard: list[list[str]] = KEYBOARD
+) -> Reply:
     items, agg, more, total, pending = await queries.list_items_page(
         session, org, page=page, size=cfg.page_size
     )
     if not total:
-        return Reply("La lista de faltantes está vacía.", keyboard=KEYBOARD)
+        return Reply("La lista de faltantes está vacía.", keyboard=keyboard)
     lines = [
         f"Faltantes activos: {total}" + (f" · {pending} aviso(s) por revisar" if pending else "")
     ]
@@ -345,31 +478,43 @@ async def _list_reply(session, org, page: int, cfg: ChannelConfig) -> Reply:
             + (f" ({', '.join(who)})" if who else "")
         )
     buttons = [[Button("Ver más", f"lst:{page + 1}")]] if more else []
-    return Reply("\n".join(lines), buttons, KEYBOARD)
+    return Reply("\n".join(lines), buttons, keyboard)
 
 
-async def _on_callback(session, binding, ev, inbound, now, cfg) -> list[Reply]:
+async def _on_callback(session, binding, ev, inbound, now, cfg,
+                       account: AccountContext | None = None) -> list[Reply]:  # fmt: skip
     org = binding.organization_id
+    personal = _is_personal(account)
+    keyboard = _keyboard(account)
     data = ev.callback_data or ""
     if data.startswith("lst:"):
         try:
             page = max(0, int(data[4:]))
         except ValueError:
             return []
-        return [await _list_reply(session, org, page, cfg)]
+        return [await _list_reply(session, org, page, cfg, keyboard)]
     if data.startswith("sel:"):
+        if personal:
+            return [
+                Reply(
+                    "Esta cuenta está vinculada a una persona: la identidad no se cambia desde aquí.",
+                    keyboard=keyboard,
+                )
+            ]
         try:
             uid = uuid.UUID(data[4:])
             sess = await sessions.select_auxiliary(
-                session, binding, uid, now, cfg.idle, event_id=inbound.id
-            )
+                session, binding, uid, now, cfg.idle, event_id=inbound.id,
+                account_id=_account_id(account),
+            )  # fmt: skip
         except (ValueError, DomainError) as e:
             # Botón antiguo o persona que ya no está disponible: se explica y se muestran los botones VIGENTES.
             return [
                 Reply(
                     "No pude cambiar la identidad: "
                     + getattr(e, "message", "dato inválido")
-                    + " Elige a alguien de la lista actual."
+                    + " Elige a alguien de la lista actual.",
+                    keyboard=keyboard,
                 ),
                 _selector(
                     await sessions.list_reporters(session, org), "¿Quién va a reportar ahora?"
@@ -377,30 +522,39 @@ async def _on_callback(session, binding, ev, inbound, now, cfg) -> list[Reply]:
             ]
         u = await session.get(AppUser, sess.auxiliary_id)
         replies = [
-            Reply(f"Listo, {u.display_name}. Reportando como {u.display_name}.", keyboard=KEYBOARD)
+            Reply(f"Listo, {u.display_name}. Reportando como {u.display_name}.", keyboard=keyboard)
         ]
         pend = await _pending_messages(session, binding)
         if pend:
             fresh = [m for m in pend if m.received_at >= now - cfg.pending_max_age]
             note = f"Tienes {len(fresh)} mensaje(s) recibido(s) antes de identificarte."
             replies.append(Reply(f"{note} ¿Los anoto a nombre de {u.display_name}?",
-                                 [[Button(f"Anotar a nombre de {u.display_name}", "att:ok"), Button("Descartar", "att:no")]]))  # fmt: skip
+                                 [[Button(f"Anotar a nombre de {u.display_name}", "att:ok"), Button("Descartar", "att:no")]],
+                                 keyboard))  # fmt: skip
         return replies
     if data in ("att:ok", "att:no"):
-        return await _on_pending_decision(session, binding, inbound, data == "att:ok", now, cfg)
+        return await _on_pending_decision(
+            session, binding, inbound, data == "att:ok", now, cfg, account
+        )
     return []
 
 
-async def _on_pending_decision(session, binding, inbound, accept: bool, now, cfg) -> list[Reply]:
-    sess = await sessions.active_session(session, binding, now, cfg.idle)
-    actor = await _auxiliary_actor(session, sess) if sess else None
+async def _on_pending_decision(session, binding, inbound, accept: bool, now, cfg,
+                               account: AccountContext | None = None) -> list[Reply]:  # fmt: skip
+    personal = _is_personal(account)
+    keyboard = _keyboard(account)
+    sess, actor, err = await _resolve_identity(
+        session, binding, account, now, cfg.idle, event_id=inbound.id
+    )
     if sess is None or actor is None:
+        if personal:
+            return [Reply(_identity_error_text(err), keyboard=keyboard)]
         return [_selector(await sessions.list_reporters(session, binding.organization_id),
                           "Primero necesito saber quién eres.")]  # fmt: skip
     org = binding.organization_id
     pend = await _pending_messages(session, binding)
     if not pend:
-        return [Reply("No hay mensajes pendientes.", keyboard=KEYBOARD)]
+        return [Reply("No hay mensajes pendientes.", keyboard=keyboard)]
     lines: list[str] = []
     done = stale = 0
     for m in pend:
@@ -413,16 +567,24 @@ async def _on_pending_decision(session, binding, inbound, accept: bool, now, cfg
                  entity_id=m.id, event_type="message.discarded", aggregate_version=None,
                  payload={"reason": m.discard_reason})  # fmt: skip
             continue
-        # La persona confirmó explícitamente: queda atribuida con base `confirmed_after_identification`.
+        # La persona confirmó explícitamente: queda atribuida. En una cuenta personal la base es
+        # `authorized_account` (la cuenta ya fijaba la identidad); en el teléfono compartido,
+        # `confirmed_after_identification`.
         m.attribution_status, m.author_id, m.session_id = "attributed", actor.id, sess.id
-        m.attribution_basis, m.attributed_at = "confirmed_after_identification", now
+        m.attribution_basis = "authorized_account" if personal else "confirmed_after_identification"
+        m.attributed_at = now
+        if m.account_id is None:
+            m.account_id = _account_id(account)
         emit(session, org_id=org, actor_id=actor.id, action="message.attributed", entity_type="channel_message",
              entity_id=m.id, event_type="message.attributed", aggregate_version=None,
-             payload={"basis": m.attribution_basis, "session_id": str(sess.id)})  # fmt: skip
+             payload={"basis": m.attribution_basis, "session_id": str(sess.id),
+                      "account_id": str(m.account_id) if m.account_id else None})  # fmt: skip
         orig = (await session.get(InboundEvent, m.inbound_event_id)).external_event_id
         if m.kind == "text":
             lines += await _record_segments(session, binding, actor, sess, m, m.text or "",
-                                            f"tg:{binding.id}:{orig}", cfg)  # fmt: skip
+                                            f"tg:{binding.id}:{orig}", cfg,
+                                            basis_level="account" if personal else "declared",
+                                            account_id=m.account_id)  # fmt: skip
         else:
             att = (
                 await session.execute(
@@ -438,28 +600,34 @@ async def _on_pending_decision(session, binding, inbound, accept: bool, now, cfg
         done += 1
     await sessions.touch(session, sess, now, cfg.idle)
     if not accept:
-        return [Reply("Descartados. No se anotó nada.", keyboard=KEYBOARD)]
+        return [Reply("Descartados. No se anotó nada.", keyboard=keyboard)]
     if stale:
         lines.append(
             f"{stale} mensaje(s) eran de hace demasiado rato y no se pueden atribuir; envíalos de nuevo."
         )
     return [
         Reply(
-            "\n".join(lines or ["Listo."]) + f"\n{_footer(actor.display_name)}", keyboard=KEYBOARD
+            "\n".join(lines or ["Listo."]) + f"\n{_footer(actor.display_name, personal)}",
+            keyboard=keyboard,
         )
     ]
 
 
-async def _on_photo(session, binding, ev, inbound, sess, actor, now, cfg) -> list[Reply]:
+async def _on_photo(session, binding, ev, inbound, sess, actor, now, cfg,
+                    account: AccountContext | None = None,
+                    identity_error: DomainError | None = None) -> list[Reply]:  # fmt: skip
     org = binding.organization_id
+    personal = _is_personal(account)
+    keyboard = _keyboard(account)
     ph = ev.photo
     if ph is None:
-        return [Reply("No pude leer la foto.")]
+        return [Reply("No pude leer la foto.", keyboard=keyboard)]
     attributed = sess is not None and actor is not None
+    basis = ("authorized_account" if personal else "session_at_receipt") if attributed else None
     msg = await _store_message(session, binding, inbound, ev, kind="photo", text=ev.text,
                                status="attributed" if attributed else "pending_attribution",
                                author=actor if attributed else None, sess=sess if attributed else None,
-                               basis="session_at_receipt" if attributed else None, now=now)  # fmt: skip
+                               basis=basis, account_id=_account_id(account), now=now)  # fmt: skip
     session.add(Attachment(
         organization_id=org, channel_message_id=msg.id, author_id=actor.id if attributed else None,
         provider_file_id=ph.file_id, provider_file_unique_id=ph.file_unique_id, width=ph.width,
@@ -469,14 +637,22 @@ async def _on_photo(session, binding, ev, inbound, sess, actor, now, cfg) -> lis
     await session.flush()
     emit(session, org_id=org, actor_id=actor.id if attributed else None, action="photo.received",
          entity_type="channel_message", entity_id=msg.id, event_type="photo.received", aggregate_version=None,
-         payload={"attributed": attributed, "has_caption": bool(ev.text)})  # fmt: skip
+         payload={"attributed": attributed, "has_caption": bool(ev.text),
+                  "account_id": str(_account_id(account)) if account else None})  # fmt: skip
     if not attributed:
+        if personal:
+            return [Reply(
+                f"Guardé la foto, pero no la anoto: {_identity_error_text(identity_error)}",
+                buttons=[[Button(f"Anotar a nombre de {account.display_label}", "att:ok"),
+                          Button("Descartar", "att:no")]],
+                keyboard=keyboard,
+            )]  # fmt: skip
         return [_selector(await sessions.list_reporters(session, org),
                           "Guardé la foto, pero no la anoto a nombre de nadie hasta saber quién eres. ¿Quién eres?")]  # fmt: skip
     await sessions.touch(session, sess, now, cfg.idle)
     base = (f"Recibí la foto, {actor.display_name}. " + ("La estoy revisando y te aviso." if cfg.vision_enabled
             else "La guardé; todavía no la leo automáticamente, queda para revisión de compras."))  # fmt: skip
-    return [Reply(base + f"\n{_footer(actor.display_name)}", keyboard=KEYBOARD)]
+    return [Reply(base + f"\n{_footer(actor.display_name, personal)}", keyboard=keyboard)]
 
 
 # ------------------------------------------------------------------ salida

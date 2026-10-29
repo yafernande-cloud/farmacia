@@ -7,8 +7,9 @@ El orden no reduce el alcance: la presentación final a Pao integra todos los m�
 | **F0** | Base: repo, FastAPI, salud, config, Alembic, pruebas | — | **Hecha** (2026-10-28) |
 | **H1-A** | Persistencia y reglas de demanda (sin Telegram): modelos, migraciones, deduplicación determinista, SET/ADD/CLEAR, auditoría/outbox, API de faltantes | AC03–AC12 (núcleo) | **Hecha** (2026-10-28) |
 | **H1-B** | Telegram + sesiones de auxiliar + **fotografías** (sin texto, con texto, con cantidad) + interpretación contextual + identidad farmacéutica/comercial. Detalle y límites en `docs/H1B_TELEGRAM.md` | AC01, AC02, AC12 (e2e simulado), AC13 (API), AC14 | **Implementada con simuladores** (2026-10-28). Falta verificar con el bot real (token) y con un proveedor de visión real |
-| **H1-B.0** | Separación simulación / prueba real (organizaciones por tipo, procedencia, guardias, aislamiento) y personal (mantenedor, disponibilidad, botones dinámicos, «Finalizar reportes»). Plan de datos: `docs/decisions/0002-…` | AC33 (aislamiento), AC01/AC02 reforzados | **Implementada en código y pruebas; esquema (0004, 0005) y datos (0006) pendientes de tu autorización** |
-| **H1-B.5** | Verificación con Telegram real: crear bot, `telegram-check`, autorizar chat, `telegram-poll`; conectar proveedor de visión (requiere autorización y costo) | AC12, AC13 reales | Siguiente |
+| **H1-B.0** | Separación simulación / prueba real (organizaciones por tipo, procedencia, guardias, aislamiento) y personal (mantenedor, disponibilidad, botones dinámicos, «Finalizar reportes»). Plan de datos: `docs/decisions/0002-…` | AC33 (aislamiento), AC01/AC02 reforzados | **Aplicada en `farmacia`**: migraciones 0004 y 0005 aplicadas (Alembic en `0005`) y script de datos 0006 ejecutado |
+| **H1-B.4** | Acceso desde **múltiples cuentas** de Telegram: solicitud desde el bot, código temporal, aprobación/bloqueo/rehabilitación desde el frontend (API), identidad por cuenta, historial conservado. Detalle en `docs/H1B_TELEGRAM.md` | AC01/AC02 reforzados (autorización y trazabilidad) | **Implementada y probada con simulador de canal + PostgreSQL real; migración 0007 pendiente de tu autorización** |
+| **H1-B.5** | Verificación con Telegram real: crear bot, `telegram-check`, `/solicitar`, aprobar desde la API con JWT, `telegram-poll`; vincular el Supabase de Pao; conectar proveedor de visión (requiere autorización y costo) | AC12, AC13 reales | Siguiente |
 | **H1-C** | SSE con cursor sobre `outbox_event`, reconexión; dashboard Lovable (Faltantes) | AC15 | Tras H1-B |
 | **H1b** | Dashboard en Lovable (Faltantes) conectado a la API | AC03–AC04, AC15 | Tras H1 |
 | **H2** | Fotos, extracción con visión, resolución de catálogo | AC13–AC14 | |
@@ -19,12 +20,35 @@ El orden no reduce el alcance: la presentación final a Pao integra todos los m�
 
 ## H1-B.0 — separación de datos y personal (2026-10-28)
 
-**Hecho (sin tocar la base existente):** migraciones `0004` (tipo de organización, procedencia, triggers, chats ficticios, vínculo único solo entre
-activos) y `0005` (disponibilidad y motivo, personal que no se elimina, sesión `revoked`) **escritas y probadas en la base de pruebas, NO aplicadas a `farmacia`**
-(sigue en `0003`); protecciones de código; demos que ya no pueden tocar lo real ni vaciar tablas; mantenedor `/api/v1/staff`; botones dinámicos; plan de migración
-de datos ensayado en una copia (huellas idénticas). **Requiere tu autorización:** aplicar 0004/0005/0006 y cargar el personal real. Mientras tanto no reinicies
-`telegram-poll` con el código nuevo (el esquema viejo no tiene las columnas).
+**Hecho:** migraciones `0004` (tipo de organización, procedencia, triggers, chats ficticios, vínculo único solo entre
+activos) y `0005` (disponibilidad y motivo, personal que no se elimina, sesión `revoked`) **aplicadas en `farmacia`**
+(Alembic en `0005`) y el script de datos `0006_separar_organizaciones.sql` **ejecutado**; protecciones de código; demos que
+ya no pueden tocar lo real ni vaciar tablas; mantenedor `/api/v1/staff`; botones dinámicos; plan de migración de datos
+ensayado en una copia (huellas idénticas). **Pendiente:** cargar el personal real definitivo si cambia el archivo de datos.
 **Pendiente:** definir el vocabulario de ausencias con Pao (¿fechas de retorno automáticas?), pantalla de personal en Lovable, PIN si Pao lo pide.
+
+## H1-B.4 — acceso desde múltiples cuentas de Telegram (2026-10-28)
+
+**Objetivo:** que el mismo bot lo usen el teléfono compartido y los teléfonos personales de Pao y Danny (y personas futuras)
+sin mezclar conversaciones ni perder la identificación individual de las auxiliares.
+**Implementado:** solicitud desde el bot con `/solicitar` (`telegram_access_request`, `pending` sin acceso operativo);
+código temporal de 20 caracteres que vence a los 30 min, de un solo uso, solo SHA-256 en la base, una pendiente por cuenta
+y límites de intentos (`telegram_access_attempt`); aprobación/rechazo desde la API con `StrongActor` + `manage_accounts`
+(JWT de Supabase en organizaciones reales); `telegram_account` (`personal`/`shared_device`) reutilizable; bloqueo y
+rehabilitación con historial conservado; validación de acceso en el servidor **dos veces** (antes de persistir y dentro de
+la transacción); identidad fija por cuenta en teléfonos personales y selector intacto en el compartido; `account_id` en
+vínculos, sesiones, mensajes y observaciones.
+**Migración:** `0007` reescrita (encadenada a `0005`; `0006` es un script de datos, no Alembic), con backfill solo de chats
+privados reales y downgrade. **NO aplicada a `farmacia`**: requiere tu autorización explícita (0004/0005/0006 ya están
+aplicadas).
+**Pruebas:** 35 en `tests/test_telegram_accounts.py`; suite completa **313** con PostgreSQL 17 real. Cubren solicitud sin
+persistir el código, pendiente sin acceso, rotación, idempotencia, vencimiento, límites de intentos, permisos y sesión
+fuerte, aprobación personal/compartida, rechazo, bloqueo/rehabilitación con historial, aislamiento entre cuentas, teléfono
+compartido sin regresión, guardias de simulación, JWT y backfill de la migración. **Con Telegram real no se probó**: el
+canal se ejerció con el simulador.
+**Decisión pendiente:** qué restricciones de negocio tendrán las cuentas administrativas frente a las operativas. Hoy
+`access_role` es descriptivo y no se inventó ninguna restricción (D-053). También falta crear el proyecto Supabase
+(no autorizado) para que Pao pueda ejercer la API administrativa en `real_test`.
 
 ## H1-B — informe de fase
 

@@ -1,3 +1,8 @@
+from app.models.authorization import (
+    TelegramAccessAttempt,
+    TelegramAccessRequest,
+    TelegramAccount,
+)
 from app.models.channel import (
     ActorSession,
     Attachment,
@@ -22,4 +27,5 @@ __all__ = [
     "ActorSession", "AppUser", "Attachment", "AuditEvent", "AuxiliaryProfile", "ChannelBinding",
     "ChannelMessage", "CommercialReference", "DemandItem", "DemandObservation", "InboundEvent", "Organization",
     "OutboundMessage", "OutboxEvent", "PharmaIdentity", "ProductAlias", "PurchaseCycle", "QuantityEvent",
+    "TelegramAccessAttempt", "TelegramAccessRequest", "TelegramAccount",
 ]  # fmt: skip

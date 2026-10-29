@@ -5,6 +5,7 @@ debe quedar deshabilitada, no inventada.
 """
 
 import re
+import uuid
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
@@ -36,8 +37,16 @@ class Settings(BaseSettings):
     # Base solo para pruebas (se migra y se vacía entre pruebas). Nunca apuntar a datos reales.
     test_database_url: SecretStr | None = None
     # `disabled`: la API de negocio responde 503. `demo_header`: identidad por cabecera
-    # X-Demo-User-Id, SOLO local/demo. La validación de JWT de Supabase queda diseñada, no activa.
-    auth_mode: Literal["disabled", "demo_header"] = "disabled"
+    # X-Demo-User-Id, SOLO local/demo y NUNCA para administrar datos reales. `supabase_jwt`:
+    # valida el JWT de Supabase Auth contra su JWKS y resuelve permisos en PostgreSQL.
+    auth_mode: Literal["disabled", "demo_header", "supabase_jwt"] = "disabled"
+    # JWKS público de Supabase (no es un secreto). Sin estos valores el modo JWT no arranca.
+    supabase_jwks_url: str | None = None
+    supabase_jwt_issuer: str | None = None
+    supabase_jwt_audience: str = "authenticated"
+    # Organización que recibe las solicitudes de acceso del bot. Se configura EXPLÍCITAMENTE por
+    # entorno (`real_test` ahora, `production` después); no hay valor por defecto.
+    telegram_access_organization_id: uuid.UUID | None = None
     # ---- Telegram (opcional: sin token/secreto el canal queda apagado; nada se inventa)
     telegram_bot_token: SecretStr | None = None
     telegram_webhook_secret: SecretStr | None = None
@@ -76,6 +85,23 @@ class Settings(BaseSettings):
         if v is not None and not re.fullmatch(r"[A-Za-z0-9_-]{16,256}", v.get_secret_value()):
             raise ValueError("TELEGRAM_WEBHOOK_SECRET: 16-256 caracteres de [A-Za-z0-9_-]")
         return v
+
+    @model_validator(mode="after")
+    def _jwt_completo(self):
+        if self.auth_mode == "supabase_jwt":
+            faltan = [
+                nombre
+                for nombre, valor in (
+                    ("SUPABASE_JWKS_URL", self.supabase_jwks_url),
+                    ("SUPABASE_JWT_ISSUER", self.supabase_jwt_issuer),
+                )
+                if not valor
+            ]
+            if faltan:
+                raise ValueError(
+                    "AUTH_MODE=supabase_jwt requiere " + " y ".join(faltan)
+                )
+        return self
 
     @model_validator(mode="after")
     def _pin_no_implementado(self):

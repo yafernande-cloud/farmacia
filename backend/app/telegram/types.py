@@ -25,6 +25,33 @@ def chat_id_of(update: dict) -> str | None:
     return None
 
 
+def _sender_id(update: dict) -> str | None:
+    msg = update.get("message") or update.get("edited_message")
+    if isinstance(msg, dict):
+        frm = msg.get("from")
+        if isinstance(frm, dict) and frm.get("id") is not None:
+            return str(frm["id"])
+    cb = update.get("callback_query")
+    if isinstance(cb, dict):
+        frm = cb.get("from")
+        if isinstance(frm, dict) and frm.get("id") is not None:
+            return str(frm["id"])
+    return None
+
+
+def _chat_kind(update: dict) -> str | None:
+    for k in ("message", "edited_message"):
+        m = update.get(k)
+        if isinstance(m, dict) and isinstance(m.get("chat"), dict):
+            return m["chat"].get("type")
+    cb = update.get("callback_query")
+    if isinstance(cb, dict) and isinstance(cb.get("message"), dict):
+        chat = cb["message"].get("chat")
+        if isinstance(chat, dict):
+            return chat.get("type")
+    return None
+
+
 def parse_update(update: dict) -> ChannelEvent | None:
     """None = actualización que no nos interesa (se ignora sin ruido)."""
     uid = update.get("update_id")
@@ -32,13 +59,17 @@ def parse_update(update: dict) -> ChannelEvent | None:
     if uid is None or chat is None:
         return None
     eid = str(uid)
+    sender, chat_kind = _sender_id(update), _chat_kind(update)
     if "edited_message" in update:
-        return ChannelEvent(PROVIDER, eid, chat, "edited")
+        return ChannelEvent(
+            PROVIDER, eid, chat, "edited", sender_id=sender, chat_kind=chat_kind
+        )
     if "callback_query" in update:
         cb = update["callback_query"]
         return ChannelEvent(
-            PROVIDER, eid, chat, "callback", callback_data=cb.get("data"), callback_id=str(cb["id"])
-        )
+            PROVIDER, eid, chat, "callback", callback_data=cb.get("data"), callback_id=str(cb["id"]),
+            sender_id=sender, chat_kind=chat_kind,
+        )  # fmt: skip
     m = update["message"]
     mid, sent = str(m.get("message_id")), _dt(m.get("date"))
     if m.get("photo"):
@@ -59,12 +90,21 @@ def parse_update(update: dict) -> ChannelEvent | None:
             message_id=mid,
             sent_at=sent,
             photo=ref,
+            sender_id=sender,
+            chat_kind=chat_kind,
         )
     text = m.get("text")
     if text is None:
-        return ChannelEvent(PROVIDER, eid, chat, "other", message_id=mid, sent_at=sent)
-    kind = "start" if text.split("@")[0].split()[0].lower() == "/start" else "text"
-    return ChannelEvent(PROVIDER, eid, chat, kind, text=text, message_id=mid, sent_at=sent)
+        return ChannelEvent(
+            PROVIDER, eid, chat, "other", message_id=mid, sent_at=sent,
+            sender_id=sender, chat_kind=chat_kind,
+        )  # fmt: skip
+    first = text.split()[0] if text.split() else ""
+    kind = "start" if first.split("@")[0].lower() == "/start" else "text"
+    return ChannelEvent(
+        PROVIDER, eid, chat, kind, text=text, message_id=mid, sent_at=sent,
+        sender_id=sender, chat_kind=chat_kind,
+    )  # fmt: skip
 
 
 def redact(update: dict) -> dict:
@@ -86,5 +126,6 @@ def redact(update: dict) -> dict:
     if "callback_query" in update:
         cb = update["callback_query"]
         out["callback_query"] = {"id": cb.get("id"), "data": cb.get("data"), "from": {"id": (cb.get("from") or {}).get("id")},
-                                 "message": {"chat": {"id": cb["message"]["chat"]["id"]}} if cb.get("message") else None}  # fmt: skip
+                                 "message": {"chat": {"id": cb["message"]["chat"]["id"],
+                                                      "type": cb["message"]["chat"].get("type")}} if cb.get("message") else None}  # fmt: skip
     return out

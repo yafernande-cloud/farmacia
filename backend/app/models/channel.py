@@ -48,16 +48,21 @@ class ChannelBinding(Base):
             postgresql_where=text("status = 'active'"),
         ),
         ForeignKeyConstraint(["organization_id"], ["organization.id"]),
+        ForeignKeyConstraint(["account_id", "organization_id"], ["telegram_account.id", "telegram_account.organization_id"]),
         CheckConstraint("provider IN ('telegram')", name="proveedor_valido"),
         CheckConstraint("chat_kind IN ('private','group')", name="tipo_valido"),
+        CheckConstraint("mode IN ('shared_device','personal')", name="modo_valido"),
+        CheckConstraint("mode <> 'personal' OR account_id IS NOT NULL", name="cuenta_personal_obligatoria"),
         CheckConstraint("status IN ('active','inactive')", name="estado_valido"),
-    )
+    )  # fmt: skip
     id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
     organization_id: Mapped[uuid.UUID] = mapped_column()
     provider: Mapped[str] = mapped_column(String(20), server_default="telegram")
     external_chat_id: Mapped[str] = mapped_column(String(64))
     chat_kind: Mapped[str] = mapped_column(String(10), server_default="private")
     mode: Mapped[str] = mapped_column(String(20), server_default="shared_device")
+    # Cuenta autorizada (NULL solo en vínculos legado: grupos o chats previos a la multicuenta).
+    account_id: Mapped[uuid.UUID | None] = mapped_column()
     status: Mapped[str] = mapped_column(String(10), server_default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
 
@@ -70,7 +75,10 @@ class ActorSession(Base):
         UniqueConstraint("id", "organization_id"),
         ForeignKeyConstraint(["channel_binding_id", "organization_id"], ["channel_binding.id", "channel_binding.organization_id"]),
         ForeignKeyConstraint(["auxiliary_id", "organization_id"], ["app_user.id", "app_user.organization_id"]),
-        CheckConstraint("identity_level IN ('declared','pin')", name="nivel_valido"),
+        ForeignKeyConstraint(["account_id", "organization_id"], ["telegram_account.id", "telegram_account.organization_id"]),
+        CheckConstraint("identity_level IN ('declared','pin','account')", name="nivel_valido"),
+        # Una sesión de nivel `account` (teléfono personal) siempre sabe qué cuenta la abrió.
+        CheckConstraint("identity_level <> 'account' OR account_id IS NOT NULL", name="cuenta_coherente"),
         CheckConstraint("end_reason IS NULL OR end_reason IN ('replaced','expired','manual','revoked')", name="motivo_valido"),
         CheckConstraint("(ended_at IS NULL) = (end_reason IS NULL)", name="fin_coherente"),
         Index("uq_actor_session_active", "channel_binding_id", unique=True, postgresql_where=text("ended_at IS NULL")),
@@ -80,6 +88,9 @@ class ActorSession(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column()
     channel_binding_id: Mapped[uuid.UUID] = mapped_column()
     auxiliary_id: Mapped[uuid.UUID] = mapped_column()
+    # Cuenta de Telegram que envía (trazabilidad). En modo personal coincide con la identidad;
+    # en el teléfono compartido es el dispositivo, no la persona.
+    account_id: Mapped[uuid.UUID | None] = mapped_column()
     identity_level: Mapped[str] = mapped_column(String(10), server_default="declared")
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_activity_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -127,12 +138,13 @@ class ChannelMessage(Base):
         ForeignKeyConstraint(["inbound_event_id", "organization_id"], ["inbound_event.id", "inbound_event.organization_id"]),
         ForeignKeyConstraint(["author_id", "organization_id"], ["app_user.id", "app_user.organization_id"]),
         ForeignKeyConstraint(["session_id", "organization_id"], ["actor_session.id", "actor_session.organization_id"]),
+        ForeignKeyConstraint(["account_id", "organization_id"], ["telegram_account.id", "telegram_account.organization_id"]),
         CheckConstraint("data_origin IN ('simulated','captured','ai_derived','unclassified')", name="origen_dato_valido"),
         CheckConstraint("kind IN ('text','photo')", name="tipo_valido"),
         CheckConstraint("attribution_status IN ('attributed','pending_attribution','discarded')", name="atribucion_valida"),
         CheckConstraint("(attribution_status = 'attributed') = (author_id IS NOT NULL)", name="autor_coherente"),
         CheckConstraint(
-            "attribution_basis IS NULL OR attribution_basis IN ('session_at_receipt','confirmed_after_identification')",
+            "attribution_basis IS NULL OR attribution_basis IN ('session_at_receipt','confirmed_after_identification','authorized_account')",
             name="base_valida",
         ),
         Index("ix_channel_message_pending", "channel_binding_id", "received_at", postgresql_where=text("attribution_status = 'pending_attribution'")),
@@ -157,6 +169,8 @@ class ChannelMessage(Base):
     attribution_status: Mapped[str] = mapped_column(String(20))
     author_id: Mapped[uuid.UUID | None] = mapped_column()
     session_id: Mapped[uuid.UUID | None] = mapped_column()
+    # Cuenta de Telegram que envió el mensaje (NULL en vínculos legado sin cuenta).
+    account_id: Mapped[uuid.UUID | None] = mapped_column()
     attribution_basis: Mapped[str | None] = mapped_column(String(40))
     attributed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     discarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

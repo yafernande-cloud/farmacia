@@ -12,20 +12,29 @@ import httpx
 TOKEN = "123456:SIMULADO-no-es-un-token-real"
 
 
-def text_update(uid: int, chat: str | int, text: str, ts: int = 1_790_000_000) -> dict:
-    return {"update_id": uid, "message": {"message_id": uid * 10, "date": ts, "chat": {"id": int(chat), "type": "private"},
-                                          "from": {"id": 42, "is_bot": False, "first_name": "Telefono"}, "text": text}}  # fmt: skip
+def text_update(uid: int, chat: str | int, text: str, ts: int = 1_790_000_000, *,
+                from_id: int = 42, chat_kind: str = "private") -> dict:  # fmt: skip
+    return {"update_id": uid, "message": {"message_id": uid * 10, "date": ts,
+                                          "chat": {"id": int(chat), "type": chat_kind},
+                                          "from": {"id": from_id, "is_bot": False, "first_name": "Telefono"},
+                                          "text": text}}  # fmt: skip
 
 
-def callback_update(uid: int, chat: str | int, data: str, cbid: str | None = None) -> dict:
-    return {"update_id": uid, "callback_query": {"id": cbid or f"cb{uid}", "from": {"id": 42, "first_name": "Telefono"},
-                                                  "data": data, "message": {"message_id": 1, "chat": {"id": int(chat), "type": "private"}}}}  # fmt: skip
+def callback_update(uid: int, chat: str | int, data: str, cbid: str | None = None, *,
+                    from_id: int = 42, chat_kind: str = "private") -> dict:  # fmt: skip
+    return {"update_id": uid, "callback_query": {"id": cbid or f"cb{uid}",
+                                                  "from": {"id": from_id, "first_name": "Telefono"},
+                                                  "data": data,
+                                                  "message": {"message_id": 1,
+                                                              "chat": {"id": int(chat), "type": chat_kind}}}}  # fmt: skip
 
 
 def photo_update(
-    uid: int, chat: str | int, file_id: str, caption: str | None = None, ts: int = 1_790_000_000
-) -> dict:
-    m = {"message_id": uid * 10, "date": ts, "chat": {"id": int(chat), "type": "private"}, "from": {"id": 42, "is_bot": False},
+    uid: int, chat: str | int, file_id: str, caption: str | None = None, ts: int = 1_790_000_000,
+    *, from_id: int = 42, chat_kind: str = "private",
+) -> dict:  # fmt: skip
+    m = {"message_id": uid * 10, "date": ts, "chat": {"id": int(chat), "type": chat_kind},
+         "from": {"id": from_id, "is_bot": False},
          "photo": [{"file_id": file_id + "_s", "file_unique_id": "u_" + file_id, "width": 90, "height": 90, "file_size": 900},
                    {"file_id": file_id, "file_unique_id": "u_" + file_id, "width": 1280, "height": 960, "file_size": 150000}]}  # fmt: skip
     if caption:
@@ -33,8 +42,9 @@ def photo_update(
     return {"update_id": uid, "message": m}
 
 
-def edited_update(uid: int, chat: str | int, text: str) -> dict:
-    u = text_update(uid, chat, text)
+def edited_update(uid: int, chat: str | int, text: str, *, from_id: int = 42,
+                  chat_kind: str = "private") -> dict:  # fmt: skip
+    u = text_update(uid, chat, text, from_id=from_id, chat_kind=chat_kind)
     return {"update_id": uid, "edited_message": u["message"]}
 
 

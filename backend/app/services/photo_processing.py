@@ -119,7 +119,8 @@ async def process_attachment(
         inbound = await s.get(InboundEvent, msg.inbound_event_id)
         info = dict(org=att.organization_id, file_id=att.provider_file_id, caption=att.caption,
                     author=att.author_id, key=att.storage_key, binding=msg.channel_binding_id,
-                    session=msg.session_id, msg=msg.id, event=inbound.external_event_id, event_id=inbound.id)  # fmt: skip
+                    session=msg.session_id, msg=msg.id, event=inbound.external_event_id, event_id=inbound.id,
+                    account=msg.account_id, basis=msg.attribution_basis)  # fmt: skip
 
     async def fail(status: str, error: str, unc: list[str] | None = None) -> PhotoOutcome:
         async with sm() as s2, s2.begin():
@@ -248,7 +249,9 @@ async def process_attachment(
             res = await record_interpreted_observation(
                 s, actor, parsed=parsed, raw_text=info["caption"] or "",
                 idempotency_key=f"tg:{info['binding']}:{info['event']}:photo",
-                origin=Origin("telegram_photo", "declared", info["session"], info["msg"], attachment_id),
+                origin=Origin("telegram_photo",
+                              "account" if info["basis"] == "authorized_account" else "declared",
+                              info["session"], info["msg"], attachment_id, account_id=info["account"]),
                 force_review=tuple(f"image_text_conflict:{c}" for c in conflicts),
                 ai_derived=ext.mode == "live",  # una lectura real de un modelo es `ai_derived`
                 extra_interpretation={"vision": {"mode": ext.mode, "provider": ext.provider, "model": ext.model,

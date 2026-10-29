@@ -42,7 +42,7 @@ Cada necesidad devuelve `attributes` (potencias, contenido, forma, envase, medid
 
 ## Organizaciones y datos (importante)
 
-Tres tipos de organización, aislados: **simulación** (demos y pruebas automatizadas; chat ficticio 5550001), **prueba real** (bot real; chat 6358481229) y
+Tres tipos de organización, aislados: **simulación** (demos y pruebas automatizadas; chat ficticio 5550001), **prueba real** (bot real; chat de prueba no publicado) y
 un **archivo** con lo anterior a la separación. Las demos usan solo la de simulación. El personal sale de `database/seed/staff.json` (datos) y se administra por
 `/api/v1/staff`. Plan de migración de los datos existentes (pendiente de autorización): `docs/decisions/0002-plan-migracion-organizaciones.md`.
 
@@ -53,9 +53,18 @@ Documentación completa, arquitectura, límites y cómo crear el bot: **`docs/H1
 ```bash
 backend/.venv/bin/python scripts/demo_h1b.py          # demo SIN bot real (solo org. de simulación): Telegram y visión SIMULADOS, PostgreSQL real
 cd backend && .venv/bin/python -m app.cli telegram-check   # valida el token (cuando lo configures)
-.venv/bin/python -m app.cli bind-telegram <chat_id> --org real   # autoriza un chat (--org sim|real, sin valor por defecto)
+.venv/bin/python -m app.cli bind-telegram <chat_id> --org real   # bootstrap manual (--org sim|real, sin valor por defecto)
+.venv/bin/python -m app.cli list-telegram-accounts --org real --by <admin_id>
+.venv/bin/python -m app.cli block-telegram-account <account_id> --org real --by <admin_id> --reason "..."
+.venv/bin/python -m app.cli reactivate-telegram-account <account_id> --org real --by <admin_id>
 .venv/bin/python -m app.cli telegram-poll                   # escucha sin exponer el backend
 ```
+
+Varias cuentas pueden usar el mismo bot. Una cuenta nueva pide acceso con `/solicitar` en chat privado y recibe un código
+temporal (30 min, un solo uso); se lo comparte a Pao, que lo busca y aprueba desde el frontend (API
+`/api/v1/telegram-access-requests`), definiendo modo, persona y tipo de cuenta. Conocer el código no autoriza: aprobar,
+bloquear y rehabilitar exigen sesión administrativa fuerte (JWT de Supabase) y conservan el historial. Un teléfono personal
+reporta como su persona; el compartido sigue eligiendo auxiliar. Procedimiento completo: `docs/H1B_TELEGRAM.md` §7.
 
 ## Base de datos (detalle)
 

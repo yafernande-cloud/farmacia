@@ -76,6 +76,25 @@ def validate_binding(chat_id: str, kind: str) -> None:
         )
 
 
+def validate_account(user_id: str, kind: str) -> None:
+    """La misma convención que los chats: una cuenta ficticia (555000x) solo existe en simulación."""
+    if kind == OrgKind.LEGACY_MIXED:
+        return
+    sim = is_simulation_chat(user_id)
+    if sim and kind != OrgKind.SIMULATION:
+        raise DomainError(
+            "SIMULATION_ACCOUNT_RESERVED",
+            "La cuenta de Telegram es ficticia: solo puede autorizarse en la organización de simulación.",
+            status_code=422,
+        )
+    if not sim and kind == OrgKind.SIMULATION:
+        raise DomainError(
+            "REAL_ACCOUNT_IN_SIMULATION",
+            "Una organización de simulación solo acepta cuentas de Telegram ficticias (555000x).",
+            status_code=422,
+        )
+
+
 def allow_simulated_vision(kind: str) -> bool:
     """Una lectura SIMULADA de imagen solo puede escribirse en la organización de simulación."""
     return kind == OrgKind.SIMULATION

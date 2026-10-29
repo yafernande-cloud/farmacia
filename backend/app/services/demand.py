@@ -54,10 +54,11 @@ class Origin:
     """De dónde vino el aviso y bajo qué identidad declarada (trazabilidad, HLD §3.1)."""
 
     source: str = "api"  # api | telegram_text | telegram_photo | photo_manual
-    identity_level: str = "api_user"  # api_user | declared | pin
+    identity_level: str = "api_user"  # api_user | declared | pin | account
     actor_session_id: uuid.UUID | None = None
     channel_message_id: uuid.UUID | None = None
     attachment_id: uuid.UUID | None = None
+    account_id: uuid.UUID | None = None  # cuenta de Telegram que envió (puede no ser la persona)
 
 
 def parsed_of_item(i: DemandItem) -> ParsedProduct:
@@ -269,6 +270,7 @@ async def _store(
         author_id=actor.id, raw_text=raw_text, parsed=_parsed_json(parsed), interpretation=snapshot,
         source=origin.source, identity_level=origin.identity_level, actor_session_id=origin.actor_session_id,
         channel_message_id=origin.channel_message_id, attachment_id=origin.attachment_id,
+        account_id=origin.account_id,
         declared_quantity=declared_quantity, declared_unit=declared_unit,
         match_status=outcome, candidates=cands, policy_version=POLICY_VERSION,
         idempotency_key=idempotency_key, request_hash=req, data_origin=data_origin,

@@ -10,6 +10,8 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0",
     "psycopg[binary]>=3.2",
     "alembic>=1.13",
+    # Validación de los JWT de Supabase Auth contra su JWKS (claves asimétricas).
+    "PyJWT[crypto]>=2.8",
 ]
 
 [project.optional-dependencies]

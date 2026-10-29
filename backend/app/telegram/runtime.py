@@ -31,6 +31,7 @@ def build_runtime(s: Settings, *, client: TelegramClient | None = None, vision: 
         idle=timedelta(minutes=s.session_idle_minutes),
         pending_max_age=timedelta(minutes=s.pending_attribution_max_age_minutes),
         page_size=s.list_page_size, vision_enabled=vision is not None,
+        access_org_id=s.telegram_access_organization_id,
     )  # fmt: skip
     photos = PhotoRuntime(client, LocalPrivateStorage(s.storage_dir), vision, s.max_image_bytes)
     return TelegramRuntime(sessionmaker or get_sessionmaker(), client, cfg, photos)

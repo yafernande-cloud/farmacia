@@ -119,9 +119,11 @@ class DemandObservation(Base):
         ForeignKeyConstraint(["actor_session_id", "organization_id"], ["actor_session.id", "actor_session.organization_id"]),
         ForeignKeyConstraint(["channel_message_id", "organization_id"], ["channel_message.id", "channel_message.organization_id"]),
         ForeignKeyConstraint(["attachment_id", "organization_id"], ["attachment.id", "attachment.organization_id"]),
+        ForeignKeyConstraint(["account_id", "organization_id"], ["telegram_account.id", "telegram_account.organization_id"]),
         CheckConstraint("data_origin IN ('simulated','captured','ai_derived','unclassified')", name="origen_dato_valido"),
         CheckConstraint("source IN ('api','telegram_text','telegram_photo','photo_manual')", name="origen_valido"),
-        CheckConstraint("identity_level IN ('api_user','declared','pin')", name="nivel_valido"),
+        CheckConstraint("identity_level IN ('api_user','declared','pin','account')", name="nivel_valido"),
+        CheckConstraint("identity_level <> 'account' OR account_id IS NOT NULL", name="cuenta_coherente"),
         CheckConstraint("match_status IN ('created_item','attached_existing','needs_review','resolved_manual')", name="match_valido"),
         # Una observación pendiente no tiene destino; las demás sí.
         CheckConstraint("(match_status = 'needs_review') = (demand_item_id IS NULL)", name="destino_coherente"),
@@ -157,6 +159,8 @@ class DemandObservation(Base):
     actor_session_id: Mapped[uuid.UUID | None] = mapped_column()
     channel_message_id: Mapped[uuid.UUID | None] = mapped_column()
     attachment_id: Mapped[uuid.UUID | None] = mapped_column()
+    # Cuenta de Telegram que originó el aviso (NULL por API o vínculos legado).
+    account_id: Mapped[uuid.UUID | None] = mapped_column()
     idempotency_key: Mapped[str] = mapped_column(String(128))
     request_hash: Mapped[str] = mapped_column(String(64))
     # Procedencia del dato (NO es confianza ni confirmación farmacéutica):
