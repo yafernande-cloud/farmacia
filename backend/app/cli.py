@@ -16,6 +16,10 @@
   catalog-load <archivo.jsonl> --org sim|real --by <app_user_id> [--dry-run]
                                   carga inicial técnica del catálogo propio: artículos y vínculos SKU
                                   desde un archivo de datos (D-101); no crea ofertas ni lee planillas
+  import-check <archivo.xlsx> --org sim|real --by <app_user_id> --source <source_id>
+                                  vista previa de una planilla de proveedor: valida y cuenta, no escribe
+  import-run <archivo.xlsx> --org sim|real --by <app_user_id> --source <source_id>
+                                  importa la planilla original del proveedor como ofertas fechadas (E8)
   telegram-check | telegram-poll
 
 Nada aquí usa la organización real por defecto: cada comando nombra la suya y no hay valor implícito.
@@ -36,7 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import dispose_engine, get_engine
 from app.models import AppUser, ChannelBinding, Organization, PurchaseCycle, TelegramAccount
-from app.services import access, catalog_load, identity, staff
+from app.services import access, catalog_load, identity, imports, staff
 from app.services.actors import Actor, load_actor
 from app.services.provenance import OrgKind, validate_account, validate_binding, vision_guard
 
@@ -413,6 +417,48 @@ async def catalog_load_file(path: str, which: str, a: list[str]) -> None:
     await dispose_engine()
 
 
+async def import_file(path: str, which: str, a: list[str], *, dry_run: bool) -> None:
+    """Importa la planilla ORIGINAL de un proveedor (E8). `dry_run` es la vista previa `import-check`."""
+    by = _arg(a, "--by")
+    if not by:
+        raise SystemExit("Indica quién importa con --by <app_user_id>.")
+    raw_source = _arg(a, "--source")
+    if not raw_source:
+        raise SystemExit("Indica la fuente de proveedor con --source <source_id>.")
+    source_id = _uuid(raw_source, "source_id")
+    actor, name = await _admin(which, by)
+    file = Path(path).expanduser()
+    if not file.is_file():
+        raise SystemExit(f"No existe el archivo {file}.")
+    content = file.read_bytes()
+    try:
+        async with AsyncSession(get_engine(), expire_on_commit=False) as s, s.begin():
+            outcome = await imports.run_import(
+                s, actor, source_id=source_id, file_name=file.name, content=content, dry_run=dry_run
+            )
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(getattr(e, "message", str(e))) from None
+    print(f"{'Vista previa' if dry_run else 'Importación'} de «{name}» desde {file.name} "
+          f"(fuente {source_id}):")  # fmt: skip
+    print(f"  estado: {outcome.status}")
+    print(f"  filas:  {outcome.rows_total} en total · {outcome.rows_accepted} aceptada(s) · "
+          f"{outcome.rows_rejected} rechazada(s)")  # fmt: skip
+    if outcome.import_id:
+        print(f"  import_id: {outcome.import_id}")
+    if outcome.errors:
+        print(f"  avisos y rechazos: {len(outcome.errors)}")
+        for e in outcome.errors[:MAX_ERRORS]:
+            print(f"    fila {e['row']} [{e['code']}] {e['message']}")
+        if len(outcome.errors) > MAX_ERRORS:
+            print(f"    … y {len(outcome.errors) - MAX_ERRORS} más.")
+    if dry_run:
+        print("  Vista previa: no se escribió nada.")
+    elif outcome.repeated:
+        print("  Este archivo ya se había importado para esta fuente: se devuelve el resultado "
+              "original y no se escribe nada nuevo.")  # fmt: skip
+    await dispose_engine()
+
+
 async def telegram_check() -> None:
     """getMe: comprueba que el token funciona SIN mostrarlo."""
     from app.core.config import get_settings
@@ -485,6 +531,10 @@ def main() -> None:
         asyncio.run(create_admin(a[1], _org_arg(a), a))
     elif len(a) >= 2 and a[0] == "catalog-load":
         asyncio.run(catalog_load_file(a[1], _org_arg(a), a))
+    elif len(a) >= 2 and a[0] == "import-check":
+        asyncio.run(import_file(a[1], _org_arg(a), a, dry_run=True))
+    elif len(a) >= 2 and a[0] == "import-run":
+        asyncio.run(import_file(a[1], _org_arg(a), a, dry_run=False))
     elif a == ["telegram-check"]:
         asyncio.run(telegram_check())
     elif a == ["telegram-poll"]:
@@ -501,6 +551,8 @@ def main() -> None:
             "unlink-auth-subject <id> --org sim|real --by <id> --confirm | "
             "create-admin \"<nombre>\" --org sim|real --confirm | "
             "catalog-load <archivo.jsonl> --org sim|real --by <id> [--dry-run] | "
+            "import-check <archivo.xlsx> --org sim|real --by <id> --source <source_id> | "
+            "import-run <archivo.xlsx> --org sim|real --by <id> --source <source_id> | "
             "telegram-check | telegram-poll"
         )
 

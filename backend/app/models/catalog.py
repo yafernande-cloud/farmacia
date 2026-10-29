@@ -299,6 +299,9 @@ class OfferSnapshot(Base):
 
     `tax_included` y `discount_included` son tri-estado: NULL = desconocido (no false).
     `minimum`/`multiple` usan `*_known`; si son desconocidos, la cantidad es NULL, nunca 0 ni 1.
+    `review_status` es un hecho histórico del snapshot (D-110): `accepted` o `needs_review`; como la
+    tabla es de solo agregar, una oferta marcada nunca se «desmarca» — la reemplaza una observación
+    posterior. Una oferta `needs_review` no es una oferta verificada y no puede elegir proveedor.
     """
 
     __tablename__ = "offer_snapshot"
@@ -342,6 +345,13 @@ class OfferSnapshot(Base):
             name="vigencia_valida",
         ),
         CheckConstraint(f"data_origin IN ({ORIGINS})", name="origen_dato_valido"),
+        CheckConstraint(
+            "review_status IN ('accepted','needs_review')", name="estado_revision_valido"
+        ),
+        # Una oferta marcada para revisión conserva el texto que la marcó; no hay marca sin motivo.
+        CheckConstraint(
+            "(review_status <> 'needs_review') OR (notes IS NOT NULL)", name="revision_con_motivo"
+        ),
         Index("ix_offer_snapshot_item", "organization_id", "trade_item_id", "observed_at"),
         Index("ix_offer_snapshot_supplier", "organization_id", "supplier_id", "observed_at"),
     )  # fmt: skip
@@ -378,6 +388,7 @@ class OfferSnapshot(Base):
     valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None] = mapped_column(Text)
+    review_status: Mapped[str] = mapped_column(String(20), server_default="accepted")
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     data_origin: Mapped[str] = mapped_column(String(12), server_default="unclassified")

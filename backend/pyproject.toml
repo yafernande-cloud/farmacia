@@ -12,6 +12,10 @@ dependencies = [
     "alembic>=1.13",
     # Validación de los JWT de Supabase Auth contra su JWKS (claves asimétricas).
     "PyJWT[crypto]>=2.8",
+    # Lectura de las planillas .xlsx ORIGINALES de los proveedores (E8). `defusedxml` es lo que hace
+    # que openpyxl no expanda entidades XML de archivos no confiables.
+    "openpyxl>=3.1,<4",
+    "defusedxml>=0.7,<1",
 ]
 
 [project.optional-dependencies]

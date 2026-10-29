@@ -445,11 +445,13 @@ salida.
 | D-101 | Tomada (2026-10-29) | **Catálogo propio por archivo de datos (`catalog-load`), no por planilla de proveedor.** El archivo JSONL trae registros `article` y `mapping`. `article`: **`identity_key`** (clave canónica, la escribe una persona, nunca se deriva del nombre) y **`display_name`** obligatorios; `product_kind`, `ingredient`, `laboratory`, `brand`, `gtin`, `sanitary_registration` y `attributes` opcionales. `product_kind` se admite `NULL` («no clasificado») y **ningún atributo farmacológico es obligatorio**: el catálogo propio incluye productos no farmacéuticos (reafirma D-094). `mapping`: `source_id` + `external_id` + artículo destino (+ `external_name`), insertado en `supplier_product_mapping` con `origin='explicit'` y `created_by` del operador. Idempotente por `identity_key` y por `(source_id, external_id)`; diferencias de contenido no se sobrescriben en silencio, se informan como conflicto. `--dry-run`, auditoría y outbox. **No crea ofertas, no lee planillas y no infiere atributos ni vínculos.** |
 | D-102 | Tomada (2026-10-29) | **Perfil de importación reutilizable por fuente.** Un perfil por **fuente** (no por proveedor: un proveedor puede mandar varios formatos y cada uno es una fuente). Contiene `file_format` (`.xlsx` en v0), `sheet`, `header_row`, `columns` —papel → columna resuelta **por nombre de cabecera con lista de alias**, posición solo como respaldo—, `units` (vocabulario del archivo → `box`/`package`/`unit`/`bottle`, enum cerrado) y `options` (separadores decimal/miles, formato de fecha, y moneda o base de precio **declaradas explícitamente**). Se edita con `version` + `If-Match` como el resto del contrato y se reutiliza en cada importación de esa fuente. |
 | D-103 | Tomada (2026-10-29) | **Validación en dos fases y procesamiento parcial con conteos fieles.** Fase 1, estructural: archivo legible, cabecera presente, todas las columnas del perfil resueltas y límites respetados (10 MB, 20.000 filas); si falla **no se escribe ninguna fila**. Fase 2, por fila: se clasifican todas las filas y solo después se escriben las aceptadas, con auditoría y outbox en la misma transacción. `status` = `completed` (todas aceptadas), `completed_with_errors` (estructura válida con rechazos) o `failed` (nada aceptado). `rows_total` cuenta **filas de datos no vacías**; `rows_accepted + rows_rejected = rows_total` y ambas se derivan de lo realmente escrito. Códigos de fila: los **ya cerrados** en D-090. Ninguna fila rechazada se descarta en silencio. |
-| D-104 | Tomada (2026-10-29) | **Una fila sin SKU no se inventa ni se vincula por nombre.** Sin código de proveedor → rechazo `MISSING_REQUIRED_FIELD`; con código pero sin mapping → `UNMAPPED_PRODUCT`; **nunca** se usa el nombre como identificador ni se busca un parecido. Para poder identificarlas después, la fila rechazada se conserva **íntegra** en `import_run.rejected_rows` (número de fila, valores originales tal como vienen, fuente y hash del archivo). La respuesta HTTP mantiene **exactamente** la forma congelada en C0 (`row`, `code`, `message`), con el texto identificador dentro de `message`; exponer el detalle estructurado en la API exigiría una versión nueva del contrato (D-108). |
+| D-104 | Tomada (2026-10-29; **enmendada por D-110**) | **Una fila sin SKU no se inventa ni se vincula por nombre.** Sin código de proveedor → rechazo `MISSING_REQUIRED_FIELD`; con código pero sin mapping → `UNMAPPED_PRODUCT`; **nunca** se usa el nombre como identificador ni se busca un parecido. Para poder identificarlas después, la fila rechazada se conserva en `import_run.rejected_rows` con **lo mínimo para localizarla y entenderla**: número de fila, código, fuente, hash del archivo, SKU y nombre tal como vienen, y **solo** las celdas que causaron el rechazo (declaradas por el propio rechazo, nunca adivinadas después). No se copia la fila entera ni el archivo. La respuesta HTTP mantiene **exactamente** la forma congelada en C0 (`row`, `code`, `message`), con el texto identificador dentro de `message`; exponer el detalle estructurado en la API exigiría una versión nueva del contrato (D-108). |
 | D-105 | Tomada (2026-10-29) | **Dinero declarado, nunca supuesto.** La moneda y la base del precio (`per_commercial_unit`/`per_base_unit`) vienen del archivo o de una **declaración explícita del perfil**; no hay valor por defecto silencioso, y sin ellas la fila se rechaza (`INVALID_CURRENCY`/`INVALID_BASIS`). `tax_included` y `discount_included` quedan `NULL` = desconocido cuando la planilla no lo dice, y ninguna importación los completa por convención (D-081). Importes con `Decimal`/`NUMERIC`, jamás float. |
 | D-106 | Tomada (2026-10-29) | **E8 solo escribe ofertas de proveedor.** La importación crea únicamente `import_run` y `offer_snapshot`; **nunca** `trade_item`, `supplier_product_mapping`, `chain_product` ni `reference_price`, y no confirma identidad farmacéutica ni habilita compra. La fuente debe ser `kind='supplier'`: una `chain_reference` se rechaza antes de leer filas (la base también lo impide con `enforce_source_kind`). Los precios públicos de cadena y los costos de proveedor no se mezclan en ningún punto. |
-| D-107 | Propuesta (2026-10-29) | **Esquema necesario para C2 — no aplicado.** (1) Tabla nueva **`import_profile`** (perfil por fuente, con `version`, `status`, `data_origin` y FK compuestas por organización): hoy no existe dónde guardar el mapeo y `source.capabilities` no sirve (es una lista de capacidades del conector, sin validación por columna). (2) En **`import_run`**: `profile_id` (FK compuesta, nullable), `profile_snapshot` (jsonb, el mapeo exacto usado, porque la importación es de solo agregar y debe poder reproducirse) y `rejected_rows` (jsonb, D-104). Serían **un solo cambio de esquema**, con migración y modelo sincronizados y el test de sincronía pasando. Si se aprueba, C2 toma el número **0009** y las migraciones previstas de C3 y C4 pasan a **0010** y **0011** (ninguna existe todavía). **Requiere autorización explícita antes de crearse.** |
+| D-107 | Propuesta (2026-10-29) | **Esquema necesario para C2 — no aplicado.** (1) Tabla nueva **`import_profile`** (perfil por fuente, con `version`, `status`, `data_origin` y FK compuestas por organización): hoy no existe dónde guardar el mapeo y `source.capabilities` no sirve (es una lista de capacidades del conector, sin validación por columna). (2) En **`import_run`**: `profile_id` (FK compuesta, nullable), `profile_snapshot` (jsonb, el mapeo exacto usado, porque la importación es de solo agregar y debe poder reproducirse) y `rejected_rows` (jsonb, D-104). Serían **un solo cambio de esquema**, con migración y modelo sincronizados y el test de sincronía pasando. Si se aprueba, C2 toma el número **0009** y las migraciones previstas de C3 y C4 pasan a **0010** y **0011** (ninguna existe todavía; **corregido por D-110**: C2 tomó 0009 y 0010 quedó para el estado de revisión de la oferta, así que **C3 = 0011 y C4 = 0012**). **Requiere autorización explícita antes de crearse.** |
 | D-108 | Pendiente (2026-10-29) | **Puntos del diseño que tocarían el contrato C0 — identificados, no aplicados.** (a) **`dry_run` en E8**: se evita, la vista previa va por CLI `import-check`; si más adelante se quiere en la API, exige contrato v0.1. (b) **Códigos de error de archivo**: no se agregan; una cabecera que no calza con el perfil se informa como el ya existente `422 IMPORT_FORMAT_INVALID`, y el mismo archivo (misma fuente + mismo `file_hash`) devuelve **200 con el resultado original**, sin campo nuevo. (c) **Fuente que no sea `supplier`**: hoy solo puede informarse con un código genérico; un código preciso (`SOURCE_KIND_INVALID`) exige contrato v0.1. (d) **Detalle estructurado de filas rechazadas en la API** (D-104): también exige contrato v0.1. Ninguno bloquea la implementación. |
+| D-109 | Tomada (2026-10-29) | **Forma concreta del perfil de importación y superficie del conector `manual_import` (C2.4).**`columns` = papel → `{"header", "aliases"?, "position"?}`; se resuelve por nombre de cabecera normalizado contra `header` y luego `aliases`, y solo como respaldo por `position` (1-based). Papeles: `sku`, `price`, `sale_unit` **obligatorios**; `name`, `currency`, `basis`, `pack`, `minimum`, `multiple`, `stock`, `observed_at`, `conditions` opcionales. Un papel desconocido o una columna obligatoria ausente es `IMPORT_FORMAT_INVALID` y **no escribe nada**. `units` traduce el vocabulario del archivo a `box`/`package`/`unit`/`bottle` (sinónimo no listado = `UNKNOWN_UNIT` por fila). `options`: `currency` y `price_basis` si no vienen por columna (sin ellas la fila es `INVALID_CURRENCY`/`INVALID_BASIS`, nunca hay valor por defecto); `decimal_separator` («.» por defecto) y `thousands_separator` (null por defecto, **no se adivina**: «1.234» sin declaración es 1,234); `date_format` (`YYYY-MM-DD`, `DD-MM-YYYY`, `DD/MM/YYYY`, opcionalmente con « HH:MM[:SS]»); `tax_included`/`discount_included` booleanos o null = desconocido; `pack_base_unit` obligatorio si existe el papel `pack`; `quantity_unit` para mínimo/múltiplo/stock (**si no se declara, se usa la unidad de venta de la fila**). Superficie: servicio `app/services/imports.py` y comandos `import-check` (vista previa, no escribe) e `import-run`; **sin endpoint HTTP** por ahora (el sobre `POST /api/v1/imports` sigue congelado en C0 y se implementará en una etapa autorizada). Fuente `kind='supplier'` obligatoria (una de cadena se rechaza con el código genérico `INVALID_SOURCE`, D-108c). `UNMODELLED_CONDITION` acepta la oferta y guarda el texto en `offer_snapshot.notes`. Auditoría y outbox: **un evento por importación** (`import_run.created` / `catalog.import_completed`) con conteos y hash, no uno por oferta. Dependencias nuevas: `openpyxl` (lectura de `.xlsx`) y `defusedxml` (impide expansión de entidades en XML no confiable), declaradas en `pyproject.toml`. |
+| D-110 | Tomada (2026-10-29) | **Estado de revisión de la oferta y fila rechazada mínima (migración 0010, no aplicada a `farmacia`).** (1) `offer_snapshot.review_status` `text NOT NULL DEFAULT 'accepted'`, `CHECK IN ('accepted','needs_review')`, y coherencia `review_status <> 'needs_review' OR notes IS NOT NULL`. La 0009 **no se modifica** (ya publicada): el cambio va en la migración **0010**; por eso **C3 pasa a 0011 y C4 a 0012**. (2) `needs_review` es un **hecho histórico del snapshot**, no un flujo de trabajo: `offer_snapshot` es de solo agregar, así que una oferta marcada nunca se «desmarca»; la reemplaza una observación posterior. **No se crea tabla de revisión ni aprobación manual en v0**; si más adelante se necesita «alguien revisó y aceptó», será una tabla nueva con actor y snapshot, en C3. (3) **Una oferta `needs_review` no es una oferta verificada**: no puede considerarse elegible para seleccionar proveedor ni entrar en la comparación de conveniencia (E3). (4) **Contrato C0 intacto**: el campo no se expone en la API; el sobre de E8 conserva su forma congelada. (5) **D-104 enmendada**: `rejected_rows` guarda número de fila, códigos, fuente, hash, SKU, nombre y **solo** las celdas imputadas por el rechazo, declaradas por el propio `RowProblem` (nunca deducidas después); no la fila entera ni el archivo. |
 
 **Contrato de entrada A — catálogo propio (`catalog-load`, CLI):**
 
@@ -479,3 +481,67 @@ administra el catálogo (D-097 sigue pendiente y no se toca).
 
 **No cambia:** contrato C0 congelado, tablas y restricciones de 0008, compra real `blocked`, sin IA sobre archivos,
 `reference_price`/`chain_product` fuera de C2 y Lovable en pausa.
+
+### D-109 — Conector `manual_import` implementado (C2.4, 2026-10-29)
+
+**Qué es:** `app/services/imports.py` (`run_import`) más los comandos `import-check` (vista previa) e `import-run` de
+`app/cli.py`. Lee la planilla **original** del proveedor con `openpyxl` (XML mediante `defusedxml`), la interpreta con
+el perfil de su fuente y escribe ofertas fechadas.
+
+**Dos fases, sin escrituras a medias (D-103):**
+
+1. Estructural: archivo legible (10 MB máx.), hoja y fila de cabecera del perfil, todas las columnas obligatorias
+   resueltas, 20.000 filas máx. Si algo falla → `IMPORT_FORMAT_INVALID` o `PAYLOAD_TOO_LARGE` y **nada se escribe**, ni
+   siquiera `import_run`.
+2. Por fila: se clasifican todas y después se escriben las aceptadas. Cada rechazo lleva `{row, code, message}` con el
+   número de fila de la planilla; la fila rechazada se conserva en `import_run.rejected_rows` con lo mínimo para
+   localizarla (número de fila, código, fuente, hash, SKU, nombre y las celdas que causaron el rechazo — D-104, según
+   D-110). `rows_total = rows_accepted + rows_rejected`.
+
+**Escribe solo** `import_run` y `offer_snapshot` (D-106). Nunca `trade_item`, `trade_item_alias` ni
+`supplier_product_mapping`: un SKU sin vínculo previo es `UNMAPPED_PRODUCT`, jamás una búsqueda por nombre. Las filas
+aceptadas se agregan como observaciones nuevas; ningún precio anterior se actualiza ni se borra.
+
+**Separación de planos:** la fuente debe ser `kind='supplier'`; una fuente de cadena se rechaza antes de leer la
+primera fila y `chain_product`/`reference_price` no se tocan.
+
+**Idempotencia:** mismo `(organización, fuente, sha256 del archivo)` → se devuelve el resultado original sin escribir
+nada (`repeated`), apoyado en el índice único de `import_run`.
+
+**Procedencia:** `data_origin` según la organización (`simulated` en simulación, `captured` en prueba real), igual que
+en `catalog-load`.
+
+**Pendiente y fuera de esta etapa:** el endpoint `POST /api/v1/imports` con el sobre congelado de C0 (multipart,
+`Idempotency-Key`, 409 de clave reutilizada, 413), la administración diaria del catálogo (D-097) y la lectura de CSV.
+
+### D-110 — Estado de revisión de la oferta y fila rechazada mínima (2026-10-29)
+
+**Por qué:** el contrato ya habla de ofertas `needs_review` (E3, `cotizador-v0.md` líneas 438, 717 y 939), pero en la
+base solo existía como texto libre en `offer_snapshot.notes` más un código en `import_run.errors`. Derivar la
+elegibilidad parseando texto sería justamente lo que el proyecto prohíbe. Tampoco había registro de qué se conserva de
+una fila rechazada más allá de «íntegra», que en la práctica copiaba columnas ajenas a la compra.
+
+**Migración 0010 — `offer_snapshot.review_status`:**
+
+- `text NOT NULL DEFAULT 'accepted'`; `CHECK review_status IN ('accepted','needs_review')`; coherencia
+  `review_status <> 'needs_review' OR notes IS NOT NULL` (no hay marca sin motivo). Cambio aditivo: ninguna fila
+  existente se reescribe.
+- **No** se modifica la 0009, ya publicada. La 0010 es una migración nueva, con modelo sincronizado y el test
+  `test_modelos_y_migracion_estan_sincronizados` cubriéndola. Consecuencia de numeración: **C3 = 0011 y C4 = 0012**.
+- **Semántica (a), no flujo de trabajo:** `offer_snapshot` es de solo agregar (trigger `forbid_mutation()` de la 0008),
+  así que la marca es un hecho histórico: nunca se «desmarca». La oferta sigue marcada mientras esa condición aplique y
+  la reemplaza una observación posterior. **No hay tabla de revisión ni aprobación manual en v0**; si la farmacia
+  necesita «alguien revisó y aceptó», será una tabla aparte (`offer_review`, con actor y snapshot) en C3.
+- **Regla de negocio:** una oferta `needs_review` **no es una oferta verificada** y no puede considerarse elegible para
+  seleccionar proveedor más conveniente ni entrar en la comparación de E3. Es visible, con sus causas, pero no compite.
+- **Contrato C0 intacto:** el campo no se expone en la API; la respuesta de E8 conserva su forma congelada. Exponerlo
+  exigiría contrato v0.1 (mismo criterio que D-108).
+
+**D-104 enmendada — fila rechazada mínima:** `_rejected_row()` guarda `{row, codes, source_id, file_hash, sku, name,
+fields}`. `fields` contiene **solo** las celdas que causaron el rechazo, y las declara el propio `RowProblem` en el punto
+donde se detecta (`price` para `INVALID_PRICE`, `sale_unit` para `UNKNOWN_UNIT`, `sku` para `UNMAPPED_PRODUCT` y
+`DUPLICATE_ROW`, `currency`/`basis` para las suyas, `minimum`/`multiple`/`stock`/`pack` para `INVALID_QUANTITY`,
+`observed_at` para la fecha ilegible). Nada se deduce después ni se completa con convenciones. Motivos: `import_run`
+también es de solo agregar (la forma elegida por corrida es permanente), una planilla de 20.000 filas podía dejar varios
+MB de JSONB con columnas ajenas a la compra, y el número de fila + fuente + hash + SKU bastan para encontrarla en la
+planilla original. Se conserva SKU, nombre y las celdas imputadas para no perder el diagnóstico sin el archivo.
