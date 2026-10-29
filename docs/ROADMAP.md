@@ -9,7 +9,7 @@ desarrollo. Las fases `C*` son el camino crítico; las `H*` siguen vigentes pero
 |---|---|---|---|
 | **C0** | Contrato integral del cotizador (E1–E9): búsqueda, ofertas, comparación, proveedores, fuentes y **criterios comerciales con anotación (sin aplicación)**. Documento: `docs/contracts/cotizador-v0.md` | C0-01 a C0-19 | **Completada — contrato aprobado y congelado** (2026-10-29, D-078 a D-093) |
 | **C1** | Modelo de datos del cotizador, **diseño cerrado** (D-076/D-094, con adenda `chain_product`): artículo neutral al tipo de producto (`trade_item`), ficha publicada por cadena, proveedor, fuente, mapping, ofertas, despacho, referencias, importación, comparaciones, criterios y búsquedas. Se reparte en tres migraciones (**0008** catálogo y ofertas, 10 tablas; **0009** comparaciones y criterios; **0010** búsquedas) y suma `catalog-load` (carga inicial técnica, no administración cotidiana; D-097) | AC16–AC20 (base), AC29–AC31 (base) | **Hecha** (2026-10-29): migración **0008 aplicada** a `farmacia` con respaldo verificado y ensayo de subida y reversión (D-098). Sin endpoints: `catalog-load` y conectores son C2 |
-| **C2** | Contrato de conector + `manual_import` (Excel) + fuente `fixture` etiquetada | AC16, AC17 | Pendiente; contrato de Excel abierto (D-077) |
+| **C2** | Contrato de conector + `manual_import` (Excel) + fuente `fixture` etiquetada | AC16, AC17 | **Diseño cerrado** (2026-10-29, D-077 cerrada; D-100 a D-108); implementación **pendiente de autorización**, incluido el esquema de D-107 |
 | **C3** | Comparador determinista: elegibilidad, cantidades con mínimo/múltiplo, impuestos/descuentos/despacho, total parcial, cota inferior (LB-1…LB-8), explicabilidad y **anotación de criterios (sin alterar números)**; incluye la migración **0009**, con la que recién pasan a tener persistencia real las notas y criterios | AC18–AC20, AC31 (base) | Pendiente |
 | **C4** | API de búsqueda y cotización (síncrona, D-075) y E9 `/commercial-criteria` (alta, edición, confirmación y desactivación auditadas); incluye la migración **0010** | AC16–AC19, AC29–AC31 | Pendiente |
 | **C5** | Lovable: buscador y cotizador | AC20, AC31 (parcial) | Diseño en paralelo desde C0; **criterios y notas solo como demostración no operativa hasta C3 (0009)**; integración tras C4 |
@@ -81,7 +81,8 @@ Qué implica el congelamiento:
 - Un cambio de alcance, esquema o semántica posterior exige una **decisión nueva** (D-094 en adelante) y una versión
   nueva del contrato; no se edita en silencio.
 - Quedaron abiertas sin bloquear C1–C4: **D-076** (esquema del catálogo), **cerrada el 2026-10-29** con el diseño de
-  C1 (sección siguiente), y **D-077** (contrato y formato de la planilla Excel), que sigue abierta.
+  C1 (sección siguiente), y **D-077** (contrato y formato de la planilla Excel), **cerrada el 2026-10-29** con el
+  diseño de C2 (D-100 a D-108).
 - El siguiente paso es **C1** (modelo de datos), que requiere **autorización explícita de migración**.
 
 ## Diseño de C1 — 2026-10-29 (D-076, D-094, adenda `chain_product`)
@@ -119,7 +120,7 @@ Tres límites explícitos:
 
 | Pista | Contenido | Depende de |
 |---|---|---|
-| **A · Backend cotizador** | C0 → C1 → C2 → C3 → C4 | C1 **cerrado** (0008 aplicada, 2026-10-29); falta el contrato de Excel para C2 (D-077) |
+| **A · Backend cotizador** | C0 → C1 → C2 → C3 → C4 | C1 **cerrado** (0008 aplicada) y C2 con **diseño cerrado** (D-077/D-100 a D-108, 2026-10-29); falta autorizar el esquema de C2 (D-107) para implementar |
 | **B · Diseño Lovable** | Buscador y cotizador contra el contrato v0, con datos `fixture` etiquetados | C0 **cerrada** (contrato congelado el 2026-10-29): puede comenzar |
 | **C · Telegram** | H1-B.5 con el bot real (lo crea el usuario) | Token del bot |
 | **D · Operación** | Contrato generado desde FastAPI, `supabase_jwt` en demo, URL HTTPS + CORS, CI | Autorización de configuración y despliegue |
@@ -165,8 +166,8 @@ registrar criterios no crea permisos nuevos: es el mismo rol administrativo exis
 ## Decisiones abiertas (no bloquean C1–C4)
 
 - ~~**D-076**~~ **cerrada el 2026-10-29** (esquema del catálogo, ver «Diseño de C1»).
-- **D-077 (pendiente):** carga de Excel **desde la interfaz administrativa**; contrato técnico y formato de planilla sin
-  definir.
+- ~~**D-077**~~ **cerrada el 2026-10-29**: contrato de entrada del catálogo propio y de las planillas de proveedor,
+  perfiles por fuente y validación (D-100 a D-108).
 - **D-097 (pendiente):** **administración cotidiana del catálogo** (alta y edición de artículos, mappings y alias desde
   la interfaz). `catalog-load` es solo carga inicial; no se agrega endpoint ni se modifica C0 hasta decidirlo.
 - **D-095 (diferida):** productos no farmacéuticos en el módulo de faltantes (`demand_item.ingredient` es `NOT NULL`).
