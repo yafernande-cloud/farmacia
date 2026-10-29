@@ -8,13 +8,16 @@
   list-telegram-requests --org sim|real --by <app_user_id> [--status pending|approved|rejected|expired]
   block-telegram-account <account_id> --org sim|real --by <app_user_id> [--reason ...]
   reactivate-telegram-account <account_id> --org sim|real --by <app_user_id> [--reason ...]
+  list-auth-subjects --org sim|real --by <app_user_id>
+  link-auth-subject <app_user_id> --org sim|real --by <app_user_id> [--subject <sub>]
+  unlink-auth-subject <app_user_id> --org sim|real --by <app_user_id> --confirm
   telegram-check | telegram-poll
 
 Nada aquí usa la organización real por defecto: cada comando nombra la suya y no hay valor implícito.
 El flujo normal es: la persona escribe /solicitar al bot, recibe un código temporal, y la
 administradora aprueba desde el frontend/API con su sesión de Supabase. La CLI queda solo para
 tareas de desarrollo y bootstrap; no es obligatoria para administrar accesos. Ningún comando
-imprime códigos.
+imprime códigos ni tokens; el `sub` de Supabase es un identificador, no una credencial.
 """
 
 import asyncio
@@ -28,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import dispose_engine, get_engine
 from app.models import AppUser, ChannelBinding, Organization, PurchaseCycle, TelegramAccount
-from app.services import access
+from app.services import access, identity
 from app.services.actors import Actor, load_actor
 from app.services.provenance import OrgKind, validate_account, validate_binding, vision_guard
 
@@ -193,6 +196,18 @@ def _arg(a: list[str], flag: str, default: str | None = None) -> str | None:
     return default
 
 
+def _subject_arg(a: list[str]) -> str:
+    """El `sub` se pide por consola si no viene en --subject, para no dejarlo en el historial del shell."""
+    value = _arg(a, "--subject")
+    if value:
+        return value
+    if "--subject" in a:
+        raise SystemExit("--subject necesita un valor.")
+    if not sys.stdin.isatty():
+        raise SystemExit("Indica --subject <sub> o ejecuta el comando en una terminal.")
+    return input("sub del usuario de Supabase (identificador, no una contraseña): ")
+
+
 async def list_telegram_accounts(which: str, a: list[str]) -> None:
     by = _arg(a, "--by")
     if not by:
@@ -264,6 +279,64 @@ async def reactivate_telegram_account(account_id: str, which: str, a: list[str])
     await dispose_engine()
 
 
+async def list_auth_subjects(which: str, a: list[str]) -> None:
+    by = _arg(a, "--by")
+    if not by:
+        raise SystemExit("Indica el administrador con --by <app_user_id>.")
+    actor, name = await _admin(which, by)
+    try:
+        async with AsyncSession(get_engine()) as s:
+            rows = await identity.list_auth_subjects(s, actor)
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(getattr(e, "message", str(e))) from None
+    linked = sum(1 for r in rows if r["linked"])
+    print(f"Identidades web de «{name}»: {linked} enlazada(s) de {len(rows)} persona(s).")
+    for r in rows:
+        estado = r["auth_subject"] if r["linked"] else "sin enlazar"
+        activo = "" if r["active"] else " (inactiva)"
+        print(f"  {r['user_id']}  {r['display_name']}{activo}  sub: {estado}")
+    await dispose_engine()
+
+
+async def link_auth_subject(user_id: str, which: str, a: list[str]) -> None:
+    by = _arg(a, "--by")
+    if not by:
+        raise SystemExit("Indica el administrador con --by <app_user_id>.")
+    subject = _subject_arg(a)
+    actor, name = await _admin(which, by)
+    try:
+        async with AsyncSession(get_engine(), expire_on_commit=False) as s, s.begin():
+            r = await identity.link_auth_subject(
+                s, actor, _uuid(user_id, "app_user_id"), subject=subject
+            )
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(getattr(e, "message", str(e))) from None
+    if r["changed"]:
+        print(f"{r['display_name']} ({name}): identidad enlazada. Auditoría y evento registrados.")
+    else:
+        print(f"{r['display_name']} ({name}): esa identidad ya estaba enlazada; sin cambios.")
+    print("Antes de habilitar permisos, verifica que Google y correo/contraseña devuelvan ESTE mismo "
+          "sub en GET /api/v1/me (docs/AUTH_SUPABASE.md).")
+    await dispose_engine()
+
+
+async def unlink_auth_subject(user_id: str, which: str, a: list[str]) -> None:
+    by = _arg(a, "--by")
+    if not by:
+        raise SystemExit("Indica el administrador con --by <app_user_id>.")
+    if "--confirm" not in a:
+        raise SystemExit("Desvincular deja a la persona sin acceso web. Repite con --confirm.")
+    actor, name = await _admin(which, by)
+    try:
+        async with AsyncSession(get_engine(), expire_on_commit=False) as s, s.begin():
+            r = await identity.unlink_auth_subject(s, actor, _uuid(user_id, "app_user_id"))
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(getattr(e, "message", str(e))) from None
+    print(f"{r['display_name']} ({name}): identidad desvinculada. "
+          "La persona y su historial se conservan.")  # fmt: skip
+    await dispose_engine()
+
+
 async def telegram_check() -> None:
     """getMe: comprueba que el token funciona SIN mostrarlo."""
     from app.core.config import get_settings
@@ -326,6 +399,12 @@ def main() -> None:
         asyncio.run(block_telegram_account(a[1], _org_arg(a), a))
     elif len(a) >= 3 and a[0] == "reactivate-telegram-account":
         asyncio.run(reactivate_telegram_account(a[1], _org_arg(a), a))
+    elif len(a) >= 2 and a[0] == "list-auth-subjects":
+        asyncio.run(list_auth_subjects(_org_arg(a), a))
+    elif len(a) >= 2 and a[0] == "link-auth-subject":
+        asyncio.run(link_auth_subject(a[1], _org_arg(a), a))
+    elif len(a) >= 2 and a[0] == "unlink-auth-subject":
+        asyncio.run(unlink_auth_subject(a[1], _org_arg(a), a))
     elif a == ["telegram-check"]:
         asyncio.run(telegram_check())
     elif a == ["telegram-poll"]:
@@ -337,6 +416,9 @@ def main() -> None:
             "list-telegram-requests --org sim|real --by <id> [--status ...] | "
             "block-telegram-account <id> --org sim|real --by <id> [--reason ...] | "
             "reactivate-telegram-account <id> --org sim|real --by <id> [--reason ...] | "
+            "list-auth-subjects --org sim|real --by <id> | "
+            "link-auth-subject <id> --org sim|real --by <id> [--subject <sub>] | "
+            "unlink-auth-subject <id> --org sim|real --by <id> --confirm | "
             "telegram-check | telegram-poll"
         )
 

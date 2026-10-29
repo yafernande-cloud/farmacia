@@ -28,7 +28,7 @@ Asistente de compras con IA (demo → producción). Idioma de trabajo y UI: espa
 - **Separación de datos (D-037 a D-047):** simulaciones y pruebas automatizadas SOLO en la organización `simulation` (chats `555000x`); el bot real
   en `real_test`. Nunca usar la organización real por defecto ni vaciar tablas en demos. `data_origin` (simulated/captured/ai_derived) NO es confianza.
   Una lectura simulada jamás entra en una organización real. El personal no se define en el código (archivo de datos → PostgreSQL), no se elimina, y solo
-  personas activas + disponibles pueden ser identidad; PIN no se exige en el demo. **Estado real de `farmacia`: 0004 y 0005 aplicadas y script de datos 0006 ejecutado. No aplicar la migración `0007` a `farmacia` sin autorización explícita.**
+  personas activas + disponibles pueden ser identidad; PIN no se exige en el demo. **Estado real de `farmacia`: 0004, 0005 y 0007 aplicadas y script de datos 0006 ejecutado (`alembic current` = 0007). La 0007 se aplicó el 2026-10-28 con respaldo `pg_dump` verificado fuera del repo. No aplicar migraciones nuevas a `farmacia` sin autorización explícita.**
 - Dinero con `Decimal`/NUMERIC, nunca float. Fechas UTC; presentar en America/Santiago.
 - No llamar al LLM para lo determinista. Rendimiento es requisito (dashboard <2 s, resultados progresivos).
 - Frontend (Lovable) solo consume `/api/v1`; sin lógica de negocio ni acceso directo a la BD.
@@ -39,8 +39,8 @@ Asistente de compras con IA (demo → producción). Idioma de trabajo y UI: espa
 
 ## Metodología
 Por fases con informe (objetivo, alcance, archivos, implementación, pruebas, aceptación, riesgos, continuar).
-Hecho: F0, **H1-A**, corrección del modelo de productos, **H1-B** con simuladores y **H1-B.4** (solicitud/aprobación/bloqueo de accesos de Telegram; ver `docs/H1B_TELEGRAM.md`); migración `0007` pendiente de autorización. Siguiente: **H1-B.5** (verificar con el bot real; el usuario crea el bot y guarda el token en `.env`; Supabase para la aprobación administrativa) y H1-C (SSE + dashboard Lovable).
+Hecho: F0, **H1-A**, corrección del modelo de productos, **H1-B** con simuladores y **H1-B.4** (solicitud/aprobación/bloqueo de accesos de Telegram; ver `docs/H1B_TELEGRAM.md`); migración `0007` aplicada; preparación de Supabase Auth (D-064 a D-070: enlace único por `sub`, CLI `link-auth-subject`, `/staff` con `StrongActor`). Siguiente: **H1-B.5** (verificar con el bot real; el usuario crea el bot y guarda el token en `.env`; proyecto Supabase para la aprobación administrativa) y H1-C (SSE + dashboard Lovable).
 No declarar pruebas de BD como exitosas si se omitieron: validar con `REQUIRE_DB=1 .venv/bin/pytest` (PostgreSQL local por Docker; `open -a Docker`).
-Supabase: aún NO se crea proyecto (D-002). Auth web: validador JWT implementado y exigido para accesos administrativos en organizaciones reales; falta el proyecto y enlazar `auth_subject` (`docs/AUTH_SUPABASE.md`).
+Supabase: aún NO se crea proyecto (D-002). Auth web: validador JWT implementado; enlace `auth_subject` implementado por CLI (solo rol `admin`, auditado) y exigido con `StrongActor` en accesos de Telegram y `/staff`; **ninguna cuenta está enlazada todavía** (Pao existe en `real_test`, `simulation` y `legacy_mixed`, todas sin `auth_subject`). Falta el proyecto, el alta manual del usuario y la verificación del mismo `sub` antes de habilitar permisos (`docs/AUTH_SUPABASE.md`, D-064 a D-070).
 Patrón de servicios: `services/*` reciben `Actor` + sesión, verifican permisos, no hacen commit (la API usa `transaction()`); auditoría+outbox en la misma transacción (`services/events.emit`).
 Cambios de esquema: migración Alembic + modelo; el test `test_modelos_y_migracion_estan_sincronizados` debe seguir pasando.

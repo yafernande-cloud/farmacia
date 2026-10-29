@@ -1,4 +1,9 @@
-"""API administrativa del personal (preparada para una pantalla en Lovable). Exige el rol administrador."""
+"""API administrativa del personal (preparada para una pantalla en Lovable). Exige el rol administrador.
+
+En organizaciones reales estas rutas exigen autenticación fuerte (`StrongActor`): la cabecera de
+demostración solo se acepta en la organización de simulación. Administrar el personal es administrar
+quién puede reportar y quién no, igual que administrar accesos de Telegram.
+"""
 
 import uuid
 from datetime import datetime
@@ -7,7 +12,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
-from app.api.deps import CurrentActor, Session
+from app.api.deps import Session, StrongActor
 from app.api.v1.demand import ERRORS
 from app.core.errors import DomainError
 from app.core.staff import AbsenceReason
@@ -85,7 +90,7 @@ async def _one(session, actor, uid: uuid.UUID) -> StaffOut:
     summary="Listado COMPLETO del personal (incluye no disponibles y desactivadas)",
 )
 async def list_staff(
-    session: Session, actor: CurrentActor, include_inactive: Annotated[bool, Query()] = True
+    session: Session, actor: StrongActor, include_inactive: Annotated[bool, Query()] = True
 ):
     return [
         StaffOut(**r)
@@ -100,7 +105,7 @@ async def list_staff(
     responses=ERRORS,
     summary="Crear una persona",
 )
-async def create_staff(body: StaffCreateIn, session: Session, actor: CurrentActor):
+async def create_staff(body: StaffCreateIn, session: Session, actor: StrongActor):
     async with transaction(session):
         u = await svc.create_staff(
             session, actor, display_name=body.display_name, roles=list(body.roles)
@@ -115,7 +120,7 @@ async def create_staff(body: StaffCreateIn, session: Session, actor: CurrentActo
     summary="Cambiar el nombre visible (la autoría histórica no cambia)",
 )
 async def rename_staff(
-    user_id: uuid.UUID, body: StaffRenameIn, session: Session, actor: CurrentActor
+    user_id: uuid.UUID, body: StaffRenameIn, session: Session, actor: StrongActor
 ):
     async with transaction(session):
         await svc.rename_staff(session, actor, user_id, body.display_name)
@@ -128,7 +133,7 @@ async def rename_staff(
     responses=ERRORS,
     summary="Desactivar (no elimina; cierra sus sesiones)",
 )
-async def deactivate(user_id: uuid.UUID, session: Session, actor: CurrentActor):
+async def deactivate(user_id: uuid.UUID, session: Session, actor: StrongActor):
     async with transaction(session):
         _, n = await svc.set_active(session, actor, user_id, False)
         return StaffChangeOut(staff=await _one(session, actor, user_id), sessions_revoked=n)
@@ -140,7 +145,7 @@ async def deactivate(user_id: uuid.UUID, session: Session, actor: CurrentActor):
     responses=ERRORS,
     summary="Reactivar",
 )
-async def activate(user_id: uuid.UUID, session: Session, actor: CurrentActor):
+async def activate(user_id: uuid.UUID, session: Session, actor: StrongActor):
     async with transaction(session):
         _, n = await svc.set_active(session, actor, user_id, True)
         return StaffChangeOut(staff=await _one(session, actor, user_id), sessions_revoked=n)
@@ -149,7 +154,7 @@ async def activate(user_id: uuid.UUID, session: Session, actor: CurrentActor):
 @router.put("/staff/{user_id}/availability", response_model=StaffChangeOut, responses=ERRORS,
             summary="Marcar disponibilidad para reportar (vacaciones, licencia, día libre u otro)")  # fmt: skip
 async def availability(
-    user_id: uuid.UUID, body: AvailabilityIn, session: Session, actor: CurrentActor
+    user_id: uuid.UUID, body: AvailabilityIn, session: Session, actor: StrongActor
 ):
     async with transaction(session):
         _, n = await svc.set_availability(session, actor, user_id, available=body.available,

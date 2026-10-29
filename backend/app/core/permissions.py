@@ -23,6 +23,9 @@ class Permission(StrEnum):
     MANAGE_ACCOUNTS = (
         "manage_accounts"  # aprobar solicitudes y bloquear/rehabilitar cuentas de Telegram (rol admin)
     )
+    MANAGE_IDENTITIES = (
+        "manage_identities"  # vincular/desvincular la identidad web (sub de Supabase) de una persona
+    )
     CONFIRM_ATTRIBUTES = "confirm_attributes"  # confirmar unidad/forma/contenido; gestionar alias
 
 
@@ -41,6 +44,7 @@ _GRANTS: dict[Role, set[Permission]] = {
         Permission.VIEW_LIST,
         Permission.MANAGE_STAFF,
         Permission.MANAGE_ACCOUNTS,
+        Permission.MANAGE_IDENTITIES,
     },  # no implica permisos de compras
 }
 

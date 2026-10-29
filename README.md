@@ -25,7 +25,9 @@ backend/.venv/bin/python scripts/demo_h1a.py --reset        # demostración H1-A
 ```
 
 Endpoints (`/api/v1`, contrato en `docs/contracts/openapi.json`, interactivo en `/docs`). Identidad por
-cabecera `X-Demo-User-Id` mientras `AUTH_MODE=demo_header`:
+cabecera `X-Demo-User-Id` mientras `AUTH_MODE=demo_header`. En organizaciones reales (`real_test`/`production`)
+las rutas administrativas —`/staff` y los accesos de Telegram— exigen `Authorization: Bearer <JWT de Supabase>`;
+la cabecera de demostración solo se acepta en simulación (`docs/AUTH_SUPABASE.md`):
 
 | Método y ruta | Uso |
 |---|---|

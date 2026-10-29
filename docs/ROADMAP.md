@@ -39,16 +39,18 @@ rehabilitación con historial conservado; validación de acceso en el servidor *
 la transacción); identidad fija por cuenta en teléfonos personales y selector intacto en el compartido; `account_id` en
 vínculos, sesiones, mensajes y observaciones.
 **Migración:** `0007` reescrita (encadenada a `0005`; `0006` es un script de datos, no Alembic), con backfill solo de chats
-privados reales y downgrade. **NO aplicada a `farmacia`**: requiere tu autorización explícita (0004/0005/0006 ya están
-aplicadas).
+privados reales y downgrade.
 **Pruebas:** 35 en `tests/test_telegram_accounts.py`; suite completa **313** con PostgreSQL 17 real. Cubren solicitud sin
 persistir el código, pendiente sin acceso, rotación, idempotencia, vencimiento, límites de intentos, permisos y sesión
 fuerte, aprobación personal/compartida, rechazo, bloqueo/rehabilitación con historial, aislamiento entre cuentas, teléfono
 compartido sin regresión, guardias de simulación, JWT y backfill de la migración. **Con Telegram real no se probó**: el
 canal se ejerció con el simulador.
+**Estado:** `0007` **aplicada** a `farmacia` el 2026-10-28, con respaldo `pg_dump` verificado fuera del repositorio y
+conteos sin cambios.
 **Decisión pendiente:** qué restricciones de negocio tendrán las cuentas administrativas frente a las operativas. Hoy
 `access_role` es descriptivo y no se inventó ninguna restricción (D-053). También falta crear el proyecto Supabase
-(no autorizado) para que Pao pueda ejercer la API administrativa en `real_test`.
+(no autorizado) para que Pao pueda ejercer la API administrativa en `real_test`; el enlace de su identidad ya está
+implementado por CLI y auditado (D-064 a D-070, `docs/AUTH_SUPABASE.md`).
 
 ## H1-B — informe de fase
 
