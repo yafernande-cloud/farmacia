@@ -3,6 +3,18 @@ from app.models.authorization import (
     TelegramAccessRequest,
     TelegramAccount,
 )
+from app.models.catalog import (
+    ChainProduct,
+    ImportRun,
+    OfferSnapshot,
+    ReferencePrice,
+    ShippingTermsSnapshot,
+    Source,
+    Supplier,
+    SupplierProductMapping,
+    TradeItem,
+    TradeItemAlias,
+)
 from app.models.channel import (
     ActorSession,
     Attachment,
@@ -24,8 +36,10 @@ from app.models.demand import (
 from app.models.events import AuditEvent, OutboxEvent
 
 __all__ = [
-    "ActorSession", "AppUser", "Attachment", "AuditEvent", "AuxiliaryProfile", "ChannelBinding",
-    "ChannelMessage", "CommercialReference", "DemandItem", "DemandObservation", "InboundEvent", "Organization",
-    "OutboundMessage", "OutboxEvent", "PharmaIdentity", "ProductAlias", "PurchaseCycle", "QuantityEvent",
-    "TelegramAccessAttempt", "TelegramAccessRequest", "TelegramAccount",
+    "ActorSession", "AppUser", "Attachment", "AuditEvent", "AuxiliaryProfile", "ChainProduct",
+    "ChannelBinding", "ChannelMessage", "CommercialReference", "DemandItem", "DemandObservation",
+    "ImportRun", "InboundEvent", "OfferSnapshot", "Organization", "OutboundMessage", "OutboxEvent",
+    "PharmaIdentity", "ProductAlias", "PurchaseCycle", "QuantityEvent", "ReferencePrice",
+    "ShippingTermsSnapshot", "Source", "Supplier", "SupplierProductMapping", "TelegramAccessAttempt",
+    "TelegramAccessRequest", "TelegramAccount", "TradeItem", "TradeItemAlias",
 ]  # fmt: skip
