@@ -2,21 +2,145 @@
 
 El orden no reduce el alcance: la presentación final a Pao integra todos los módulos.
 
+**Orden revisado el 2026-10-29 (D-073 a D-075):** el **cotizador** es la prioridad principal y **Telegram no bloquea** su
+desarrollo. Las fases `C*` son el camino crítico; las `H*` siguen vigentes pero dejan de ser requisito previo.
+
 | Fase | Contenido | Criterios | Estado |
 |---|---|---|---|
+| **C0** | Contrato integral del cotizador (E1–E9): búsqueda, ofertas, comparación, proveedores, fuentes y **criterios comerciales con anotación (sin aplicación)**. Documento: `docs/contracts/cotizador-v0.md` | C0-01 a C0-19 | **Completada — contrato aprobado y congelado** (2026-10-29, D-078 a D-093) |
+| **C1** | Modelo de datos del cotizador: `supplier`, `source`, `supplier_product_mapping`, `offer_snapshot`, `reference_price`, `shipping_terms_snapshot`, `search_run`, `comparison_run` y `commercial_criterion` (nota/criterio con versión y auditoría) (migración nueva) | AC16–AC20 (base), AC29–AC31 (base) | Pendiente; **requiere autorización de migración** |
+| **C2** | Contrato de conector + `manual_import` (Excel) + fuente `fixture` etiquetada | AC16, AC17 | Pendiente; contrato de Excel abierto (D-077) |
+| **C3** | Comparador determinista: elegibilidad, cantidades con mínimo/múltiplo, impuestos/descuentos/despacho, total parcial, cota inferior (LB-1…LB-8), explicabilidad y **anotación de criterios (sin alterar números)** | AC18–AC20, AC31 (base) | Pendiente |
+| **C4** | API de búsqueda y cotización (síncrona, D-075) y E9 `/commercial-criteria` (alta, edición, confirmación y desactivación auditadas) | AC16–AC19, AC29–AC31 | Pendiente |
+| **C5** | Lovable: buscador y cotizador | AC20, AC31 (parcial) | Diseño en paralelo desde C0; integración tras C4 |
+| **C6** | Referencias de cadenas (precio público separado de la oferta) | AC20 | **Mecanismo abierto** (§9.3) |
 | **F0** | Base: repo, FastAPI, salud, config, Alembic, pruebas | — | **Hecha** (2026-10-28) |
 | **H1-A** | Persistencia y reglas de demanda (sin Telegram): modelos, migraciones, deduplicación determinista, SET/ADD/CLEAR, auditoría/outbox, API de faltantes | AC03–AC12 (núcleo) | **Hecha** (2026-10-28) |
 | **H1-B** | Telegram + sesiones de auxiliar + **fotografías** (sin texto, con texto, con cantidad) + interpretación contextual + identidad farmacéutica/comercial. Detalle y límites en `docs/H1B_TELEGRAM.md` | AC01, AC02, AC12 (e2e simulado), AC13 (API), AC14 | **Implementada con simuladores** (2026-10-28). Falta verificar con el bot real (token) y con un proveedor de visión real |
 | **H1-B.0** | Separación simulación / prueba real (organizaciones por tipo, procedencia, guardias, aislamiento) y personal (mantenedor, disponibilidad, botones dinámicos, «Finalizar reportes»). Plan de datos: `docs/decisions/0002-…` | AC33 (aislamiento), AC01/AC02 reforzados | **Aplicada en `farmacia`**: migraciones 0004 y 0005 aplicadas (Alembic en `0005`) y script de datos 0006 ejecutado |
-| **H1-B.4** | Acceso desde **múltiples cuentas** de Telegram: solicitud desde el bot, código temporal, aprobación/bloqueo/rehabilitación desde el frontend (API), identidad por cuenta, historial conservado. Detalle en `docs/H1B_TELEGRAM.md` | AC01/AC02 reforzados (autorización y trazabilidad) | **Implementada y probada con simulador de canal + PostgreSQL real; migración 0007 pendiente de tu autorización** |
-| **H1-B.5** | Verificación con Telegram real: crear bot, `telegram-check`, `/solicitar`, aprobar desde la API con JWT, `telegram-poll`; después el alta de la identidad de Pao (D-067); conectar proveedor de visión (requiere autorización y costo). La **primera administradora web** (`create-admin`, identidad separada de Pao) ya está creada y enlazada en `real_test` (2026-10-29, D-071/D-072) | AC12, AC13 reales | Siguiente |
-| **H1-C** | SSE con cursor sobre `outbox_event`, reconexión; dashboard Lovable (Faltantes) | AC15 | Tras H1-B |
-| **H1b** | Dashboard en Lovable (Faltantes) conectado a la API | AC03–AC04, AC15 | Tras H1 |
+| **H1-B.4** | Acceso desde **múltiples cuentas** de Telegram: solicitud desde el bot, código temporal, aprobación/bloqueo/rehabilitación desde el frontend (API), identidad por cuenta, historial conservado. Detalle en `docs/H1B_TELEGRAM.md` | AC01/AC02 reforzados (autorización y trazabilidad) | **Implementada y probada con simulador de canal + PostgreSQL real; migración 0007 aplicada el 2026-10-28 (D-062)** |
+| **H1-B.5** | Verificación con Telegram real: crear bot, `telegram-check`, `/solicitar`, aprobar desde la API con JWT, `telegram-poll`; después el alta de la identidad de Pao (D-067); conectar proveedor de visión (requiere autorización y costo). La **primera administradora web** (`create-admin`, identidad separada de Pao) ya está creada y enlazada en `real_test` (2026-10-29, D-071/D-072) | AC12, AC13 reales | Pendiente, **no bloqueante** (D-073) |
+| **H1-C** | SSE con cursor sobre `outbox_event`, reconexión; dashboard Lovable (Faltantes) | AC15 | Paralela, no bloqueante (sirve a Faltantes) |
+| **H1b** | Dashboard en Lovable (Faltantes) conectado a la API | AC03–AC04, AC15 | Sección secundaria de Lovable (D-074) |
 | **H2** | Fotos, extracción con visión, resolución de catálogo | AC13–AC14 | |
-| **H3** | Conectores reales (lectura autorizada), referencias de cadenas, comparación estricta | AC16–AC20 | Requiere validar acceso por proveedor |
-| **H4** | Propuestas por excepciones, carritos persistentes, reglas conversacionales | AC21–AC24, AC29–AC31, AC37, AC39 | |
+| **H3** | Conectores reales (lectura autorizada), referencias de cadenas, comparación estricta | AC16–AC20 | Se subdivide en C1–C4; referencias de cadenas en C6 (mecanismo abierto). Requiere validar acceso por proveedor |
+| **H4** | Propuestas por excepciones, carritos persistentes, **aplicación de criterios comerciales**: recomendación explicada, reglas duras y memoria/aprendizaje desde evaluaciones; propuestas masivas | AC21–AC24, AC29–AC31, AC37, AC39 | |
 | **H5** | Aprobaciones por snapshot, ejecución bloqueada/sandbox, conciliación, recepción | AC25–AC28, AC34, AC40 | Compra real fuera de alcance del demo |
 | **H6** | Piloto: evaluación semántica, seguridad, retención, observabilidad | AC36 y restantes | |
+
+## Reordenamiento 2026-10-29 — cotizador primero
+
+**Hecho:** registro de D-073 (cotizador prioritario; Telegram no bloquea), D-074 (buscador/cotizador como pantalla
+principal) y D-075 (búsqueda síncrona sobre catálogo local). **No se modificó código, base de datos, migraciones ni
+configuración.**
+
+**Qué cambia:** el camino crítico pasa a ser C0 → C1 → C2 → C3 → C4 → C5. **Qué no cambia:** alcance total, invariantes
+del HLD §2, compra real bloqueada y el comportamiento existente de Telegram y Supabase Auth (el cotizador es aditivo).
+
+**Rol del cotizador:** es una herramienta **interna** usada solo por los jefes de la farmacia. Todas sus operaciones
+exigen rol **`admin`** y `StrongActor`; no se crea un rol `purchasing` ni permisos nuevos, y los roles de los demás
+módulos no cambian (D-079).
+
+## Revisión del contrato C0 — 2026-10-29 (D-086 a D-092)
+
+**Hecho:** corregido `docs/contracts/cotizador-v0.md` con B1–B11 y registradas D-086 a D-091. **No se modificó código,
+modelo, base de datos, migraciones ni OpenAPI.** En ese momento el contrato **no estaba congelado**: la aprobación
+final llegó el 2026-10-29 (D-093, sección siguiente).
+
+- **B1 — autorización.** ADMIN por chequeo de rol (sin permisos nuevos) **más** `StrongActor`; se documenta que
+  `StrongActor` hoy solo rechaza la cabecera demo fuera de `simulation` y **no** es MFA (D-086).
+- **B2 — ganador.** `best_eligible` → `lowest_verified_total`, con alcance explícito e `is_global_claim=false`; un
+  parcial nunca tiene total (D-087).
+- **B3 — cota inferior.** `lower_bound` nullable con `bound_status` y LB-1…LB-8; sin cota válida el proveedor va a
+  `unknown_relation`, no a `could_be_beaten_by` (D-087).
+- **B4 — aritmética.** Cantidades con `known`, stock contra `purchased`, impuestos, descuentos sin doble resta,
+  despacho por esquema, otros cargos, moneda y redondeo (D-088).
+- **B5 — unidades.** `QuantityUnit` (`box/package/unit/bottle`) y `original_text`; se elimina `"unit":"caja"` (D-089).
+- **B6–B9 — esquemas y operaciones.** `OfferOut`, `ComparisonCandidateOut`, `SupplierTotalOut` y
+  `CommercialCriterionOut` completos; E1 con `errors[]`, `sources[]` y `INVALID_CURSOR`; E3 con `reference_prices`
+  vacío y anotaciones; E4 con `has_secret` y cuatro estados; E5 con candidatos `ineligible` siempre devueltos;
+  `recommendation: null` reservado a H4.
+- **B10 — E8.** Sobre congelado (transporte, idempotencia, códigos de fila, parciales); columnas en D-077 (D-090).
+- **B11 — criterios comerciales (E9).** Registro y anotación en v0; aplicación y recomendación en H4; `note` vs
+  `criterion`, sin `proposed`; no interferencia (D-091).
+- **Cierre previo a la aprobación (D-092).** Tres niveles de resultado (candidato / proveedor parcial / proveedor
+  completo) sin contradicción con C0-06 ni AC19; cantidad explicada con `adjustment`; trazabilidad nota → criterio sin
+  anotaciones activas duplicadas; concurrencia con `If-Match`; alcance exacto por ámbito; creación directa solo con
+  `confirm: true`.
+
+## Cierre de C0 — 2026-10-29 (D-093)
+
+**Hecho:** el usuario aprobó formalmente el contrato el 2026-10-29. `docs/contracts/cotizador-v0.md` queda
+**APROBADO Y CONGELADO** y **C0 se marca completada**, con C0-01 a C0-19 verificados por revisión del documento
+(C0-13 cumplido por la aprobación). **No se modificó código, modelo, base de datos, migraciones ni OpenAPI; la
+migración 0008 no se ejecuta y C1 no se inicia sin autorización nueva.**
+
+Qué implica el congelamiento:
+- Lovable y el backend implementan el contrato **tal cual**; los tres planos (cálculo determinista, criterios sin
+  interferencia y recomendación futura en H4) no se mezclan.
+- Un cambio de alcance, esquema o semántica posterior exige una **decisión nueva** (D-094 en adelante) y una versión
+  nueva del contrato; no se edita en silencio.
+- Siguen abiertas, sin bloquear C1–C4: **D-076** (esquema definitivo del catálogo comercial y migración 0008, **no
+  autorizada**) y **D-077** (contrato y formato de la planilla Excel).
+- El siguiente paso es **C1** (modelo de datos), que requiere **autorización explícita de migración**.
+
+## Trabajo paralelo
+
+| Pista | Contenido | Depende de |
+|---|---|---|
+| **A · Backend cotizador** | C0 → C1 → C2 → C3 → C4 | Autorización de migración (C1) y del contrato de Excel (C2) |
+| **B · Diseño Lovable** | Buscador y cotizador contra el contrato v0, con datos `fixture` etiquetados | C0 **cerrada** (contrato congelado el 2026-10-29): puede comenzar |
+| **C · Telegram** | H1-B.5 con el bot real (lo crea el usuario) | Token del bot |
+| **D · Operación** | Contrato generado desde FastAPI, `supabase_jwt` en demo, URL HTTPS + CORS, CI | Autorización de configuración y despliegue |
+
+### Regla de integración real
+
+Lovable se conecta **solo a endpoints funcionales**, nunca a maquetas. Cada pantalla muestra el **origen** del dato
+(`data_origin` y modo de fuente) y su **fecha**; `fixture` y `simulated` se ven como tales y jamás se presentan como
+datos reales (HLD §5.2, D-038). Sin compra: `purchase_execution` sigue `blocked`.
+
+## C0 — criterios de aceptación del contrato (2026-10-29) — cerrada
+
+Se cerraron por **revisión del documento**, no por pruebas. El contrato es `docs/contracts/cotizador-v0.md` y quedó
+**aprobado y congelado** el 2026-10-29 (C0-13, D-093). Los 19 criterios, verificados:
+
+| # | Criterio |
+|---|---|
+| C0-01 | E1–E9 tienen método, ruta, request, response, errores y fase asignada |
+| C0-02 | Cada operación y campo declara su origen en el HLD o se marca como derivado |
+| C0-03 | Todo dato comercial lleva `source`, `mode`, `data_origin`, `observed_at`, evidencia y frescura por campo |
+| C0-04 | Dinero como string decimal con moneda, base, impuestos y descuentos; nunca float |
+| C0-05 | `offers[]` y `reference_prices[]` separados, sin ranking cruzado |
+| C0-06 | Elegibilidad tri-estado **por candidato** con causas; solo `eligible` compone un total `complete`; estar en `supplier_totals` no implica elegibilidad |
+| C0-07 | Parcial sin `total` ni opción de ganar; `lowest_verified_total` acotado (`is_global_claim=false`) con cota inferior nullable (LB-1…LB-8) |
+| C0-08 | Estados `ok/stale/failed/not_configured`; una caída nunca es «sin ofertas» |
+| C0-09 | Seguridad declarada: Bearer, organización desde el `sub`, 404 entre organizaciones, rol `admin` + `StrongActor` |
+| C0-10 | Ninguna operación crea carrito, propuesta, aprobación ni ejecución |
+| C0-11 | Sección «fuera de v0» explícita |
+| C0-12 | Decisiones D-078 a D-093 registradas; D-076 y D-077 diferidas |
+| C0-13 | Revisión y aprobación final del usuario; solo entonces se congela para Lovable — **cumplido el 2026-10-29** (D-093) |
+| C0-14 | Unidades y cantidades: `QuantityUnit` único, `requested` entero, `minimum`/`multiple` con `known`, stock contra `purchased`, sobrante y `adjustment` explícito |
+| C0-15 | Aritmética determinista: impuestos, descuentos sin doble resta, despacho por esquema, otros cargos, moneda y redondeo |
+| C0-16 | E8: sobre congelado (transporte, idempotencia, códigos de fila, parciales); columnas diferidas a D-077 |
+| C0-17 | Contrato de criterios completo: esquema, ámbitos, efectos, ciclo de vida, **trazabilidad nota → criterio**, **concurrencia por `If-Match`** y creación directa con `confirm: true` |
+| C0-18 | No interferencia comprobable: un criterio no altera precios, totales, elegibilidad ni visibilidad |
+| C0-19 | Nota vs criterio confirmado sin estados ambiguos: no existe `proposed`; nada se auto-promueve y **una nota y su criterio nunca están activos a la vez** |
+
+Todas las operaciones del cotizador exigen rol `admin` (D-079) **y** `StrongActor` (D-086), verificados por separado:
+el rol con un chequeo de rol —sin crear permisos nuevos— y `StrongActor` con su semántica real actual (rechazo de la
+cabecera demo fuera de `simulation`; **no** es MFA). Leer precios, importar Excel, administrar proveedores o fuentes y
+registrar criterios no crea permisos nuevos: es el mismo rol administrativo existente.
+
+## Decisiones abiertas (no bloquean C1–C4)
+
+- **D-076 (en análisis):** relación entre catálogo farmacéutico y comercial, presentaciones, GTIN y vínculo con proveedores.
+- **D-077 (pendiente):** carga de Excel **desde la interfaz administrativa**; contrato técnico y formato de planilla sin
+  definir.
+- Mecanismo de extracción de precios públicos de cadenas (API, archivo, captura o navegador; sin eludir CAPTCHA/MFA).
+- Acceso a portales privados de proveedores.
+- Cupos de crédito y condiciones comerciales (sin modelo de datos; requisito exploratorio).
+- Despliegue definitivo y escalado.
+- Proveedor de IA/visión (HLD §4.2: no hay modelo acordado).
 
 ## H1-B.0 — separación de datos y personal (2026-10-28)
 
