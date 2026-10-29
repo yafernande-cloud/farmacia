@@ -5,6 +5,7 @@ from app.models.authorization import (
 )
 from app.models.catalog import (
     ChainProduct,
+    ImportProfile,
     ImportRun,
     OfferSnapshot,
     ReferencePrice,
@@ -38,7 +39,7 @@ from app.models.events import AuditEvent, OutboxEvent
 __all__ = [
     "ActorSession", "AppUser", "Attachment", "AuditEvent", "AuxiliaryProfile", "ChainProduct",
     "ChannelBinding", "ChannelMessage", "CommercialReference", "DemandItem", "DemandObservation",
-    "ImportRun", "InboundEvent", "OfferSnapshot", "Organization", "OutboundMessage", "OutboxEvent",
+    "ImportProfile", "ImportRun", "InboundEvent", "OfferSnapshot", "Organization", "OutboundMessage", "OutboxEvent",
     "PharmaIdentity", "ProductAlias", "PurchaseCycle", "QuantityEvent", "ReferencePrice",
     "ShippingTermsSnapshot", "Source", "Supplier", "SupplierProductMapping", "TelegramAccessAttempt",
     "TelegramAccessRequest", "TelegramAccount", "TradeItem", "TradeItemAlias",

@@ -509,9 +509,57 @@ class ReferencePrice(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
 
 
+class ImportProfile(Base):
+    """Perfil de lectura de las planillas de una fuente (C2, D-102).
+
+    Configura el mapeo columna→papel, el vocabulario de unidades del archivo y las opciones de
+    formato. Se reutiliza en cada importación de la misma fuente y se edita con `version`; como la
+    importación guarda su propia instantánea (`ImportRun.profile_snapshot`), cambiar el perfil nunca
+    reescribe el pasado. Un proveedor con dos formatos se modela como dos fuentes, así que hay un
+    perfil por fuente.
+    """
+
+    __tablename__ = "import_profile"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id"),
+        UniqueConstraint("organization_id", "source_id"),
+        ForeignKeyConstraint(["organization_id"], ["organization.id"]),
+        ForeignKeyConstraint(["source_id", "organization_id"], ["source.id", "source.organization_id"]),
+        ForeignKeyConstraint(["created_by", "organization_id"], ["app_user.id", "app_user.organization_id"]),
+        # En v0 solo se leen planillas .xlsx; CSV exige una migración y su propia prueba.
+        CheckConstraint("file_format IN ('xlsx')", name="formato_valido"),
+        CheckConstraint("header_row >= 1", name="fila_cabecera_valida"),
+        CheckConstraint("jsonb_typeof(columns) = 'object'", name="columnas_objeto"),
+        CheckConstraint("jsonb_typeof(units) = 'object'", name="unidades_objeto"),
+        CheckConstraint("jsonb_typeof(options) = 'object'", name="opciones_objeto"),
+        CheckConstraint("status IN ('active','inactive')", name="estado_valido"),
+        CheckConstraint("version >= 1", name="version_valida"),
+        CheckConstraint(f"data_origin IN ({ORIGINS})", name="origen_dato_valido"),
+    )  # fmt: skip
+    id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
+    organization_id: Mapped[uuid.UUID] = mapped_column()
+    source_id: Mapped[uuid.UUID] = mapped_column()
+    file_format: Mapped[str] = mapped_column(String(10), server_default="xlsx")
+    sheet: Mapped[str | None] = mapped_column(String(120))
+    header_row: Mapped[int] = mapped_column(Integer, server_default="1")
+    columns: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    units: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    options: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    status: Mapped[str] = mapped_column(String(10), server_default="active")
+    version: Mapped[int] = mapped_column(Integer, server_default="1")
+    data_origin: Mapped[str] = mapped_column(String(12), server_default="unclassified")
+    created_by: Mapped[uuid.UUID | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
+
+
 class ImportRun(Base):
     """Ejecución de una importación de lista de precios (E8, C2). Se inserta una sola vez con su
-    estado final; una reimportación del mismo archivo no crea otra fila."""
+    estado final; una reimportación del mismo archivo no crea otra fila.
+
+    `profile_snapshot` conserva el mapeo exacto con que se leyó el archivo y `rejected_rows` las
+    filas rechazadas con lo mínimo para identificarlas y revisarlas después (D-104).
+    """
 
     __tablename__ = "import_run"
     __table_args__ = (
@@ -519,6 +567,7 @@ class ImportRun(Base):
         UniqueConstraint("organization_id", "source_id", "file_hash"),
         ForeignKeyConstraint(["organization_id"], ["organization.id"]),
         ForeignKeyConstraint(["source_id", "organization_id"], ["source.id", "source.organization_id"]),
+        ForeignKeyConstraint(["profile_id", "organization_id"], ["import_profile.id", "import_profile.organization_id"]),
         ForeignKeyConstraint(["created_by", "organization_id"], ["app_user.id", "app_user.organization_id"]),
         CheckConstraint("status IN ('completed','completed_with_errors','failed')", name="estado_valido"),
         CheckConstraint("file_hash ~ '^[0-9a-f]{64}$'", name="hash_archivo_valido"),
@@ -530,12 +579,15 @@ class ImportRun(Base):
             "rows_accepted + rows_rejected <= rows_total", name="conteos_coherentes"
         ),
         CheckConstraint("jsonb_typeof(errors) = 'array'", name="errores_validos"),
+        CheckConstraint("jsonb_typeof(profile_snapshot) = 'object'", name="perfil_snapshot_valido"),
+        CheckConstraint("jsonb_typeof(rejected_rows) = 'array'", name="rechazos_validos"),
         CheckConstraint(f"data_origin IN ({ORIGINS})", name="origen_dato_valido"),
         Index("ix_import_run_source", "organization_id", "source_id", "imported_at"),
     )  # fmt: skip
     id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
     organization_id: Mapped[uuid.UUID] = mapped_column()
     source_id: Mapped[uuid.UUID] = mapped_column()
+    profile_id: Mapped[uuid.UUID | None] = mapped_column()
     file_name: Mapped[str] = mapped_column(String(300))
     file_hash: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(24))
@@ -543,6 +595,8 @@ class ImportRun(Base):
     rows_accepted: Mapped[int] = mapped_column(Integer, server_default="0")
     rows_rejected: Mapped[int] = mapped_column(Integer, server_default="0")
     errors: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
+    rejected_rows: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
+    profile_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
     data_origin: Mapped[str] = mapped_column(String(12), server_default="unclassified")
     created_by: Mapped[uuid.UUID | None] = mapped_column()
