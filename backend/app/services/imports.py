@@ -53,6 +53,7 @@ from app.core.errors import DomainError, not_found
 from app.core.permissions import Role
 from app.models import (
     ImportProfile,
+    ImportRequest,
     ImportRun,
     OfferSnapshot,
     Organization,
@@ -745,17 +746,7 @@ async def run_import(
     ).scalar_one_or_none()
     if previous is not None:
         # Mismo archivo (mismo hash) para la misma fuente: resultado original, sin escribir de nuevo.
-        return ImportOutcome(
-            import_id=previous.id,
-            status=previous.status,
-            rows_total=previous.rows_total,
-            rows_accepted=previous.rows_accepted,
-            rows_rejected=previous.rows_rejected,
-            errors=list(previous.errors or []),
-            observed_at=previous.imported_at,
-            repeated=True,
-            dry_run=dry_run,
-        )
+        return _outcome_of(previous, dry_run=dry_run)
 
     profile = (
         await session.execute(
@@ -907,6 +898,8 @@ async def run_import(
             )
         )
     await session.flush()
+    # La respuesta y una repetición posterior deben coincidir: se informa la marca guardada.
+    await session.refresh(run, ["imported_at"])
     emit(
         session,
         org_id=org,
@@ -939,6 +932,128 @@ async def run_import(
         rows_accepted=len(accepted),
         rows_rejected=len(rejected),
         errors=errors,
-        observed_at=now,
+        observed_at=run.imported_at,
         dry_run=False,
     )
+
+
+def _outcome_of(run: ImportRun, *, dry_run: bool = False) -> ImportOutcome:
+    """Resultado original de una corrida ya guardada, sin volver a leer el archivo."""
+    return ImportOutcome(
+        import_id=run.id,
+        status=run.status,
+        rows_total=run.rows_total,
+        rows_accepted=run.rows_accepted,
+        rows_rejected=run.rows_rejected,
+        errors=list(run.errors or []),
+        observed_at=run.imported_at,
+        repeated=True,
+        dry_run=dry_run,
+    )
+
+
+async def run_import_request(
+    session: AsyncSession,
+    actor: Actor,
+    *,
+    source_id: uuid.UUID,
+    supplier_id: uuid.UUID,
+    idempotency_key: str,
+    file_name: str,
+    content: bytes,
+) -> ImportOutcome:
+    """Camino de la API para E8: valida el par fuente/proveedor y aplica la `Idempotency-Key`.
+
+    Es una capa fina sobre `run_import` (que hace todo el trabajo): aquí solo viven las reglas del
+    sobre congelado en C0 que no existen en la CLI — clave obligatoria, 409 al reutilizarla con otro
+    archivo o contexto, y la fuente debe pertenecer al proveedor declarado. Nada de esto lee ni
+    escribe ofertas por su cuenta.
+
+    La clave queda registrada en `import_request` **también** cuando la importación ya existía por
+    otra clave: así una reutilización posterior con otro archivo se detecta (D-111).
+    """
+    org = actor.organization_id
+    if Role.ADMIN.value not in (actor.roles or []):
+        raise DomainError(
+            "FORBIDDEN", "Solo la administración puede importar listas de precios.", status_code=403
+        )
+    source = (
+        await session.execute(
+            select(Source).where(Source.organization_id == org, Source.id == source_id)
+        )
+    ).scalar_one_or_none()
+    if source is None:
+        raise not_found("La fuente")
+    if source.supplier_id is not None and source.supplier_id != supplier_id:
+        # Ambas partes vienen del cliente; no se acepta una fuente que no sea de ese proveedor.
+        # Una fuente de cadena (sin proveedor) sigue su propio camino y se rechaza por su tipo.
+        raise DomainError(
+            "INVALID_SOURCE",
+            "La fuente indicada no pertenece al proveedor indicado.",
+            status_code=422,
+        )
+
+    file_hash = hashlib.sha256(content).hexdigest()
+    await advisory_lock(session, f"idem:{org}:{idempotency_key}")
+
+    prior = (
+        await session.execute(
+            select(ImportRequest).where(
+                ImportRequest.organization_id == org,
+                ImportRequest.idempotency_key == idempotency_key,
+            )
+        )
+    ).scalar_one_or_none()
+    if prior is not None:
+        # La clave ya se usó: solo vale para el mismo contexto exacto.
+        if (prior.file_hash, prior.source_id, prior.supplier_id) != (
+            file_hash,
+            source.id,
+            supplier_id,
+        ):
+            raise _key_reused()
+        run = await session.get(ImportRun, prior.import_run_id)
+        return _outcome_of(_check_run(run, org=org, source_id=source.id, file_hash=file_hash))
+
+    outcome = await run_import(
+        session, actor, source_id=source.id, file_name=file_name, content=content
+    )
+    run = await session.get(ImportRun, outcome.import_id)
+    _check_run(run, org=org, source_id=source.id, file_hash=file_hash)
+
+    # La solicitud se registra en la misma transacción: si algo falla, la clave no queda consumida.
+    session.add(
+        ImportRequest(
+            organization_id=org,
+            idempotency_key=idempotency_key,
+            source_id=source.id,
+            supplier_id=supplier_id,
+            file_hash=file_hash,
+            import_run_id=run.id,
+            created_by=actor.id,
+            data_origin=run.data_origin,
+        )
+    )
+    await session.flush()
+    return outcome
+
+
+def _key_reused() -> DomainError:
+    return DomainError(
+        "IDEMPOTENCY_KEY_REUSED",
+        "Esa Idempotency-Key ya se usó con otro archivo o con otra fuente o proveedor.",
+        status_code=409,
+    )
+
+
+def _check_run(
+    run: ImportRun | None, *, org: uuid.UUID, source_id: uuid.UUID, file_hash: str
+) -> ImportRun:
+    """Una corrida solo se reutiliza si es de esta organización y esta fuente, no por el hash solo."""
+    if run is None or (run.organization_id, run.source_id, run.file_hash) != (
+        org,
+        source_id,
+        file_hash,
+    ):
+        raise RuntimeError("La corrida de importación no corresponde a la solicitud.")
+    return run

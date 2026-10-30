@@ -611,3 +611,41 @@ class ImportRun(Base):
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
     data_origin: Mapped[str] = mapped_column(String(12), server_default="unclassified")
     created_by: Mapped[uuid.UUID | None] = mapped_column()
+
+
+class ImportRequest(Base):
+    """Solicitud HTTP de importación con su `Idempotency-Key` (E8, D-111).
+
+    Existe porque `import_run` es de solo agregar y una misma corrida puede devolverse a varias
+    solicitudes: la clave y el contexto con que se usó necesitan su propio registro. Una clave
+    queda atada a **una** organización y a un contexto exacto (fuente, proveedor, hash del archivo);
+    reutilizarla con otro contexto es 409 `IDEMPOTENCY_KEY_REUSED`.
+
+    Solo se escribe cuando la solicitud termina en 200: una solicitud fallida no consume la clave.
+    De solo agregar, como el resto de los snapshots.
+    """
+
+    __tablename__ = "import_request"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id"),
+        UniqueConstraint("organization_id", "idempotency_key"),
+        ForeignKeyConstraint(["organization_id"], ["organization.id"]),
+        ForeignKeyConstraint(["source_id", "organization_id"], ["source.id", "source.organization_id"]),
+        ForeignKeyConstraint(["supplier_id", "organization_id"], ["supplier.id", "supplier.organization_id"]),
+        ForeignKeyConstraint(["import_run_id", "organization_id"], ["import_run.id", "import_run.organization_id"]),
+        ForeignKeyConstraint(["created_by", "organization_id"], ["app_user.id", "app_user.organization_id"]),
+        CheckConstraint("length(idempotency_key) BETWEEN 8 AND 128", name="clave_valida"),
+        CheckConstraint("file_hash ~ '^[0-9a-f]{64}$'", name="hash_valido"),
+        CheckConstraint(f"data_origin IN ({ORIGINS})", name="origen_dato_valido"),
+        Index("ix_import_request_run", "organization_id", "import_run_id"),
+    )  # fmt: skip
+    id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
+    organization_id: Mapped[uuid.UUID] = mapped_column()
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    source_id: Mapped[uuid.UUID] = mapped_column()
+    supplier_id: Mapped[uuid.UUID] = mapped_column()
+    file_hash: Mapped[str] = mapped_column(String(64))
+    import_run_id: Mapped[uuid.UUID] = mapped_column()
+    created_by: Mapped[uuid.UUID] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
+    data_origin: Mapped[str] = mapped_column(String(12), server_default="unclassified")

@@ -16,6 +16,8 @@ dependencies = [
     # que openpyxl no expanda entidades XML de archivos no confiables.
     "openpyxl>=3.1,<4",
     "defusedxml>=0.7,<1",
+    # Parseo del `multipart/form-data` del endpoint E8 (`POST /api/v1/imports`).
+    "python-multipart>=0.0.9,<1",
 ]
 
 [project.optional-dependencies]

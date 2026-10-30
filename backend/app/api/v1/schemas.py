@@ -249,3 +249,23 @@ class MeOut(BaseModel):
     organization_id: uuid.UUID
     identity_level: Literal["declared"] = "declared"
     organization_kind: str = Field(description="simulation | real_test | production | legacy_mixed")
+
+
+class ImportRowError(BaseModel):
+    """Motivo de rechazo de una fila; el código pertenece al vocabulario cerrado de D-090."""
+
+    row: int = Field(description="Número de fila de la planilla original")
+    code: str
+    message: str
+
+
+class ImportResult(BaseModel):
+    """Sobre congelado de E8 (contrato C0): estos campos y ninguno más."""
+
+    import_id: uuid.UUID | None
+    status: Literal["completed", "completed_with_errors", "failed"]
+    rows_total: int
+    rows_accepted: int
+    rows_rejected: int
+    errors: list[ImportRowError]
+    observed_at: str | None
