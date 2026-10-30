@@ -594,3 +594,224 @@ nunca se reutiliza una importación por coincidencia de hash sola.
 archivo ya importado, 409 posterior con otro archivo, 409 con otra fuente, no duplicación del registro, solicitud
 fallida que no consume la clave, y unicidad + solo agregar), la sincronía modelo↔migración y la regresión del motor
 `manual_import`, sobre una base dedicada migrada a 0011 y con el ciclo de reversión comprobado.
+
+## Investigación de catálogos de cadenas (2026-10-30)
+
+| ID | Estado | Decisión |
+|---|---|---|
+| D-112 | Tomada (2026-10-30) | **Se autoriza investigar (no construir) cómo publican su catálogo Salcobrand, Cruz Verde y Farmacias Ahumada, antes de implementar C6.** Solo investigación técnica y documental, con acceso permitido: páginas públicas, sin autenticación, sin eludir CAPTCHA/MFA, respetando `robots` y términos de uso, con muestra exploratoria pequeña de medicamentos conocidos y sin extracción masiva. **Descubrir no es comparar:** una ficha de cadena puede mostrarse como *resultado de la cadena* aunque no esté vinculada a un artículo del catálogo propio, identificada como tal, sin asumir equivalencia y sin entrar en ofertas ni totales; vincularla o compararla exige correspondencia **confirmada**. Se identificó que la forma congelada de E1/E3 **no admite** fichas de cadena sin artículo: la ampliación queda como **propuesta pendiente (contrato v0.1)**, no aplicada. C0 no se modifica; el orden C3/C4 y la numeración (C3 = 0012, C4 = 0013) tampoco. La investigación no crea conectores, no escribe datos operativos, no aplica migraciones y no toca el frontend. |
+
+### D-112 — Investigación de catálogos de cadenas (2026-10-30)
+
+**Motivo.** Las tres cadenas son parte central del buscador ya diseñado en Lovable. C6 estaba abierto y sin mecanismo.
+Se separa **investigar** de **construir**: primero se averigua qué es posible y bajo qué condiciones; construir exige
+una decisión nueva con el mecanismo elegido.
+
+**Descubrir ≠ comparar (ajuste del usuario, 2026-10-30).** Se investiga si el buscador podrá mostrar **fichas reales**
+de las tres cadenas aunque no estén vinculadas a un artículo del catálogo propio. Esas fichas:
+
+- se presentan como **resultado de la cadena**, con su fuente, modo, procedencia y fecha;
+- **no** afirman equivalencia con un artículo, ni dosis, ni presentación equivalentes;
+- **no** se vinculan automáticamente a ofertas comerciales, ni entran en `offers[]`, totales o `lowest_verified_total`;
+- solo se pueden **comparar** o **vincular** al catálogo propio con correspondencia **confirmada** por una persona.
+
+**Qué se investiga, por cadena:** cómo se carga el catálogo (HTML del servidor o solicitudes JavaScript/JSON de la
+propia página); forma de esas respuestas y campos disponibles; si son alcanzables sin sesión ni desafío anti-bot; si
+hay bloques legítimos (login, CAPTCHA, `robots`, términos) —en cuyo caso **se detiene esa vía y se informa**—;
+estabilidad de identificadores y URL canónica por ficha; cobertura sobre la muestra; granularidad y condiciones del
+precio público; y URL de imagen.
+
+**Datos requeridos y destino (el modelo ya existe en 0008; no se crea nada).** Nombre → `chain_product.published_name`
+(tal como se publica, nunca el nombre del artículo); laboratorio → `laboratory_as_published`; presentación →
+`presentation_as_published`; descripción → `description`; imagen → `image_url` + `image_hash` (referencia, sin copia
+propia); precio público → `reference_price.price_normal`/`price_promo` + `currency`; URL → `source_url`; fecha →
+`observed_at` (UTC); procedencia → `data_origin='captured'`, `evidence` (url, hash, nota) y `source_id` de la cadena.
+Una lectura simulada o de muestra **nunca** entra en una organización real (D-037).
+
+**Separación de planos (C0 intacto).** Una fuente de cadena es `kind='chain_reference'`: no produce ofertas, no
+declara `terms` de compra (trigger de la base y D-106). `chain_product` es snapshot por `content_hash`;
+`reference_price` exige `chain_product_id` de la misma cadena. El precio público no participa de comparaciones ni de
+totales (C0-05, AC20). Las condiciones de la cadena viajan como condiciones de la **referencia**, no como capacidad
+de compra (E7).
+
+**Vinculación al catálogo propio.** Solo por acción explícita: `chain_product.trade_item_id` con
+`mapping_origin='explicit'|'confirmed'` y `mapped_by`/`mapped_at`. Sin vínculo, `match_status='unmapped'`: la ficha se
+conserva para revisión y se muestra como ficha de cadena, **no** como artículo. Los parecidos se guardan en
+`match_candidates` con motivos y quedan `needs_review`; nunca se asocia por nombre, dosis ni imagen.
+
+**Muestra exploratoria (sin pedir productos a Pao).** Un puñado de medicamentos conocidos, con presentaciones
+distintas (por ejemplo comprimidos y jarabe), buscados a mano en cada cadena. Sus límites se registran en el informe:
+no mide cobertura del surtido real de la farmacia, no prueba estabilidad en el tiempo y no representa precios de
+sucursal distintas de la consultada.
+
+**Propuesta pendiente, no aplicada — ampliación del contrato.** La forma congelada de C0 no admite presentar fichas
+de cadena sin artículo: `SearchResultOut` (E1) exige `article_id` y E3 solo expone `reference_prices[]` de un artículo
+existente. Para que Lovable muestre fichas descubiertas sin vínculo se necesita una **versión v0.1 del contrato** con
+una estructura propia de resultado de cadena (fuente, procedencia, fecha y precio público, sin campos de oferta), sin
+cambiar E1 ni E3. **No se redacta ni se implementa sin autorización.**
+
+**No autoriza:** construir conectores, extraer en volumen, escribir en `chain_product`/`reference_price` operativos,
+crear fuentes de cadena reales, modificar C0 o el frontend.
+
+## Cotizador: cotizaciones, carritos por proveedor, compras registradas e historial (2026-10-30)
+
+| ID | Estado | Decisión |
+|---|---|---|
+| D-114 | Tomada (2026-10-30) | **Se amplía C0 con dos excepciones nombradas:** (X1) crear cotizaciones y carritos **en preparación** y (X2) **registrar una compra ya ocurrida** fuera del sistema como hecho documentado, nunca como ejecución. La cotización general agrupa carritos independientes, uno por proveedor, con evaluación E5 por carrito (nunca una segunda lógica de dinero). Compras inmutables y corregibles solo por registro nuevo que sustituye; historial comercial propio, independiente de `audit_event`. Conservación operativa de 6 meses **por compra** y archivo permanente en almacenamiento externo verificado, sin archivar ni eliminar cotizaciones por antigüedad. Contrato `docs/contracts/cotizador-v0.2.md`. C0 no se edita; E1–E9 no cambian; `purchase_execution` sigue `blocked`. E10/E11/E12 exigen `admin` + `StrongActor`. La purga del detalle está **diseñada y deshabilitada**. No autoriza código, migraciones, extensiones, proveedor de archivo ni ejecución de la purga. |
+
+> Nota de numeración: **D-113** corresponde a la propuesta de búsqueda federada bajo demanda (contrato v0.1), que
+> **sigue sin registrar** por no estar aprobada. Se reserva ese número; D-114 se registra por decisión expresa del
+> usuario del 2026-10-30.
+
+### D-114 — Cotizaciones con carritos por proveedor, compras registradas e historial (2026-10-30)
+
+**Motivo.** El cotizador ya definido (C0) **excluye** explícitamente carritos, propuestas, aprobaciones y ejecución
+(§9 «fuera de v0», C0-10). El funcionamiento real de la farmacia exige preparar cotizaciones separadas por proveedor,
+retomarlas, y dejar constancia de lo que efectivamente se compró —sin que el sistema envíe órdenes ni mueva dinero—.
+Como el prompt del usuario prevalece sobre el HLD, la ampliación se **declara** en esta decisión y en
+`cotizador-v0.2.md`, y no se presenta como si C0 ya la permitiera.
+
+**Aprobado conceptualmente por el usuario (2026-10-30):** cotizaciones con múltiples carritos persistentes; compras
+registradas de forma independiente; historial comercial inmutable; archivo permanente después de seis meses; y que
+registrar una compra **solo documenta** una operación hecha fuera del sistema.
+
+**Las dos excepciones (nombradas, con límite).**
+
+| # | Excepción | Límite |
+|---|---|---|
+| X1 | Crear cotizaciones y carritos en preparación | Documentos de trabajo; no son propuestas aprobadas ni comprometen compra |
+| X2 | Registrar una compra ya ocurrida | Hecho documentado; el sistema no envía órdenes, no paga y no integra proveedores |
+
+Todo lo demás de C0-10 sigue en pie: aprobaciones, propuestas formales, envío de órdenes, pagos y recepción quedan
+fuera. `purchase_execution` sigue `blocked`.
+
+**Modelo (6 tablas; contrato v0.2 §2).** `quote` (cotización general: `draft|closed`), `quote_cart` (uno por
+proveedor, `active|dismissed`, único por cotización y proveedor), `quote_line` (oferta seleccionada + cantidad entera
+explícita + `active|removed` + cierre del pendiente, sin columna de precio), `purchase` y `purchase_line`
+(inmutables, solo agregar) y `purchase_index` (índice de búsqueda del historial). **El encabezado `purchase` no se
+elimina nunca**: sus columnas de archivo (`archive_status`, `archive_sha256`, `archive_restore_ok`,
+`detail_purged_at`) sustituyen a la tabla `archive_record` de la propuesta anterior (P-1/P-2, 2026-10-30). **No** se
+crea tabla de eventos: los cambios van a `audit_event`. **No** se crea tabla de idempotencia: `purchase` lleva
+`idempotency_key` + `request_hash` con unicidad por organización, como ya hace `import_request` (D-111).
+
+**Sin identificadores técnicos para Pao.** El carrito **nace con la primera línea** de ese proveedor y se identifica
+por proveedor, no por `cart_id`. No existe endpoint de «crear carrito».
+
+**Evaluación comercial.** Cada carrito se evalúa con **E5**, invocado internamente **una vez por carrito** y en
+paralelo en proceso. Motivo: mínimo, múltiplo, impuestos, descuentos y despacho son **por proveedor**, y el reparto de
+un mismo artículo entre proveedores exige cantidades distintas. Consecuencia declarada: la cotización general **no**
+tiene una única llamada a E5. El carrito **no** implementa aritmética propia (C0-15 intacto).
+
+**Precio seleccionado ≠ precio vigente.** La línea se ancla a un `offer_snapshot` inmutable y nunca se reapunta sola.
+La lectura distingue `selected` (lo que Pao eligió), `current` (observación más reciente, si existe) y un
+`price_state` (`current|requires_review|stale|no_longer_offered`). Aceptar el precio nuevo es una operación explícita y
+auditada. Nunca se presenta un precio histórico como vigente. En el carrito **no** se copia el precio; en la compra
+**sí** se copia todo, por ser evidencia histórica que debe sobrevivir al archivo y a cualquier cambio posterior.
+
+**Reparto, mover, quitar, descartar y desistir.** Repartir cantidades no es una operación nueva: es la misma
+referencia en el carrito de otro proveedor. Mover exige **oferta destino explícita** y **el mismo artículo**, es
+atómico y auditado. Quitar es lógico (`removed`); descartar un carrito es `dismissed` y **reincorporar** es su
+operación inversa —ambas existen en la API, de modo que ninguna transición queda alcanzable sin operación
+definida—. Las ofertas distintas de un mismo artículo conviven y **no se fusionan** (se advierte
+`duplicate_article`).
+
+**Compras ya registradas y desistimiento del pendiente (precisión P-5, 2026-10-30).** Ninguna operación sobre una
+línea altera la evidencia histórica: la compra copió sus valores al registrarse. Reglas: la cantidad nueva no puede
+ser menor que lo comprado vigente (`QUANTITY_BELOW_PURCHASED`); quitar o mover una línea con compras vigentes está
+bloqueado (`LINE_HAS_PURCHASES`); aceptar un precio nuevo sí se permite porque no toca compras. Para que Pao pueda
+**desistir de comprar lo que falta** —cotizó 20, compró 15, no comprará las 5 restantes— existe una operación
+explícita de **cierre del pendiente** (`pending_closed_at`, con reapertura): **no cambia la cantidad cotizada**, no
+modifica la compra histórica y no borra la línea. El estado de una línea se deriva en **dos dimensiones
+independientes** —`purchase_state` (`pending|partially_purchased|purchased|exceeded`) y `remainder`
+(`open|closed_by_user|closed_by_quote`)—, nunca desde un contador guardado: así una línea comprada a medias dice
+cuánto se compró y, a la vez, por qué el resto ya no se espera.
+
+**Total general estimado (ajuste del usuario, 2026-10-30).** Objeto nuevo, **fuera de E5**, que solo se muestra cuando
+los importes son **suficientemente completos, compatibles y calculables**: todos los carritos activos `complete` en
+E5, una sola moneda, ninguna causa desconocida pendiente. Si falta algo → `available: false` con las causas visibles.
+**Nunca** se presenta una cota inferior como costo total general, y las cotas por proveedor no se suman entre sí.
+C0-07 no se contradice: el estimado no es un `total` de E5, no compara proveedores y no decide nada.
+
+**Compras registradas.** Una compra = un proveedor y un momento; **varias compras por cotización**, en fechas
+distintas, sin cerrar prematuramente la cotización ni perder los carritos pendientes. Se registran cantidades
+**mayores** que las cotizadas: la línea queda `exceeded`, se advierte y se conservan ambas cantidades; nunca se recorta.
+Se puede **cerrar con productos no comprados**: esas líneas conservan su cantidad cotizada y su cobertura, y su
+`remainder` queda `closed_by_quote` (cotizada no comprada); no se borran. Reabrir la cotización devuelve a cada
+línea su estado anterior, respetando `pending_closed_at` si Pao ya había desistido de esa línea.
+
+**Correcciones sin doble conteo (ajuste del usuario, 2026-10-30; precisión P-3).** Como la compra es inmutable,
+corregir **no edita**: se registra una compra nueva con `supersedes_purchase_id` y motivo obligatorio. El original se
+conserva. Un registro es **vigente** (`current`) si ninguno lo sustituye; **el historial y los reportes suman solo
+registros vigentes y no anulados**, y muestran el sustituido marcado, con enlace al vigente. **`UNIQUE
+(supersedes_purchase_id)`** impide dos sustituciones vigentes a la vez —la segunda recibe `409
+PURCHASE_ALREADY_SUPERSEDED`—; la garantía es de la base, no del código. Las compras **archivadas también se pueden
+corregir**: el bundle verificado precarga el formulario y la cadena se conserva íntegra aunque el detalle ya no esté
+en PostgreSQL. **Anulación (P-4):** una compra registrada por error se anula con un **registro nuevo** marcado
+`is_annulment`, sin líneas, con motivo obligatorio y auditoría; queda excluida de los totales, pero **la evidencia
+original nunca se borra** ni se oculta.
+
+**Historial comercial ≠ auditoría.** `audit_event` **no** reemplaza el historial: la compra tiene su registro
+inmutable completo. Historial es página independiente del menú (Lovable), con búsqueda por producto, proveedor, fecha
+o período e identificador de cotización, y distinción entre cotizaciones finalizadas y compras registradas. Un dato
+desconocido se conserva desconocido: no se rellena para completar el historial.
+
+**Conservación y archivo (ajuste del usuario, 2026-10-30; precisiones P-1, P-2, P-6 y bloqueo).** Las compras
+permanecen **completas** en la base operativa durante **6 meses** desde `registered_at`. Después, **solo el detalle de
+líneas** (`purchase_line`) pasa a **almacenamiento externo** de objetos, versionado y con bloqueo de retención,
+separado de PostgreSQL. **La unidad de archivo es la compra, no la cotización**: la propuesta anterior archivaba por
+cotización y **no** permitía lo que el usuario exige —se corrige—. Archivar una compra antigua **no** archiva ni
+elimina su cotización, sus carritos ni sus líneas pendientes. **El encabezado `purchase` no se elimina nunca**:
+sostiene la cadena de correcciones, los totales, las FK y los reportes, y es pequeño. La búsqueda del historial no
+depende del almacén externo: `purchase_index` guarda por línea el producto, la presentación, el laboratorio, el
+proveedor, la fecha, la cantidad y el precio unitario —**sin** impuestos, descuentos, despacho, condiciones ni
+evidencia— y se consulta con `pg_trgm`/`unaccent`; el bundle se abre solo al abrir un registro. **La extensión no se
+instala sin verificar antes su disponibilidad en el PostgreSQL de destino y sin autorización.**
+
+**Purga controlada (diseñada, no ejecutada).** El detalle solo puede salir por una función `SECURITY DEFINER` de un
+rol dedicado, con `DELETE` negado al rol de la aplicación, trigger que rechaza `UPDATE` siempre y `DELETE` salvo con
+el indicador de purga y la compra en `archive_status='verified'` con `archive_restore_ok=true`. `DELETE` sobre
+`purchase` no existe. **No se ejecuta nada** mientras no haya almacenamiento externo aprobado y no se hayan probado
+integridad, restauración y consulta de los registros archivados; hasta entonces las compras siguen completas aunque
+superen los 6 meses. **Sin copia verificada y restaurable no se elimina nada**; no hay borrado por temporizador. El
+archivo **no reemplaza** los respaldos de PostgreSQL.
+
+**Contrato y API.** `docs/contracts/cotizador-v0.2.md` (borrador para revisión, revisión 2) con **E10** cotizaciones
+y carritos, **E11** compras registradas y **E12** historial. Códigos nuevos propuestos: `QUOTE_NOT_FOUND`,
+`QUOTE_CLOSED`, `QUOTE_VERSION_CONFLICT`, `CART_DISMISSED`, `OFFER_NOT_IN_SUPPLIER`, `ARTICLE_MISMATCH`,
+`INVALID_QUANTITY`, `PURCHASE_INVALID`, `PURCHASE_ALREADY_SUPERSEDED`, `LINE_HAS_PURCHASES`,
+`QUANTITY_BELOW_PURCHASED`, `INVALID_ANNULMENT`, `ARCHIVE_UNAVAILABLE`. El menú **Proveedores** es **E6 de C0** (ya
+definido, no implementado) y Telegram sigue siendo un canal, no un proveedor ni una fuente de precios.
+
+**Permisos (P-7, contrato v0.2 §5).** E10, E11 y E12 exigen **rol `admin` + `StrongActor`**, conforme a C0 §6,
+D-079 y D-086; cualquier otro rol recibe `403 FORBIDDEN`. **No se amplían permisos a auxiliares en esta etapa**, y
+la organización sale del `Actor`, nunca del cuerpo. Consecuencia práctica declarada: Pao necesita rol `admin` para
+usar el cotizador. Un rol diferenciado para auxiliares sería una decisión aparte, contraria a D-079, y no se propone.
+
+**Estados.** Almacenados: `quote` `draft|closed` (con reapertura); `quote_cart` `active|dismissed` (con
+reincorporación); `quote_line` `active|removed` más el cierre del pendiente (`pending_closed_at`, con reapertura);
+`purchase` sin estado (existe porque ocurrió), con `archive_status` `none|pending|verified|failed`. Derivados, nunca
+guardados: carrito (`empty|pending|partially_purchased|purchased`), línea en dos dimensiones
+(`purchase_state` `pending|partially_purchased|purchased|exceeded` · `remainder`
+`open|closed_by_user|closed_by_quote`), cotización (`in_preparation|partially_purchased|fully_purchased|
+closed_without_purchase`) y compra (`current|superseded`, más `is_annulment`).
+
+**Roadmap.** C3 = 0012 y C4 = 0013 **no cambian**. Después: C5-A cotizaciones y carritos (**0014**), C5-B compras e
+`purchase_index` (**0015**), C5-C historial con búsqueda por índice (sin migración; exige verificar
+`pg_trgm`/`unaccent`), C5-D archivo externo y purga (**0016**, diseño cerrado y ejecución bloqueada), C5-E enganche de
+navegación. Dependencia real: C5 no puede ir antes de C3 porque la evaluación es E5. `farmacia` sigue en 0008.
+
+**Capacidad futura identificada (no diseñada, no autorizada):** observaciones libres de Pao sobre productos («este
+medicamento no me gusta por el laboratorio») con memoria de preferencias interpretada por IA. Será preferencia
+**propia**, no afirmación objetiva; no se generaliza sola a toda una marca o laboratorio; Pao puede corregirla o
+eliminarla. **No** forma parte del cálculo determinista de E5 ni altera precios o condiciones.
+
+**No autoriza:** implementar código, crear tablas, aplicar migraciones (0014–0016) ni tocar `farmacia`, elegir
+proveedor de almacenamiento o autorizar costos, **instalar extensiones de PostgreSQL**, **ejecutar la purga de
+detalle**, modificar C0, E1–E9 ni el frontend Lovable, adelantar C3/C4/C5, ni hacer commit o push. El contrato v0.2
+queda como **borrador para revisión**.
+
+**Aprobado conceptualmente el 2026-10-30 (P-1 a P-7).** Encabezado `purchase` permanente; `archive_record`
+sustituido por metadatos de archivo + `purchase_index`; `UNIQUE (supersedes_purchase_id)`; corrección de compras
+archivadas; anulación con motivo y exclusión de totales; desistimiento del pendiente sin alterar lo cotizado ni lo
+comprado; `purchase_index` con `pg_trgm`/`unaccent` sujeto a verificación de disponibilidad; `admin` + `StrongActor`
+en E10/E11/E12; purga diseñada y **deshabilitada** hasta que exista almacenamiento aprobado y pruebas superadas.
