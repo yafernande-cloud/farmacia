@@ -99,7 +99,7 @@ Plan de migración de los datos existentes (**pendiente de autorización**): `do
 |---|---|---|
 | D-037 | Tomada | **Organizaciones por tipo** (`organization.kind`, inmutable): `simulation` (solo simulaciones y pruebas automatizadas), `real_test` (bot real de pruebas), `production`, `legacy_mixed` (transitorio, para datos previos a la separación; no recibe simulaciones nuevas). Chats ficticios reservados `555000x` (5550001): solo pueden vincularse a `simulation` y una `simulation` solo acepta chats ficticios (trigger en la base + validación en la CLI). Un chat solo puede estar activo en una organización |
 | D-038 | Tomada | **Procedencia** (`data_origin`) en observaciones, necesidades, mensajes, fotos, catálogo, referencias y alias: `simulated`, `captured` (recibido de una persona o dispositivo real), `ai_derived` (resultado derivado por un modelo; en fotos, `extraction_provenance`), `unclassified` (solo `legacy_mixed`). **No es confianza ni confirmación**: un atributo `ai_derived` puede quedar `confirmed` por una persona sin dejar de ser `ai_derived`. La organización manda (trigger): simulación ⇒ solo `simulated`; real/producción ⇒ nunca `simulated` ni `unclassified` |
-| D-039 | Tomada | **Guardias.** Una lectura de imagen `simulated` se rechaza fuera de la organización de simulación (adjunto `error`, sin observación ni necesidad, con auditoría); `telegram-poll` con `VISION_PROVIDER=simulated` exige que TODOS los chats activos sean de simulación; la CLI no tiene organización por defecto (`--org sim|real`); las demos usan solo la organización de simulación, abren un ciclo nuevo en cada corrida y **ya no vacían tablas** |
+| D-039 | Tomada | **Guardias.** Una lectura de imagen `simulated` se rechaza fuera de la organización de simulación (adjunto `error`, sin observación ni necesidad, con auditoría); `telegram-poll` con `VISION_PROVIDER=simulated` exige que TODOS los chats activos sean de simulación; la CLI no tiene organización por defecto (`--org sim\|real`); las demos usan solo la organización de simulación, abren un ciclo nuevo en cada corrida y **ya no vacían tablas** |
 | D-040 | Tomada | **Aislamiento**: toda consulta, deduplicación, catálogo, alias, auditoría y feed de eventos (`services/event_feed.py`, base del SSE de H1-C) se acota por `organization_id`; una prueba de esquema exige `organization_id` NOT NULL + FK en toda tabla de negocio. Una simulación jamás se fusiona con una necesidad real |
 | D-041 | Pendiente (plan entregado) | Migración de datos existentes: **opción A «archivo»** (0 filas cambian de organización, 0 triggers desactivados, 0 autorías cambiadas). Ensayada en una copia |
 | D-042 | Tomada | **Personal: tres conceptos separados.** *Pertenecer* (`active`), *disponibilidad para reportar* (`available` + motivo `vacation/sick_leave/day_off/other` + nota) y *sesión de Telegram activa* (deriva de `actor_session`). Nunca se elimina (trigger): se desactiva. Nombres únicos entre activos (sin distinguir mayúsculas). Un nombre cambiado no reasigna la autoría (va por id) |
@@ -163,7 +163,7 @@ enlace (D-067).
 | D-069 | Tomada | **El mantenedor de personal exige autenticación fuerte (extiende D-060).** Todas las rutas `/api/v1/staff` usan `StrongActor`: en `real_test`/`production`/`legacy_mixed` rechazan `X-Demo-User-Id` con 403 `STRONG_AUTH_REQUIRED` y exigen JWT de Supabase; en `simulation` el comportamiento de demo se conserva. Administrar personal es administrar quién puede reportar y quién no, con el mismo rigor que los accesos de Telegram |
 | D-070 | Pendiente | **Identidad en varias organizaciones.** `auth_subject` es único en toda la base, así que una persona con fila en dos organizaciones no puede reutilizar el mismo `sub`. Hoy no bloquea (solo se enlaza `real_test`), pero al habilitar `production` habrá que decidir entre una tabla de identidades (`sub` → persona, con la organización resuelta por membresía/contexto) o mover la fila en el corte. Requiere autorización y, probablemente, migración |
 | D-071 | Tomada (aplicada 2026-10-29) | **La administradora de pruebas es una identidad aparte, no Pao.** La cuenta de Google del usuario se prueba como **primera administradora** del sistema, con nombre visible «Yarella Fernández» y **solo el rol `admin`** (sin `purchasing`): no reporta faltantes, no aparece en el selector del bot y no hereda ni altera nada de Pao. Pao conserva sus tres filas intactas y tendrá su **propia** identidad más adelante. Creada con autorización explícita del usuario (2026-10-29) y su `sub` enlazado; Google y correo/contraseña resuelven la misma identidad (D-064) |
-| D-072 | Tomada | **`create-admin` es bootstrap, no un mantenedor de administradoras.** La CLI `create-admin "<nombre>" --org sim|real --confirm` (servicio `staff.bootstrap_admin`) crea la **primera** administradora cuando ninguna puede iniciar sesión todavía, con estas restricciones: roles fijos `["admin"]` (no se aceptan otros), permitido **solo en `simulation` y `real_test`** (`BOOTSTRAP_NOT_ALLOWED` en `production` y en el archivo `legacy_mixed`), se niega si ya existe una persona **activa con `auth_subject` enlazado** y rol `admin` (`ADMIN_ACCESS_EXISTS`), admite **una sola** administradora de bootstrap **activa** por organización detectada por auditoría (`BOOTSTRAP_ALREADY_DONE`) —si se desactiva, se permite recuperar el acceso—, respeta la unicidad de nombre y **no enlaza `auth_subject`**, no crea usuarios de Supabase ni envía correo. Se audita como acción del **operador** (`actor_id = NULL`, acción `staff.bootstrap_created`, evento de outbox `staff.updated`), nunca como una persona de la farmacia |
+| D-072 | Tomada | **`create-admin` es bootstrap, no un mantenedor de administradoras.** La CLI `create-admin "<nombre>" --org sim\|real --confirm` (servicio `staff.bootstrap_admin`) crea la **primera** administradora cuando ninguna puede iniciar sesión todavía, con estas restricciones: roles fijos `["admin"]` (no se aceptan otros), permitido **solo en `simulation` y `real_test`** (`BOOTSTRAP_NOT_ALLOWED` en `production` y en el archivo `legacy_mixed`), se niega si ya existe una persona **activa con `auth_subject` enlazado** y rol `admin` (`ADMIN_ACCESS_EXISTS`), admite **una sola** administradora de bootstrap **activa** por organización detectada por auditoría (`BOOTSTRAP_ALREADY_DONE`) —si se desactiva, se permite recuperar el acceso—, respeta la unicidad de nombre y **no enlaza `auth_subject`**, no crea usuarios de Supabase ni envía correo. Se audita como acción del **operador** (`actor_id = NULL`, acción `staff.bootstrap_created`, evento de outbox `staff.updated`), nunca como una persona de la farmacia |
 
 ## Pendientes V del HLD §25 que bloquearán fases futuras (no la actual)
 
@@ -243,7 +243,7 @@ autorizada**), cerrada el 2026-10-29 en el apartado «Diseño del modelo de dato
 
 | ID | Estado | Decisión |
 |---|---|---|
-| D-093 | Tomada (2026-10-29) | **El contrato del cotizador v0 queda aprobado y congelado y la fase C0 se cierra.** El usuario autorizó formalmente el cierre de C0 el 2026-10-29. `docs/contracts/cotizador-v0.md` pasa a **APROBADO Y CONGELADO** y los criterios **C0-01 a C0-19** se dan por cumplidos por revisión del documento; **C0-13 queda cumplido** con esta aprobación. El congelamiento alcanza al contrato completo (E1–E9, tres planos, esquemas, errores, invariantes y AC), con las precisiones de D-086 a D-092 incorporadas y verificadas entre contrato, registro de decisiones y roadmap. **No se modificó código, modelo, endpoint, base de datos, migración ni OpenAPI; la migración 0008 no se ejecutó y C1 no se inició.** Consecuencias: (a) Lovable y el backend implementan el contrato tal cual; cualquier cambio de alcance, esquema o semántica exige **decisión nueva** (D-094 en adelante) y versión nueva del documento; (b) las decisiones comerciales y de cálculo siguen sin poder alterarse por criterios registrados (§1.1 y D-091); (c) D-076 y D-077 quedaban abiertas sin bloquear C1–C4 (D-076 se cierra el mismo 2026-10-29 en el apartado siguiente;
+| D-093 | Tomada (2026-10-29) | **El contrato del cotizador v0 queda aprobado y congelado y la fase C0 se cierra.** El usuario autorizó formalmente el cierre de C0 el 2026-10-29. `docs/contracts/cotizador-v0.md` pasa a **APROBADO Y CONGELADO** y los criterios **C0-01 a C0-19** se dan por cumplidos por revisión del documento; **C0-13 queda cumplido** con esta aprobación. El congelamiento alcanza al contrato completo (E1–E9, tres planos, esquemas, errores, invariantes y AC), con las precisiones de D-086 a D-092 incorporadas y verificadas entre contrato, registro de decisiones y roadmap. **No se modificó código, modelo, endpoint, base de datos, migración ni OpenAPI; la migración 0008 no se ejecutó y C1 no se inició.** Consecuencias: (a) Lovable y el backend implementan el contrato tal cual; cualquier cambio de alcance, esquema o semántica exige **decisión nueva** (D-094 en adelante) y versión nueva del documento; (b) las decisiones comerciales y de cálculo siguen sin poder alterarse por criterios registrados (§1.1 y D-091); (c) D-076 y D-077 quedaban abiertas sin bloquear C1–C4 (D-076 se cierra el mismo 2026-10-29 en el apartado siguiente; |
 D-077 sigue abierta); (d) el siguiente paso es **C1** (modelo de datos), que requiere **autorización explícita de migración**; (e) la compra real sigue `blocked` y el LLM no decide dinero, cantidades ni permisos. |
 
 **Estado documental resultante:** contrato congelado (`docs/contracts/cotizador-v0.md`), C0 cerrada con C0-01 a C0-19
@@ -435,7 +435,7 @@ salida.
 
 | ID | Estado | Decisión |
 |---|---|---|
-| D-099 | Pendiente (2026-10-29) | **`AUTH_MODE=demo_header` no debe permitir el acceso a datos reales en un entorno público.** La comprobación funcional de C1 confirmó el alcance real: con `demo_header` y una persona de `real_test`, la API **sí** responde **lecturas** de datos reales (`GET /api/v1/me` y `GET /api/v1/demand-items` devuelven 200 con datos de `real_test`); `StrongActor` solo bloquea las operaciones **administrativas** (`/staff`, cuentas y solicitudes de Telegram), que responden 403 `STRONG_AUTH_REQUIRED`. Es el comportamiento diseñado (D-069; D-086 ya documenta que `StrongActor` **no** es MFA ni re-autenticación), y la validación de arranque impide `demo_header` con `APP_ENV=staging|production` (`app/core/config.py`), de modo que el riesgo se materializa solo si se publica un entorno con `APP_ENV=local` o `demo`. **Antes de cualquier despliegue accesible públicamente** hay que decidir e implementar una de estas dos salidas: que `demo_header` resuelva **solo** personas de la organización `simulation` y rechace cualquier otra con 403, o que el modo demo no exista fuera de `local`/`demo`. **No se implementa ahora**: no se modifica `app/api/deps.py`, la matriz de permisos ni la configuración; requiere autorización y decisión propia. |
+| D-099 | Pendiente (2026-10-29) | **`AUTH_MODE=demo_header` no debe permitir el acceso a datos reales en un entorno público.** La comprobación funcional de C1 confirmó el alcance real: con `demo_header` y una persona de `real_test`, la API **sí** responde **lecturas** de datos reales (`GET /api/v1/me` y `GET /api/v1/demand-items` devuelven 200 con datos de `real_test`); `StrongActor` solo bloquea las operaciones **administrativas** (`/staff`, cuentas y solicitudes de Telegram), que responden 403 `STRONG_AUTH_REQUIRED`. Es el comportamiento diseñado (D-069; D-086 ya documenta que `StrongActor` **no** es MFA ni re-autenticación), y la validación de arranque impide `demo_header` con `APP_ENV=staging\|production` (`app/core/config.py`), de modo que el riesgo se materializa solo si se publica un entorno con `APP_ENV=local` o `demo`. **Antes de cualquier despliegue accesible públicamente** hay que decidir e implementar una de estas dos salidas: que `demo_header` resuelva **solo** personas de la organización `simulation` y rechace cualquier otra con 403, o que el modo demo no exista fuera de `local`/`demo`. **No se implementa ahora**: no se modifica `app/api/deps.py`, la matriz de permisos ni la configuración; requiere autorización y decisión propia. |
 
 ## Diseño de C2 y cierre de D-077 (2026-10-29)
 
@@ -653,15 +653,79 @@ cambiar E1 ni E3. **No se redacta ni se implementa sin autorización.**
 **No autoriza:** construir conectores, extraer en volumen, escribir en `chain_product`/`reference_price` operativos,
 crear fuentes de cadena reales, modificar C0 o el frontend.
 
+## Búsqueda de precios públicos de cadenas (2026-10-30)
+
+| ID | Estado | Decisión |
+|---|---|---|
+| D-113 | Tomada (2026-10-30) | **Se aprueba funcionalmente la búsqueda de precios públicos de Cruz Verde, Salcobrand y Farmacias Ahumada, en vivo y bajo demanda, para cualquier producto de farmacia, sin datos ficticios, históricos ni precargados como sustituto.** Opera **independiente de E1**: `POST /api/v1/chain-searches` responde **202** y `GET /api/v1/chain-searches/{search_id}` se sondea; **sin SSE, sin persistencia y sin migración**. Cada cadena informa su estado real; una cadena sin conector o sin autorización aparece `not_configured` con motivo, **nunca con precios inventados**. Los precios públicos siguen fuera de ofertas, carritos, totales y elegibilidad (C0-05, AC20). **La captura por cadena no queda autorizada por esta decisión**: rige D-115. Esta decisión ocupa el número que estaba reservado y no se duplica. |
+
+### D-113 — Búsqueda federada bajo demanda de precios públicos (2026-10-30)
+
+**Motivo.** El buscador ya diseñado en Lovable muestra, junto a las ofertas de proveedores, los precios públicos de
+las tres cadenas. C0 los mantiene **fuera** de las ofertas y del cálculo (C0-05, AC20), pero no tenía un mecanismo
+para consultarlos. D-112 autorizó **investigar**; D-113 decide **cómo se consulta**, sin construir todavía ningún
+conector real.
+
+**Independencia de E1.** La consulta de cadenas no exige un artículo del catálogo propio ni cambia E1/E3:
+
+| Método y ruta | Comportamiento |
+|---|---|
+| `POST /api/v1/chain-searches` | Inicia la consulta y responde **202** con `search_id`, `status: pending` y `expires_at` |
+| `GET /api/v1/chain-searches/{search_id}` | Sondeo; **200** con el resultado, **404 `SEARCH_NOT_FOUND`** si no existe o expiró |
+
+No hay SSE, no hay streaming y no se guarda nada. El estado vive **en memoria del proceso**: se documenta **un solo
+worker de API**; un reinicio pierde las búsquedas en vuelo y el sondeo devuelve 404.
+
+**Estados, sin ambigüedad.**
+
+| `state` | `outcome` | Significado |
+|---|---|---|
+| `ok` | `matches` | Respondió y hay al menos una ficha |
+| `ok` | `no_matches` | Respondió válidamente y no hay fichas |
+| `stale` | — | Observación anterior conservada solo como referencia; **no** es el precio de esta consulta |
+| `failed` | — | Error real: `blocked`, `timeout`, `network_error`, `rate_limited` |
+| `not_configured` | — | Sin conector autorizado: `access_not_authorized`, `search_not_available`, `requires_javascript` |
+
+Reglas: **un CAPTCHA o desafío es `failed`, nunca `no_matches`**; una respuesta vacía válida es **200**, nunca 503;
+si todas las cadenas están `not_configured`, la búsqueda termina `completed` con 200 y el estado real de cada una;
+**no se usan 502 ni 504 para cadenas**; el único 503 es el existente `DATABASE_NOT_CONFIGURED`.
+
+**Límites:** consulta bajo demanda, sin cron ni espejo; una consulta en paralelo por cadena; **4 s por fuente, 8 s
+global**; TTL **10 min**; máximo **50 búsquedas vivas** por proceso; **un worker**. Códigos nuevos:
+`SEARCH_NOT_FOUND` (404) y `RATE_LIMITED` (429 con `Retry-After`).
+
+**Estado inicial real (ninguna cadena habilitada).**
+
+| Cadena | Estado | Motivo | Fundamento |
+|---|---|---|---|
+| Cruz Verde | `not_configured` | `requires_javascript` | `robots` permite `/search`, pero los resultados se cargan por JavaScript; no hay conector autorizado |
+| Salcobrand | `not_configured` | `search_not_available` | La búsqueda requiere JavaScript y `robots` no permite `/api`; no hay conector autorizado |
+| Farmacias Ahumada | `not_configured` | `access_not_authorized` | Hay reCAPTCHA; los términos (versión 13.10.23) **no autorizan ni prohíben** el acceso automatizado; la captura automatizada **no está autorizada** |
+
+La habilitación es por `CHAIN_SEARCH_ENABLED` (lista de cadenas), **no** por código. `sources[]` siempre lista las
+tres cadenas con su estado real.
+
+**Sin persistencia.** `chain_product` y `reference_price` (0008) solo se usan como **evidencia** cuando una persona
+confirma una correspondencia (D-112); **no** son un espejo del catálogo de la cadena. No hay migración para E15.
+
+**Vigencia.** `observed_at` es de **esta** consulta. Al agregar o revisar una oferta en una cotización se repite la
+consulta con `purpose: "quote_verification"`; **solo** el precio de esa verificación puede mostrarse como vigente. Si
+la fuente falla, se muestra el fallo; nunca se reutiliza un precio anterior como actual. Los precios de cadena no
+entran en `offer_snapshot`, carritos, totales ni elegibilidad.
+
+**No autoriza:** construir conectores, capturar datos de ninguna cadena, usar datos ficticios o históricos como
+sustituto, modificar C0/E1/E3, crear tablas o migraciones, ni tocar el frontend. La política de captura es D-115.
+
 ## Cotizador: cotizaciones, carritos por proveedor, compras registradas e historial (2026-10-30)
 
 | ID | Estado | Decisión |
 |---|---|---|
 | D-114 | Tomada (2026-10-30) | **Se amplía C0 con dos excepciones nombradas:** (X1) crear cotizaciones y carritos **en preparación** y (X2) **registrar una compra ya ocurrida** fuera del sistema como hecho documentado, nunca como ejecución. La cotización general agrupa carritos independientes, uno por proveedor, con evaluación E5 por carrito (nunca una segunda lógica de dinero). Compras inmutables y corregibles solo por registro nuevo que sustituye; historial comercial propio, independiente de `audit_event`. Conservación operativa de 6 meses **por compra** y archivo permanente en almacenamiento externo verificado, sin archivar ni eliminar cotizaciones por antigüedad. Contrato `docs/contracts/cotizador-v0.2.md`. C0 no se edita; E1–E9 no cambian; `purchase_execution` sigue `blocked`. E10/E11/E12 exigen `admin` + `StrongActor`. La purga del detalle está **diseñada y deshabilitada**. No autoriza código, migraciones, extensiones, proveedor de archivo ni ejecución de la purga. |
 
-> Nota de numeración: **D-113** corresponde a la propuesta de búsqueda federada bajo demanda (contrato v0.1), que
-> **sigue sin registrar** por no estar aprobada. Se reserva ese número; D-114 se registra por decisión expresa del
-> usuario del 2026-10-30.
+> Nota de numeración (actualizada en D0, 2026-10-30): **D-113** ya está registrada arriba, tras su aprobación
+> funcional; **D-114** conserva su número y su contenido. **D-115 a D-127** se registran al final de esta sección.
+> No hay duplicados ni huecos. El texto original de D-114 se conserva; la **enmienda de D0** se registra aparte y
+> prevalece solo en los puntos que enumera.
 
 ### D-114 — Cotizaciones con carritos por proveedor, compras registradas e historial (2026-10-30)
 
@@ -815,3 +879,608 @@ sustituido por metadatos de archivo + `purchase_index`; `UNIQUE (supersedes_purc
 archivadas; anulación con motivo y exclusión de totales; desistimiento del pendiente sin alterar lo cotizado ni lo
 comprado; `purchase_index` con `pg_trgm`/`unaccent` sujeto a verificación de disponibilidad; `admin` + `StrongActor`
 en E10/E11/E12; purga diseñada y **deshabilitada** hasta que exista almacenamiento aprobado y pruebas superadas.
+
+## Mecanismo de cadenas, observaciones, accesos y faltantes en el cotizador (D0, 2026-10-30)
+
+| ID | Estado | Decisión |
+|---|---|---|
+| D-115 | Tomada (2026-10-30) | **Mecanismo de consulta por cadena, política de captura y vigencia.** Solo conectores viables y permitidos; bajo demanda, sin cron ni espejo; consultas en paralelo por cadena; **4 s por fuente y 8 s global**; estados `ok/stale/failed/not_configured` y, solo en `ok`, `outcome matches/no_matches`; TTL 10 min; 50 búsquedas vivas; **un worker**; `SEARCH_NOT_FOUND`/`RATE_LIMITED`; **sin persistencia**. Estado inicial: Cruz Verde `requires_javascript`, Salcobrand `search_not_available`, Ahumada `access_not_authorized`; **ninguna habilitada**. La captura automatizada de Ahumada **no está autorizada**; requiere A1 (autorización escrita/API) o A2 (decisión de riesgo registrada). Verificación al cotizar: solo el precio de esa consulta es actual; un precio anterior nunca se presenta como vigente y el fallo se muestra. |
+| D-116 | Tomada (2026-10-30) | **Observaciones comerciales independientes, inmutables y acumulativas; aprendizaje O1–O4 con OpenAI.** Se rechaza un `note_text` único en la línea. `commercial_observation` guarda cada observación con texto original, autor, fecha y contexto. `observation_interpretation` guarda la sugerencia de la IA con modelo, prompt, tokens, costo estimado y latencia; el contenido es inmutable y **solo** los campos de revisión cambian por transición auditada `suggested→confirmed\|rejected`, sin retorno. O1 persistencia (C5-A), O2 interpretación, O3 recuperación por artículo exacto y precedencia de la más reciente, O4 consejo explicado `advice` con `based_on` y `supersedes`. **OpenAI por Responses API, solo desde el backend**; salida estructurada; timeout, reintento acotado, presupuesto mensual y tope por lote; si falla o está deshabilitado, la observación se guarda y el consejo dice «sin interpretación», **nunca se finge IA con reglas**. La IA no decide dinero, cantidades, permisos ni visibilidad. |
+| D-117 | Tomada (2026-10-30) | **Acceso web con Google: autenticación ≠ autorización; sin código de vinculación para usuarios nuevos.** Tres niveles: **superadministradora** (Yarella Fernández; administración global, organizaciones, administradoras y permisos globales), **administradora de farmacia** (Pao; gestiona usuarios de su farmacia, aprueba/rechaza/revoca, sin privilegios globales) y **usuarios autorizados** (Google; solo lo permitido, sin admin automático). Flujo: Google → JWT → validación → `app_user.auth_subject` activo y vigente; si no, `403 USER_NOT_PROVISIONED` y «Solicitar acceso» → `POST /web-access-requests` (organización desde configuración del servidor). Campanita para `admin`: `GET /web-access-requests` y aprobar/rechazar; **aprobar crea/enlaza con `roles = []`, nunca `admin`**. Pao, Danny y Julio se habilitan previamente con `create-admin`/`link-auth-subject`. `app_user` gana `email`, `is_superadmin`, `web_access_expires_at`, `web_access_granted_by/at`; vencimiento por petición (`WEB_ACCESS_EXPIRED`, sin job). La superadministradora no puede ser desactivada ni degradada por una administradora de farmacia. Sin contraseña ni registro público. |
+| D-118 | Tomada (2026-10-30) | **Control individual de Telegram, no un interruptor global.** Pao habilita o deshabilita **por cuenta** quién puede enviar faltantes por Telegram. Se reutiliza `telegram_account.status active\|blocked`, `blocked_at/by/reason`, los endpoints `block`/`reactivate`/`history` y `GET /telegram-accounts` (con `MANAGE_ACCOUNTS` + `StrongActor`). Bloquear revoca sesiones (`end_reason='revoked'`), desactiva vínculos y **conserva todo el historial**; rehabilitar reutiliza la misma fila y recrea el vínculo privado sin nueva solicitud ni código. El backend valida el acceso en **cada** mensaje. **No hay tabla ni migración nuevas.** Límite: es por cuenta, no por chat; una cuenta `shared_device` se deshabilita para todas las personas del teléfono. Telegram y web son permisos independientes; `app_user.active=false` es una suspensión más fuerte que corta ambos. |
+| D-119 | Tomada (2026-10-30) | **Superadministradora global.** `app_user.is_superadmin` booleano, **no** un rol; `roles` conserva su CHECK cerrado. **Exactamente una activa**; no puede ser desactivada, bloqueada ni degradada por una administradora de farmacia, solo por ella misma o por el CLI `set-superadmin` (uso único, auditado). **Excepción nombrada a D-037:** cruza organizaciones **solo** para metadatos administrativos (organizaciones, administradoras, roles, solicitudes de acceso); los datos operativos siguen acotados a la organización. Ampliar el cruce a datos operativos exige decisión nueva. |
+| D-120 | Tomada (2026-10-30) | **Faltantes de Telegram en el Cotizador, con cobertura reversible.** Grilla «Productos faltantes (Telegram)» en la pantalla principal (orden: búsqueda, precios públicos, faltantes, ofertas, Mis cotizaciones). Reutiliza `GET /demand-items` con campos aditivos `last_raw_text`, `coverage_quantity`, `pending_quantity`, `is_pending` y filtro `pending_only=true`; **sin tabla ni endpoint nuevos**. «Buscar» usa la búsqueda principal y **no cambia** el estado del faltante. «Agregar a cotización» desde una fila **vincula la oferta al faltante sin confirmación adicional**, aunque sea otra marca o presentación; la clasificación y advertencias quedan visibles y **no se afirma equivalencia**. Vínculo solo si la petición lleva `demand_item_id`; una búsqueda libre no vincula nada. Cobertura **derivada, nunca almacenada**, de líneas activas de carritos activos de cotizaciones `draft`, **ampliada por D-121 a las compras `current` no anuladas, sin doble conteo**; quitar líneas, descartar carritos, anular o corregir compras recalcula y puede devolver el faltante a pendiente; varios proveedores suman; la cantidad desconocida no se inventa; el historial original de Telegram nunca se borra. `quote_line` gana `coverage_relation` (clasificación congelada). **P-8 resuelto por D-121.** |
+| D-121 | Tomada (2026-10-30) | **Cobertura de faltantes con compras vigentes, sin doble conteo (resuelve P-8).** La cobertura suma (a) líneas activas de carritos activos de cotizaciones `draft` sin compra vigente y (b) compras `current` no anuladas. Una línea con compra vigente cuenta **solo** lo comprado; compra y cotización nunca se suman dos veces. Cerrar la cotización no quita cobertura. Anular o corregir una compra recalcula. Las recepciones **no** se suman aparte (los campos de recepción se retiran con D-126). **D-127 precisa el alcance:** la cotización cubre de forma **provisional** y **nunca** cierra; solo la compra confirmada cierra. Sin tabla, columna ni migración nuevas: todo es derivado. |
+| D-122 | Tomada (2026-10-30); **retirada del MVP por D-126** | **Recepción física desde el Cotizador web, con parciales y diferencias.** Se agregan `receipt` y `receipt_line` (inmutables, de solo agregar) a la migración **0017**. Solo rol `admin` + `StrongActor`, **solo web**; Telegram nunca confirma recepciones. Se registran cantidades aceptadas y rechazadas, diferencias (`missing`, `wrong_product`, `damaged`, `other`) y responsable/fecha. Un producto equivocado **no** se confirma como recibido. Recepción parcial deja saldo pendiente y **no** declara completo. El faltante pasa a `fulfilled` solo si toda compra vigente está `complete` y la cobertura alcanza el objetivo (o la cantidad es desconocida); cerrar conserva todo el historial. Un faltante cerrado no se reabre: un nuevo aviso crea un nuevo ciclo. P-9 (anulación con recepciones), P-10 (compra que nunca llega) y P-11 (corrección de recepción) quedan **abiertos**. |
+| D-123 | Tomada (2026-10-30) | **Estado por Telegram sin duplicar necesidades.** Un aviso repetido se registra como observación del mismo faltante `active`; no crea un segundo faltante ni suma cantidad. La respuesta informa el estado: pendiente, en cotización, comprado (con cantidades y, si es parcial, el saldo por comprar) o cerrado. Si ya hay compra, el bot dice «ya hay una compra registrada» y **no** afirma que llegó; ajustado por D-126 (sin estados de recepción). Cantidad adicional solo por `ADD`/`SET`/`CLEAR` explícito. Consulta `estado <texto>` determinista, sin IA, de solo lectura, con candidatos ante ambigüedad. **D-127:** la distinción aviso repetido / necesidad nueva depende del **ciclo** (mientras el faltante esté `active`), no de un plazo ni de la recepción; con cantidad desconocida la necesidad no se cierra por un aviso. Después de `fulfilled`, un nuevo aviso crea un nuevo faltante. |
+| D-124 | Tomada (2026-10-30) | **Las personas con rol `admin` también informan faltantes por Telegram.** Se agrega `REPORT_SHORTAGE` al rol `admin` en la matriz de permisos; no se crea un rol nuevo ni se fusionan planos. Para usar Telegram, una administradora necesita su propia cuenta `telegram_account` `active` e identidad vigente, igual que un auxiliar. Los permisos web y la autorización de Telegram siguen siendo independientes: tener `admin` no habilita el bot, y tener Telegram no otorga roles web. Sin exclusión alguna que impida a `admin` reportar. |
+| D-126 | Tomada (2026-10-30) | **La recepción física y las diferencias de entrega quedan fuera del MVP/demo.** El objetivo es demostrar solicitud de faltantes, búsqueda, comparación, cotización y compra; no un sistema de inventario ni de recepción. Se retiran del alcance implementable: confirmación de recepción, recepciones completas o parciales, cantidades entregadas, diferencias y productos equivocados, saldos pendientes de recepción, correcciones/anulaciones de recepción, tablas `receipt`/`receipt_line`, endpoints, permisos, validaciones y pantallas asociados, y cierre condicionado a recepción. Subsiste D-121: la cobertura suma líneas activas de cotización y compras confirmadas, sin duplicar cantidades; una compra confirmada **no certifica llegada física**, solo marca el término del proceso que administra el MVP. **D-127** precisa que lo cotizado cubre de forma provisional y nunca cierra: la necesidad pasa a `fulfilled` solo cuando las compras confirmadas cubren toda la cantidad pedida conocida. C5-B vuelve a **3 tablas** (`purchase`, `purchase_line`, `purchase_index`) y v0.2 a **9 tablas**. P-9/P-10/P-11 dejan de bloquear D0 o la demo y se conservan como funcionalidad futura. D-122 y A10 quedan retiradas; D-123 y D-124 se mantienen con la redacción ajustada. |
+| D-127 | Tomada (2026-10-30) | **Regla definitiva de cierre del ciclo de reposición y compras parciales.** Una necesidad se considera gestionada cuando la cantidad solicitada queda **completamente cubierta por compras confirmadas**; `fulfilled` no significa recibido físicamente. Cubrir con **cotización** es provisional —mientras la línea siga en un carrito activo— y **nunca** cierra el ciclo. Compra parcial (10 pedidas, 6 compradas): las 6 quedan cubiertas, las 4 restantes siguen como necesidad abierta **en el mismo faltante** (`purchased`, `pending_purchase_quantity = 4`), sin crear una solicitud duplicada, y se cotizan y compran sobre ese faltante hasta cerrar. `is_pending` significa «el ciclo sigue abierto» y no se apaga por cotizar; se distinguen `pending_quantity` (falta
+**cotizar**) y el derivado `pending_purchase_quantity` (falta **comprar**), sin tabla ni endpoint nuevos. La distinción aviso repetido / ciclo nuevo depende del **ciclo** (`active` vs. `fulfilled`), no de un plazo ni de la recepción. Cantidad desconocida: no se cierra automáticamente; sale del ciclo solo por `ADD`/`SET` explícito que declare la cantidad o por anulación con motivo, nunca inventando una cantidad ni una confirmación de recepción. Sin migración ni código. |
+| D-125 | Tomada (2026-10-30) | **Tres tablas de búsqueda en C4 y numeración definitiva.** C0 nombra dos tablas (`search_run`, `search_source_result`); el diseño aprobado usa tres: se agrega `search_result` (filas de resultado por producto) como **ampliación aditiva**, sin editar C0. Las tres se crean en la migración **0013**. Se ratifica **C4 = 0013** y **C3 = 0014**; no se invierte el orden. |
+
+### D-115 — Consulta por cadena, captura y vigencia (2026-10-30)
+
+**Alcance.** D-113 aprueba el contrato de búsqueda; D-115 fija **qué se puede consultar y cómo**, sin construir
+conectores. Una cadena solo se habilita si existe un mecanismo **viable y permitido**: API pública, HTML de servidor
+sin desafío, o autorización expresa. Si no, se informa `not_configured` con motivo y **no se inventa** nada.
+
+**Consulta.** Bajo demanda, sin cron y sin espejo del catálogo. Una consulta por cadena, en paralelo. Límites: **4 s
+por fuente**, **8 s global**, TTL **10 min**, máximo **50 búsquedas vivas** por proceso y **un worker** (el estado
+está en memoria; reiniciar pierde las búsquedas en vuelo). Códigos: `SEARCH_NOT_FOUND` (404) y `RATE_LIMITED` (429 con
+`Retry-After`). No se usan 502/504 para cadenas.
+
+**Estado inicial y fundamento.**
+
+| Cadena | Estado | Motivo | Fundamento |
+|---|---|---|---|
+| Cruz Verde | `not_configured` | `requires_javascript` | `robots` permite `/search`, pero los resultados se cargan por JavaScript; no hay conector autorizado |
+| Salcobrand | `not_configured` | `search_not_available` | La búsqueda requiere JavaScript y `robots` no permite `/api`; no hay conector autorizado |
+| Farmacias Ahumada | `not_configured` | `access_not_authorized` | reCAPTCHA; términos versión 13.10.23 **no autorizan ni prohíben** el acceso automatizado; la captura automatizada **no está autorizada** |
+
+**Política de captura.** No se usan datos ficticios, precargados ni históricos como sustituto. No se extrae en
+volumen, no se eluden CAPTCHA/MFA, no se simula un navegador para saltar protecciones. Si se habilita una cadena, el
+cliente se identifica honestamente, respeta límites de tasa y consulta **solo bajo demanda**.
+
+**Farmacias Ahumada, dos caminos, ninguno ejecutado:**
+
+- **A1:** autorización escrita o API del titular.
+- **A2:** decisión explícita de riesgo de negocio, registrada en D-113 con **fecha, fundamento jurídico, condición de
+  revocación, consultas limitadas, sin extracción masiva, sin eludir protecciones, identificación honesta y límite de
+  tasa**.
+
+Sin A1 o A2, el conector **no se construye**. Lo mismo para cualquier cadena sin autorización.
+
+**Vigencia.** `observed_at` es de **esta** consulta. Al agregar o revisar una oferta en una cotización se repite la
+consulta con `purpose: "quote_verification"`; **solo** el precio de esa verificación puede mostrarse como vigente. Si
+la fuente falla, se muestra el fallo; nunca se reutiliza un precio anterior como actual. El precio público no entra
+en `offer_snapshot`, carritos, totales ni elegibilidad.
+
+**No autoriza:** construir conectores, capturar datos, crear tablas o migraciones, modificar C0/E1/E3, ni tocar el
+frontend.
+
+### D-116 — Observaciones comerciales y aprendizaje O1–O4 (2026-10-30)
+
+**Motivo.** Pao quiere dejar constancia de observaciones libres («este medicamento no me gusta por el laboratorio»,
+«este proveedor despacha tarde») y que el sistema las recuerde y las explique al cotizar. Un campo único de nota por
+línea se sobrescribe, mezcla fechas y autores, y no permite mostrar que una observación posterior supera a otra sin
+borrar la primera. Por eso se separan **observación** (hecho escrito por Pao) e **interpretación** (sugerencia de IA).
+
+**`commercial_observation` (inmutable, solo agregar).** `text_original`, `author_id`, `created_at`, `quote_id`,
+`quote_line_id`, `trade_item_id`, `offer_snapshot_id`, `supplier_id`, `context` jsonb con las etiquetas **tal como se
+vieron** (producto, presentación, laboratorio/marca, proveedor, oferta, cotización) y `data_origin='captured'`.
+Trigger rechaza `UPDATE` y `DELETE`. No hay edición, borrado ni reemplazo. La línea nunca se borra físicamente, así
+que no hay huérfanas. El contexto no convierte `laboratory_as_published` en laboratorio confirmado.
+
+**`observation_interpretation` (contenido inmutable, revisión controlada).** `stance` (`favor|caution|neutral`),
+`subject_kind` (`article|brand|supplier`), `subject_label`, `temporality`, `confidence`, `model`, `prompt_version`,
+tokens de entrada/salida, `estimated_cost_usd`, `latency_ms`, `data_origin='ai_derived'`, `status`
+(`suggested|confirmed|rejected`), `reviewed_by/at`, `review_note`. **Contradicción resuelta:** el contenido no se
+edita ni se borra; **solo** los campos de revisión cambian, por función restringida y auditada, con transición
+`suggested → confirmed | rejected`, **sin retorno**. Varias interpretaciones por observación son válidas; la más
+reciente revisada gana y las anteriores se muestran como superadas, nunca se ocultan.
+
+**O1–O4.**
+
+| Etapa | Qué hace | Fase / migración |
+|---|---|---|
+| O1 | Guardar y mostrar la observación con autor, fecha, texto original y contexto | C5-A / 0015 |
+| O2 | Interpretar con IA y guardar la sugerencia estructurada | O1–O4 / 0016 |
+| O3 | Recuperar **solo** observaciones del artículo exacto; la más reciente para el mismo sujeto y clase gana; las anteriores se muestran superadas | En vivo, sin tabla |
+| O4 | Devolver `advice` con `stance`, `text`, `based_on[]`, `supersedes[]` e `interpretation_status` | En vivo, en la cotización |
+
+**Precedencia (O3).** Solo `trade_item_id` exacto; nunca por nombre, marca o laboratorio parecido. Para el mismo
+sujeto y clase de consejo, gana la más reciente (`created_at`, desempate por `id`). Las anteriores no se borran. Una
+observación de marca o proveedor **no se aplica** a otro artículo de la misma marca. Sin observaciones, `advice` es
+`null`; no se rellena con texto genérico.
+
+**OpenAI, Responses API, solo desde el backend.** Lovable nunca ve la clave ni llama al proveedor.
+
+| Configuración | Tipo | Regla |
+|---|---|---|
+| `OPENAI_API_KEY` | `SecretStr` | Obligatoria para O2–O4; si falta, O1 sigue operativo y el consejo dice «sin interpretación» |
+| `OPENAI_MODEL` | texto | **Sin valor por defecto inventado**; vacío ⇒ O2–O4 deshabilitados |
+| `OBSERVATION_AI_ENABLED` | booleano | Interruptor de despliegue; por defecto `false` |
+| `OPENAI_MAX_OUTPUT_TOKENS` | entero | Cota por solicitud |
+| `OPENAI_TIMEOUT_SECONDS` | entero | Al vencer, la observación se guarda sin interpretación |
+| `OPENAI_MONTHLY_BUDGET_USD` | decimal | Tope mensual; al alcanzarlo no se llama y se informa |
+| `OPENAI_PROMPT_VERSION` | texto | Versión del prompt, guardada en cada interpretación |
+| `OPENAI_INPUT_USD_PER_1M`, `OPENAI_OUTPUT_USD_PER_1M` | decimal | Tarifa configurable para **estimar** el costo; no se hardcodea un precio |
+
+**Reglas de llamada.** Salida estructurada validada contra JSON Schema estricto; si no valida, se descarta y se
+registra el fallo. Se guardan modelo, prompt, tokens, costo estimado y latencia. Timeout y **máximo un reintento**.
+Presupuesto mensual y tope por lote antes de cada llamada. Si el proveedor falla, la observación se guarda igual y la
+respuesta dice `advice_status: "sin_interpretacion"` con motivo visible; **nunca se sustituye por reglas fingidas**.
+La clave vive en `backend/.env` (fuera de git), la carga `core/config.py` y **nunca** se escribe en logs, respuestas,
+auditoría ni frontend.
+
+**Prohibiciones de la IA.** No modifica precio, stock, condiciones, cantidad, moneda, totales ni elegibilidad; no crea,
+quita, oculta, reordena ni destaca ofertas; no otorga permisos; no afirma equivalencia farmacológica; no aplica una
+observación a otro artículo por parecido; no borra ni edita observaciones.
+
+**Interfaz sin cambios.** Botón «Observación», campo de texto libre, Guardar/Cancelar. Sin categorías, selectores ni
+formularios adicionales.
+
+**Aceptación.** Dos observaciones contradictorias en fechas distintas; la cotización posterior cita la más reciente y
+marca la anterior como superada sin borrarla; el texto original queda visible; **las ofertas, precios, stock y totales
+son exactamente los mismos** que sin observaciones; una observación no se aplica a otro artículo de la misma marca;
+si la IA falla o está deshabilitada, la observación se guarda y el consejo dice «sin interpretación».
+
+**No autoriza:** contratar OpenAI, fijar modelo, tarifa o presupuesto, ni activar O2–O4. Sin clave y autorización de
+costo, solo O1 queda operativo.
+
+### D-117 — Acceso web con Google, solicitudes y niveles (2026-10-30)
+
+**Separación.** Google/Supabase **autentica**; nuestra base **autoriza**. Un JWT válido no basta: debe existir
+`app_user` activo, con `auth_subject` enlazado y acceso vigente.
+
+**Tres niveles.**
+
+| Nivel | Quién | Puede | No puede |
+|---|---|---|---|
+| **Superadministradora** | Yarella Fernández | Administración global, organizaciones, administradoras y permisos globales | Ser revocada o degradada por una administradora de farmacia |
+| **Administradora de farmacia** | Pao | Gestionar usuarios de **su** farmacia; aprobar, rechazar y revocar accesos; usar el cotizador | Privilegios globales; otras organizaciones |
+| **Usuario autorizado** | Personas con Google | Solo las funciones de sus roles | Administración automática por tener cuenta Google |
+
+Los nombres son personas, no código. **No se crea un rol nuevo**; `roles` sigue con sus cuatro valores.
+
+**Flujo.** «Continuar con Google» → JWT → validación de firma, emisor, audiencia y expiración → búsqueda por
+`auth_subject` activo y vigente. Si no existe o no está enlazado → `403 USER_NOT_PROVISIONED` y la pantalla ofrece
+«Solicitar acceso» → `POST /api/v1/web-access-requests` crea una solicitud `pending` en la organización **configurada
+en el servidor** → campanita de Pao → aprobar o rechazar. **Aprobar no asigna roles:** crea o enlaza `app_user` con
+`roles = []` y `active = true`; el acceso queda limitado a lo que un usuario sin roles puede ver. Los roles se
+otorgan después, por la superadministradora.
+
+**Pao, Danny y Julio** se habilitan previamente con `create-admin` / `link-auth-subject` (D-071/D-072) y entran con
+Google sin pasar por la campanita. La campanita es para solicitudes nuevas o excepcionales.
+
+**Endpoints.**
+
+| Método y ruta | Quién | Para qué |
+|---|---|---|
+| `POST /api/v1/web-access-requests` | JWT válido, sin `app_user` | Crear solicitud; cuerpo `{}`; organización desde configuración; idempotente por `(organization_id, auth_subject)` pendiente |
+| `GET /api/v1/web-access-requests` | `admin` de la organización | `{pending_count, items:[{id,email,requested_at}]}` |
+| `POST /api/v1/web-access-requests/{id}/approve` | `admin` de la organización | Aprueba y crea/enlaza con `roles = []` |
+| `POST /api/v1/web-access-requests/{id}/reject` | `admin` de la organización | Rechaza con motivo opcional; no crea usuario |
+| `POST /api/v1/admin/users/{user_id}/web-access` | Superadministradora | Otorga o cambia roles y `expires_at`; solo roles existentes; auditado |
+| `POST /api/v1/admin/users/{user_id}/web-access/revoke` | Superadministradora | Revoca **solo la web** (`expires_at = now`); no toca Telegram ni `active` |
+| `GET /api/v1/me` | Cualquier autenticado | Identidad, organización, roles, `is_superadmin`, vencimiento |
+
+**Seguridad del endpoint público.** Mismo validador de JWT; del token solo `sub`, `email` y nombre; se exige
+`email_verified`; organización desde configuración, **nunca** del cuerpo; límite de tasa por `sub` y por IP; **misma
+respuesta** exista o no cuenta o solicitud; no se revela el correo registrado ni la organización. La solicitud **no
+otorga nada**. Solo la aprobación habilita, y solo un `admin` de esa organización puede aprobar. Aprobar es
+transaccional y se audita en `audit_event`.
+
+**Campanita.** Check verde (aprobar) y cruz roja (rechazar), sin formularios adicionales. Al decidir, la solicitud
+desaparece y el contador baja; sin pendientes: «No hay solicitudes pendientes». La decisión **permanece auditada**.
+La superadministradora ve todas las organizaciones, con la organización indicada; una administradora de farmacia ve
+solo la suya.
+
+**Columnas nuevas de `app_user`.** `email`, `is_superadmin` (booleano, **no** rol), `web_access_expires_at`,
+`web_access_granted_by`, `web_access_granted_at`. El vencimiento se evalúa en **cada** petición → `403
+WEB_ACCESS_EXPIRED`; no hay job en segundo plano. Revocar la web no borra la persona ni su historial y no bloquea
+Telegram; `active = false` es una suspensión más fuerte que corta ambos.
+
+**Protección de la superadministradora.** Exactamente una activa; no puede ser desactivada, bloqueada ni degradada por
+una administradora de farmacia; solo por ella misma o por `set-superadmin` (CLI de uso único, auditado, no ejecutado
+en D0). `SUPERADMIN_PROTECTED` (403) si se intenta.
+
+**Sin contraseña ni registro público** (D-066). El alta es por Google + solicitud aprobada, o por
+`create-admin`/`link-auth-subject`.
+
+**Nombre.** Se usa `web_access_request` / `/web-access-requests`, **no** `access_request`, para no confundirlo con
+`telegram_access_request` (D-118).
+
+### D-118 — Control individual de Telegram (2026-10-30)
+
+**Decisión.** Pao habilita o deshabilita **por cuenta** quién puede usar Telegram para enviar faltantes. **No hay un
+interruptor global del bot.** Se reutiliza lo existente; no hay tabla ni migración nuevas.
+
+| Método y ruta | Efecto |
+|---|---|
+| `GET /api/v1/telegram-accounts` | Persona, chat, tipo (`personal`/`shared_device`), estado y última modificación |
+| `POST /api/v1/telegram-accounts/{id}/block` | `active → blocked`, motivo obligatorio; revoca sesiones (`end_reason='revoked'`), desactiva vínculos y **conserva el historial** |
+| `POST /api/v1/telegram-accounts/{id}/reactivate` | `blocked → active`; reutiliza la **misma fila**; recrea el vínculo privado sin nueva solicitud ni código |
+| `GET /api/v1/telegram-accounts/{id}/history` | Historial de la cuenta, incluidos bloqueos y rehabilitaciones |
+
+Requieren `MANAGE_ACCOUNTS` + `StrongActor`; en organización real, JWT de Supabase. El backend valida el acceso en
+**cada** mensaje entrante (`resolve_access`): una cuenta `blocked` no opera aunque tenga sesión previa. Bloquear no
+borra mensajes, observaciones, faltantes ni vínculos. Se audita `channel.account_blocked` /
+`channel.account_reactivated` con actor, motivo y fecha.
+
+**Límites.** El control es **por cuenta**, no por chat. Una cuenta `shared_device` se deshabilita para **todas** las
+personas de ese teléfono; el control individual exige cuentas `personal` (configuración actual). **Telegram y web son
+independientes:** una persona puede tener Telegram sin web y viceversa; los auxiliares solo usan Telegram y no cotizan
+ni entran al Cotizador web. Bloquear Telegram no revoca la web; revocar la web no bloquea Telegram;
+`app_user.active = false` es la suspensión fuerte que corta ambos. El token del bot sigue del lado del servidor y
+nunca se muestra en esta pantalla.
+
+**Fase.** La pantalla «Configuración de Telegram» es **T1**, sin migración.
+
+### D-119 — Superadministradora global (2026-10-30)
+
+**Decisión.** `app_user.is_superadmin` booleano, **no** un rol. `roles` conserva su CHECK cerrado
+(`auxiliary|purchasing|approver|admin`); agregar `superadmin` a `roles` sería ambiguo con el modelo existente.
+
+**Reglas.**
+
+1. **Exactamente una superadministradora activa.**
+2. No puede ser desactivada, bloqueada ni degradada por una administradora de farmacia; solo por ella misma o por el
+   CLI `set-superadmin`, de uso único y auditado.
+3. **Excepción nombrada a D-037:** puede cruzar organizaciones **solo** para metadatos administrativos
+   (organizaciones, administradoras, roles, solicitudes de acceso). **Los datos operativos siguen acotados a la
+   organización.**
+4. Ampliar el cruce a datos operativos exige una **decisión nueva**; no se hace por conveniencia.
+5. `SUPERADMIN_PROTECTED` (403) si una administradora de farmacia intenta desactivarla o degradarla.
+
+**No autoriza:** implementar el CLI, aplicar la columna o crear la superadministradora en una organización real. Eso
+es G1, con autorización de migración.
+
+### D-120 — Faltantes de Telegram en el Cotizador y cobertura reversible (2026-10-30)
+
+> **Vigencia:** este registro conserva el texto original. La cobertura fue ampliada por **D-121** (compras vigentes)
+> y la fórmula, los saldos y el cierre fueron fijados por **D-127** (`pending_quantity` = falta cotizar,
+> `pending_purchase_quantity` = falta comprar, cierre solo por compra confirmada); prevalece el contrato §12.
+
+**Decisión.** Los faltantes que llegan por Telegram se muestran y gestionan en el Cotizador, sin duplicar su historia
+ni convertirlos en otra entidad.
+
+**Pantalla.** Grilla «Productos faltantes (Telegram)» en la pantalla principal. Orden acordado: 1 búsqueda, 2 precios
+públicos de cadenas, 3 faltantes, 4 ofertas de proveedores, 5 Mis cotizaciones. Columnas: nombre/descripción,
+cantidad pedida **solo si fue declarada**, quién lo pidió, fecha/hora, **estado de reposición** (§12.6: pendiente, en
+cotización o comprado) y botón «Buscar».
+
+**Listado sin tabla nueva.** Se reutiliza `GET /api/v1/demand-items` con campos aditivos `last_raw_text`,
+`coverage_quantity`, `pending_quantity`, `is_pending` y filtro `pending_only=true`. No se crea endpoint de listado ni
+tabla de cobertura.
+
+**«Buscar».** Usa la búsqueda principal (`POST /api/v1/searches` + búsqueda de cadenas). **No cambia el estado del
+faltante.** La búsqueda principal es independiente de Telegram.
+
+**Vínculo.** `quote_line.demand_item_id` (nullable) + `coverage_relation` (clasificación congelada: `exact`,
+`other_presentation`, `combined`, `related`, `needs_review`). **Sin botón de confirmación adicional:** «Agregar a
+cotización» desde una fila de faltante ya es la acción explícita. Se vincula aunque sea otra marca o presentación; la
+clasificación y las advertencias quedan visibles; **no se afirma equivalencia farmacológica**. El vínculo solo se
+crea si la petición lleva `demand_item_id`; una búsqueda libre no vincula nada.
+
+**Fórmula de cobertura (derivada, nunca almacenada).**
+
+```
+covered(item) = SUM(l.quantity)
+  FROM quote_line l
+  JOIN quote_cart c ON c.id = l.quote_cart_id
+  JOIN quote q      ON q.id = c.quote_id
+ WHERE l.demand_item_id = item.id
+   AND l.organization_id = item.organization_id
+   AND l.status = 'active'
+   AND c.status = 'active'
+   AND q.status = 'draft'
+
+if target_quantity IS NOT NULL:
+    pending_quantity = max(target_quantity - covered, 0)
+    is_pending       = covered < target_quantity
+if target_quantity IS NULL:
+    pending_quantity = NULL
+    is_pending       = (covered = 0)
+```
+
+**Reglas de reversibilidad.**
+
+1. Buscar no cambia el estado.
+2. Agregar cantidad suficiente saca el faltante de pendientes.
+3. Una cobertura parcial deja saldo pendiente.
+4. Varios proveedores suman.
+5. Quitar una línea resta cobertura y puede devolver el faltante a pendiente.
+6. Descartar un carrito resta toda su cobertura; reincorporarlo la devuelve.
+7. Cambiar la cantidad recalcula; una cantidad menor puede devolverlo a pendiente.
+8. Si otro carrito activo cubre el faltante, sigue fuera; si ninguno lo cubre, vuelve solo.
+9. El historial original de Telegram **nunca se borra**; no se escribe en `demand_item` ni en `demand_observation`.
+10. `target_quantity` y `quantity_event` siguen siendo datos del faltante; la cobertura solo los lee.
+
+**Clasificación `relation` (aditiva a E1).** Se agrega `relation` junto a `match.level`, sin cambiar este último:
+`exact` (misma identidad comercial: ingrediente/marca + potencia + forma + contenido), `other_presentation` (misma
+identidad farmacéutica, distinto contenido/envase), `combined` (`attributes.ingredients[]` contiene el ingrediente
+buscado y al menos otro), `related` (texto/marca/línea, identidad distinta) y `needs_review` (identidad incompleta o
+ambigua). No filtra ni oculta: solo ordena y advierte. `combined` nunca se presenta como equivalente. Productos no
+farmacéuticos se clasifican por marca + línea + tamaño. `demand_item.ingredient` es una cadena NOT NULL y puede
+contener una frase de producto; no se muestra como «principio activo» ni se modifica la columna. Para combinados se
+usa `attributes.ingredients[]` (JSONB existente, sin migración); si falta, `needs_review`.
+
+**Cobertura con compras (P-8, resuelto por D-121).** La fórmula de D-120 se amplía: además de las líneas activas de
+cotizaciones `draft`, cubren las compras `current` no anuladas, **sin doble conteo**. Una línea con compra vigente
+cuenta lo comprado, no lo cotizado. Cerrar una cotización comprada ya no devuelve el faltante a pendiente. La
+reversibilidad se mantiene: anular o corregir una compra recalcula. El detalle está en D-121 y en el contrato §12.3.
+
+### D-121 — Cobertura con compras vigentes (2026-10-30)
+
+**Problema.** D-120 contaba solo líneas activas de cotizaciones `draft`. Al cerrar una cotización comprada, sus líneas
+dejaban de contar y el faltante podía reaparecer como pendiente aunque la compra existiera (P-8).
+
+**Regla.** La cobertura es derivada y suma dos fuentes, sin doble conteo:
+
+1. líneas activas de carritos activos de cotizaciones `draft` **sin compra vigente**;
+2. compras `current` no anuladas, esté la cotización `draft` o `closed`.
+
+Una línea con compra vigente cuenta **solo** lo comprado. **Corrección por D-126:** no existen campos de
+recepción; la cobertura mide el proceso administrativo, no la llegada física. **Corrección por D-127:** las dos
+fuentes no valen lo mismo al cerrar; lo cotizado cubre de forma **provisional** y nunca cierra el ciclo (§12.3).
+
+**Reversibilidad.** Quitar una línea, descartar un carrito, anular una compra o corregirla recalcula. Si el saldo
+vuelve a quedar sin compra confirmada, se muestra como pendiente de compra (`is_pending: true`); la operación no
+cierra ni reabre un ciclo por sí sola. Una compra corregida sustituye; nunca se suman original y
+corrección. Una compra sin línea cotizada (`quote_line_id = null`) no cubre ningún faltante.
+
+**Sin migración.** Todo es derivado; no se escribe en `demand_item` ni se crea tabla de cobertura. La recepción que
+proponía D-122 fue **retirada del MVP por D-126**.
+
+### D-122 — Recepción física, parciales y cierre del ciclo (2026-10-30) — **retirada del MVP por D-126**
+
+> **Estado:** el diseño se conserva como **funcionalidad futura**. Desde D-126 (2026-10-30) la recepción física y las
+> diferencias de entrega **no forman parte del MVP ni de D0**: no hay `receipt`, `receipt_line`, endpoints, permisos
+> ni cierre condicionado. Las preguntas P-9, P-10 y P-11 dejan de ser bloqueos y quedan como materia de una fase
+> futura.
+
+**Alcance.** La recepción de mercadería entra en v0.2. No es una tercera excepción a C0-10: documenta un hecho ya
+ocurrido, no ejecuta una orden ni un pago. `purchase_execution` sigue `blocked`.
+
+**Tablas.** `receipt` (entrega confirmada, inmutable) y `receipt_line` (cantidad aceptada, rechazada, diferencia y
+nota), ambas en la migración **0017** junto con las compras.
+
+**Permisos.** Rol `admin` + `StrongActor`, **solo desde la web**. Pao, Danny y Julio pueden confirmar recepciones
+completas o parciales, registrar cantidades reales y diferencias; los auxiliares y cualquier operación por Telegram
+quedan excluidos. La superadministradora no confirma en otra organización.
+
+**Reglas.**
+- Recepción parcial: se guarda lo recibido; el saldo queda pendiente; **no** se declara completo.
+- Producto equivocado o dañado: `received_quantity = 0`, `rejected_quantity > 0`, `issue` y nota; el producto pedido
+  **no** se marca recibido y no se crea una compra nueva.
+- `receipt_status` por compra (`none|partial|complete`) y `pending_receipt_quantity` son **derivados**; no se
+  almacenan ni contradicen la compra inmutable.
+- El faltante pasa a `fulfilled` solo cuando **toda** compra vigente está `complete` **y** la cobertura alcanza el
+  objetivo (o la cantidad es desconocida). Una recepción completa de una compra que no cubre el objetivo **no**
+  cierra el faltante.
+- Cerrar conserva historial, observaciones, mensajes, líneas, compras y recepciones. Un faltante cerrado no se reabre:
+  un nuevo aviso crea un nuevo ciclo.
+- Anular una compra con recepciones está **bloqueado** (`409 RECEIPTS_EXIST`) mientras P-9 no se resuelva.
+- **P-9, P-10 y P-11 quedan abiertos:** anulación/corrección con recepciones, compra que nunca llega o recepción
+  incompleta definitiva, y corrección de una recepción errónea. No se inventa su solución.
+
+### D-123 — Estado por Telegram sin duplicar necesidades (2026-10-30)
+
+- Un aviso repetido se registra como observación del **mismo** faltante `active`; no crea otra necesidad ni suma
+  cantidad.
+- La respuesta informa el estado: pendiente, en cotización, comprado (con cantidades y, si es parcial, el saldo por
+  comprar) o cerrado. Si ya hay compra, dice «ya hay una compra registrada» y **nunca** afirma que llegó.
+- **Ajuste por D-126:** con la recepción fuera del MVP, el bot no informa recepción parcial ni saldos de recepción;
+  después de la compra solo informa las cantidades compradas.
+- **Ajuste por D-127:** la distinción entre aviso repetido y necesidad nueva depende del **ciclo de reposición**
+  (mientras el faltante esté `active`), no de un plazo arbitrario ni de la recepción física. Una compra **parcial**
+  mantiene el ciclo abierto y el bot informa cuánto falta por comprar.
+- Cantidad adicional solo con `ADD`/`SET`/`CLEAR` explícito y el permiso correspondiente; no hay suma implícita
+  (AC35).
+- **Cantidad desconocida:** el bot informa que la necesidad sigue abierta; no la cierra, no inventa la cantidad ni
+  una confirmación de recepción (V-06).
+- Consulta `estado <texto>`: determinista, sin IA, de solo lectura, con candidatos ante ambigüedad. También se puede
+  ver desde «Ver lista».
+- Después de `fulfilled`, un nuevo aviso crea un nuevo faltante. La consulta no crea, no modifica y no cierra nada.
+- **Telegram no registra compras ni confirma llegadas** (D-126); el bot solo lee y sugiere.
+
+### D-124 — `admin` también informa faltantes por Telegram (2026-10-30)
+
+- Se agrega `REPORT_SHORTAGE` al rol `admin` en `app/core/permissions.py`. **No se crea un rol nuevo** ni se fusionan
+  planos.
+- Para reportar, una administradora necesita su propia cuenta de Telegram `active` e identidad vigente, igual que un
+  auxiliar. Tener rol `admin` **no** habilita el bot; tener Telegram **no** otorga roles web.
+- Pao, Danny y Julio pueden informar un faltante, y luego entrar a la web a cotizarlo y confirmar la compra
+  (la recepción quedó fuera del MVP, D-126).
+- No se agrega ninguna exclusión que impida a `admin` participar del flujo de Telegram.
+- **Este cambio de matriz no se implementa en D0**; queda registrado para la fase que habilite T1/C5-A.
+
+### D-125 — Tres tablas de búsqueda y numeración definitiva (2026-10-30)
+
+- C0 nombra `search_run` + `search_source_result`; el diseño aprobado de C4 usa **tres** tablas: `search_run`
+  (corrida y cobertura), `search_source_result` (estado por fuente) y `search_result` (resultados por producto).
+- `search_result` es una **ampliación aditiva** de C0: no se edita C0, no se cambia E1–E9 y no se implementa en D0.
+- Las tres se crean en la migración **0013**. **C4 = 0013** y **C3 = 0014** quedan ratificados; no se invierte el
+  orden.
+
+### D-126 — Recepción física fuera del alcance del MVP (2026-10-30)
+
+**Decisión.** El MVP/demo demuestra **solicitud de faltantes, búsqueda, comparación de proveedores, cotización y
+compra**. No es un sistema de inventario ni de control de recepción de mercadería. Por eso se retira del alcance
+implementable todo el control de recepción física y de diferencias de entrega.
+
+**Qué se retira.** Confirmación de recepción; recepciones completas o parciales; control de cantidades efectivamente
+entregadas; diferencias de entrega y productos equivocados; saldos pendientes de recepción; correcciones y anulaciones
+de recepciones; tablas `receipt` y `receipt_line`; endpoints, permisos, validaciones y pantallas asociados; y cierre
+de faltantes condicionado a la recepción.
+
+**Qué se mantiene (D-121).** La cobertura de un faltante considera las **líneas activas de cotización** y las
+**compras confirmadas** (`current`, no anuladas), **sin duplicar cantidades**. Una compra confirmada marca el término
+del proceso que administra el MVP y **no certifica** que los productos hayan llegado físicamente; el sistema no afirma
+ni niega la llegada.
+
+**Ciclo resultante.**
+
+1. Un usuario autorizado informa un faltante por Telegram (p. ej. 10 cajas).
+2. Pao, Danny o Julio incorporan la cantidad a una cotización.
+3. El faltante queda cubierto mientras la línea permanezca en un carrito activo.
+4. Un administrador confirma la compra.
+5. Lo comprado cubre la necesidad y la cotización puede cerrarse **sin** que el faltante reaparezca.
+6. Si el producto vuelve a faltar más adelante, cualquier usuario autorizado informa una nueva necesidad y comienza
+   otro ciclo; el cierre conserva el historial y no se reabre el aviso anterior.
+
+**Consecuencias.**
+- `receipt` y `receipt_line` salen de 0017: C5-B vuelve a **3 tablas** (`purchase`, `purchase_line`,
+  `purchase_index`) y v0.2 a **9 tablas**.
+- No hay estados ni campos de recepción; `replenishment_state` es `pending | in_quote | purchased | fulfilled |
+  cancelled`.
+- Un faltante con cantidad pedida **conocida** pasa a `fulfilled` solo cuando las **compras confirmadas** cubren el
+  objetivo; la cotización **no** cierra nada (D-127). Con cantidad desconocida no se cierra automáticamente (no se
+  inventa la cantidad).
+- Se retiran los códigos `RECEIPTS_EXIST`, `PURCHASE_NOT_RECEIVABLE`, `PURCHASE_ALREADY_RECEIVED`,
+  `RECEIPT_INVALID`, `RECEIPT_LINE_MISMATCH`, `RECEIPT_UNIT_MISMATCH` y la advertencia `OVER_RECEIPT`.
+- **P-9, P-10 y P-11 dejan de bloquear D0, C5-B y la demo**; se conservan como preguntas de una fase futura.
+- **Telegram (D-123, D-124) sigue vigente** con redacción ajustada: auxiliares autorizados y los tres
+  administradores informan faltantes y consultan estados; si ya hay compra, el bot dice «ya hay una compra
+  registrada» sin afirmar recepción; nunca crea una segunda necesidad duplicada ni aplica cantidades. Cotizar y
+  confirmar compras siguen siendo operaciones web de `admin` + `StrongActor`.
+- El diseño de recepción de **D-122** se conserva como **funcionalidad futura**, claramente separado del MVP
+  (contrato §15.1); no se promete en la interfaz.
+
+**Sin migración ni código.** D-126 es solo documental: no crea ni elimina migraciones, no toca la base y no modifica el
+mockup.
+
+### D-127 — Regla definitiva de cierre y compras parciales (2026-10-30)
+
+**Problema.** Las revisiones 4 y 5 cerraban el ciclo con la **cobertura total** (cotizado sin compra + compras
+vigentes). Eso permitía que un carrito en preparación diera por gestionada una necesidad que nunca se compró, y no
+decía qué pasa cuando se compra solo una parte de lo pedido.
+
+**Decisión.** Para este MVP, una necesidad de reposición se considera **gestionada cuando la cantidad solicitada queda
+completamente cubierta por compras confirmadas**. Nada más cierra el ciclo.
+
+**Ciclo.** 1) Danny informa por Telegram que faltan 10 cajas. 2) Pao las incorpora a una cotización. 3) Mientras están
+en el carrito la necesidad está **cubierta provisionalmente**, pero **no** cerrada. 4) Pao confirma la compra de las
+10. 5) La necesidad queda `fulfilled` y el historial conserva la compra. 6) Desde ese momento, cualquier usuario
+autorizado puede informar paracetamol otra vez y comienza una necesidad nueva. **No se requiere confirmación de
+recepción física.**
+
+**Compras parciales.** Si se pidieron 10 y se compraron 6: las 6 quedan cubiertas; las 4 restantes siguen como
+necesidad abierta **en el mismo faltante**; la solicitud original **no** se cierra; el sistema permite cotizar y
+comprar las 4 sin crear una solicitud duplicada. Las cantidades en carritos activos pueden cubrir provisionalmente,
+pero **no** provocan el cierre definitivo.
+
+**Estados (sin cambios de nombres).** `pending` (pendiente), `in_quote` (cubierto provisionalmente por cotización
+activa), `purchased` (hay compra confirmada que aún no cubre toda la cantidad pedida), `fulfilled` (cantidad pedida
+completamente cubierta por compras confirmadas; ciclo cerrado), `cancelled`. `fulfilled` **no** significa recibido
+físicamente.
+
+**Avisos repetidos.** Mientras exista una necesidad abierta del producto, el bot la reconoce e informa su estado sin
+crear otra solicitud idéntica. Después de `fulfilled`, un aviso nuevo inicia otro ciclo. La distinción depende del
+**ciclo**, no de un plazo ni de la recepción. Con cantidad desconocida no se cierra automáticamente: la necesidad
+sigue abierta y solo sale del ciclo por un `ADD`/`SET` explícito que declare la cantidad o por anulación con motivo;
+nunca se inventa una cantidad ni una confirmación de recepción (V-06).
+
+**Administradores y Telegram.** Se mantiene D-123/D-124: Pao, Danny y Julio tienen rol `admin` en la web y pueden
+informar faltantes por Telegram si su cuenta está autorizada; los permisos de cada canal siguen siendo independientes.
+
+**Dos saldos distintos.** `pending_quantity` es lo que falta **cotizar** (ninguna fuente lo cubre);
+`pending_purchase_quantity` es lo que falta **comprar** (las compras confirmadas no lo cubren). Un faltante de 10
+unidades completamente cubierto por un carrito activo queda con `pending_quantity = 0`,
+`pending_purchase_quantity = 10` y estado `in_quote`: **cubierto provisionalmente**, no una solicitud sin gestionar y
+tampoco cerrado. `pending_only=true` filtra por `pending_quantity > 0` e `is_pending` indica que el ciclo sigue
+abierto. Se reutilizan los campos derivados existentes: **sin campo, tabla ni funcionalidad nuevos**.
+
+**Consecuencias.** Se agrega el campo **derivado** `pending_purchase_quantity` (cantidad pedida menos cantidad
+comprada) a `GET /api/v1/demand-items`; `is_pending` pasa a significar «el ciclo sigue abierto». Todo se
+calcula en vivo: **sin tabla, columna, endpoint ni migración nuevos**; v0.2 sigue con **9 tablas** y C5-B/0017 con
+**3**. Precisan este criterio el contrato §12.3–§12.7, V-34, V-39 y V-40, y el roadmap (C5-B). D-121 y D-126 quedan
+intactas en lo demás; D-122 sigue fuera del MVP.
+
+### Enmienda D0 a D-114 (2026-10-30)
+
+Esta enmienda **no reemplaza** D-114: conserva X1/X2, las seis tablas originales, la inmutabilidad de compras, el
+archivo por compra y la purga diseñada. Corrige y amplía lo siguiente:
+
+| Punto | Corrección |
+|---|---|
+| **F-1** | `purchase` no puede ser «UPDATE siempre bloqueado» y recibir metadatos de archivo después. Se agrega la función restringida `purchase_mark_archive(...)`: solo escribe columnas `archive_*` y `detail_purged_at` (con `app.purchase_archive_update=on`), exige que las columnas de negocio queden byte a byte idénticas, y transiciona `none→pending→verified\|failed`. **`verified` es terminal**; `failed` puede reintentarse con una ejecución auditada que vuelve a `pending`. `DELETE` sobre `purchase` no existe |
+| **F-2** | `pg_trgm`/`unaccent` son DDL: **no** pueden quedar «sin migración». C5-C pasa a tener migración propia (**0018**), con verificación previa de disponibilidad y autorización |
+| **F-3** | Un carrito `dismissed` conservaba líneas activas y seguía bloqueando el total. Regla: **no se evalúa, no cuenta en el total y no cubre faltantes**; sus líneas se conservan y se reincorporan |
+| **F-4** | `INVALID_QUANTITY`, `QUOTE_NOT_FOUND` y `QUOTE_VERSION_CONFLICT` duplicaban o contradecían C0. Se reutilizan `INVALID_QUANTITY`, `NOT_FOUND`, `VERSION_REQUIRED` y `VERSION_CONFLICT` (con `details.current_version`). Se retiran los códigos duplicados |
+| **F-5** | Faltaban las garantías de persistencia: sin TTL, sin borrado por inactividad; sobrevive recarga, cierre del navegador, cierre de sesión, reinicio del backend y días; varias cotizaciones independientes; repetir `POST /lines` no duplica ni suma |
+| **F-6** | El roadmap decía C3 = 0012 y C4 = 0013; el código ya está en 0011 y G1 entra primero. Nueva numeración: **G1 0012, C4 0013, C3 0014, C5-A 0015, O 0016, C5-B 0017, C5-C 0018, C5-D 0019** |
+| **Tablas y columnas** | v0.2 completa **9 tablas** (6 de D-114 + `commercial_observation`, `observation_interpretation`, `web_access_request`) y **7 columnas** respecto del esquema actual: `quote_line.demand_item_id` (ya prevista en rev2), `quote_line.coverage_relation` (nueva en rev3) y 5 en `app_user`. **6 son nuevas en la revisión 3; las revisiones 4 y 5 no agregan columnas.** La revisión 5 retira `receipt` y `receipt_line` (D-126) |
+| **P-8** | Resuelto por D-121: las compras `current` no anuladas cubren, sin doble conteo; cerrar la cotización no quita cobertura |
+| **Recepción** | ~~Entra en alcance con D-122~~ **Retirada del MVP por D-126**: fuera del alcance implementable; se conserva como funcionalidad futura |
+| **`note_text`** | Se elimina como campo único. Las observaciones viven en `commercial_observation` (D-116). `quote_line` conserva `demand_item_id` (ya previsto) y gana `coverage_relation` |
+| **Compra en cotización cerrada** | Registrar una compra exige reabrir la cotización: `409 QUOTE_CLOSED`. Reabrir es explícito y auditado |
+| **Nomenclatura** | La solicitud de acceso web es `web_access_request`, distinta de `telegram_access_request` |
+
+**D-114 conserva** su texto y su fecha; esta enmienda prevalece solo en los puntos enumerados. El contrato
+`docs/contracts/cotizador-v0.2.md` pasa a **revisión 3**; la **revisión 4** agrega D-121 a D-125; la **revisión 5**
+retira la recepción del MVP (D-126) y sustituye a la revisión 4 sin reescribir D-114.
+
+### Enmienda de la revisión 4 a D-114 (2026-10-30) — **parcialmente sustituida por D-126**
+
+> Las filas **Recepción**, **Cierre del ciclo** y **Tablas** quedan sustituidas por la enmienda de la revisión 5. Lo
+> demás (P-8, Telegram, búsqueda) sigue vigente.
+
+| Punto | Corrección |
+|---|---|
+| **Recepción** | D-114 decía «recepción de mercadería» fuera de alcance. D-122 la incorpora: `receipt` + `receipt_line`, solo web, rol `admin` + `StrongActor`; documenta un hecho, no ejecuta nada. `purchase_execution` sigue `blocked` |
+| **P-8** | La cobertura ya no es solo de líneas `draft`: suma compras `current` no anuladas, sin doble conteo (D-121). La fórmula de §12.3 del contrato se reemplaza |
+| **Cierre del ciclo** | Un faltante pasa a `fulfilled` solo con cobertura suficiente y toda compra vigente recibida; no se cierra por recepción parcial ni por recepción completa de una compra que no cubre el objetivo (D-122) |
+| **Telegram** | El estado se consulta y se informa sin duplicar necesidades (D-123); `admin` puede reportar si su cuenta está autorizada (D-124) |
+| **Tablas** | 11 en total; 2 nuevas (`receipt`, `receipt_line`) en 0017. Las columnas siguen siendo 7 |
+| **Búsqueda** | Tres tablas en 0013, con `search_result` como ampliación aditiva; C4 = 0013 y C3 = 0014 ratificados (D-125) |
+
+### Enmienda de la revisión 5 a D-114 (2026-10-30, D-126 y D-127)
+
+| Punto | Corrección |
+|---|---|
+| **Recepción** | D-122 la había incorporado; **D-126 la retira del MVP**. Sin `receipt`, `receipt_line`, endpoints, permisos, validaciones ni pantallas; sin cierre condicionado a recepción. Se conserva como funcionalidad futura (§15.1 del contrato) |
+| **Cierre del ciclo** | ~~La cobertura alcanza el objetivo~~ **Precisado por D-127:** un faltante `active` con cantidad pedida **conocida** pasa a `fulfilled` solo cuando las **compras confirmadas** alcanzan el objetivo. Cubrir con cotización es provisional y no cierra; una compra parcial mantiene el ciclo abierto con el saldo; con cantidad desconocida no se cierra automáticamente |
+| **Compras parciales** | **D-127:** 10 pedidas, 6 compradas → 6 cubiertas y 4 abiertas en el **mismo** faltante, sin solicitud duplicada; se cotizan y compran hasta cerrar. Campo derivado `pending_purchase_quantity`, sin tabla ni endpoint nuevos |
+| **Compra confirmada** | Marca el término del proceso del MVP; **no certifica** la llegada física. El sistema ni la afirma ni la niega (V-33) |
+| **Telegram** | Sigue vigente D-123/D-124: un aviso repetido no duplica la necesidad y el bot informa «ya hay una compra registrada» sin afirmar recepción; `admin` informa si su cuenta está autorizada. **D-127:** la distinción aviso repetido / ciclo nuevo depende del ciclo, no de un plazo |
+| **Tablas** | **9** en total: se retiran `receipt` y `receipt_line`; C5-B/0017 vuelve a 3 tablas (`purchase`, `purchase_line`, `purchase_index`). Las columnas siguen siendo 7 |
+| **P-9/P-10/P-11** | Dejan de ser bloqueos de D0 y de la demo; quedan como preguntas futuras solo si la recepción vuelve al alcance |
+
+### Contradicciones y pendientes detectados en D0
+
+**Resueltas en esta fase:**
+
+1. **D-113 reservada y sin registrar** → registrada antes de D-114, sin duplicar el número.
+2. **Numeración C4/C3** → **ratificada**: C4 = 0013 y C3 = 0014 por orden de ejecución. No se invierte ni se
+   renumera.
+3. **`observation_interpretation` inmutable con `status` mutable** → contenido inmutable; solo campos de revisión
+   cambian por función restringida y transición sin retorno.
+4. **`purchase` inmutable con columnas de archivo** → función restringida; negocio byte a byte idéntico; sin `DELETE`
+   del encabezado.
+5. **Carrito `dismissed` bloqueando el total** → excluido de evaluación, total y cobertura.
+6. **`pg_trgm` «sin migración»** → migración propia 0018 y verificación previa.
+7. **Códigos duplicados** → se reutilizan los de C0; se retiran los duplicados.
+8. **Persistencia no escrita** → garantías explícitas en el contrato §5.7.
+9. **Conteo de tablas y columnas** → **9 tablas** totales (3 nuevas en la revisión 3; la revisión 4 proponía 2 más y
+   la revisión 5 las retira con D-126); 7 columnas respecto del esquema actual, 6 nuevas en la revisión 3.
+10. **`access_request` ambiguo** → `web_access_request`.
+11. **Roadmap desactualizado** (C2 como «solo diseño», C3/C4 con números viejos) → actualizado en `docs/ROADMAP.md`.
+12. **P-8 — cobertura y compras** → resuelto por D-121: las compras `current` no anuladas cubren sin doble conteo.
+13. **Recepción dentro o fuera de alcance** → resuelto por **D-126**: queda **fuera del MVP**; se conserva el diseño
+    de D-122 como funcionalidad futura, sin tablas ni endpoints.
+14. **Tablas de búsqueda (2 vs. 3)** → resuelto por D-125: tres tablas, `search_result` aditiva; C0 no se edita.
+15. **`admin` sin `REPORT_SHORTAGE`** → resuelto por D-124: se agrega el permiso, sin rol nuevo ni exclusión.
+16. **P-9/P-10/P-11 como bloqueos de D0** → resuelto por **D-126**: dejan de bloquear D0 y la demo; quedan como
+    preguntas futuras de recepción.
+17. **Cierre provocado por cotizar** → resuelto por **D-127**: lo cotizado cubre provisionalmente y nunca cierra; solo
+    la compra confirmada que cubre toda la cantidad pedida cierra el ciclo. Las compras parciales mantienen el ciclo
+    abierto en el mismo faltante, sin duplicar la solicitud (`pending_purchase_quantity`).
+
+**Abiertas, no bloquean D0:**
+
+1. **Alcance de la superadministradora.** Confirmar que el cruce entre organizaciones es **solo** para metadatos
+   administrativos; ampliarlo a datos operativos exige decisión nueva.
+2. **Telegram en teléfono compartido.** El control individual es por cuenta; en `shared_device` el bloqueo afecta a
+   todas las personas del teléfono. Confirmar que el control individual se limita a cuentas `personal`.
+3. **Cadenas reales.** Ninguna habilitada; falta A1/A2 para Ahumada y un conector autorizado para Cruz Verde y
+   Salcobrand. Sin eso, la demo muestra `not_configured` con motivo, no precios.
+4. **OpenAI.** Clave, modelo, presupuesto, tarifa y autorización de costo. Sin ellos, O2–O4 deshabilitados; O1
+   operativo.
+5. **Archivo externo.** Proveedor, costos, credenciales y retención; C5-D bloqueado.
+6. **`pg_trgm`/`unaccent`.** Verificar disponibilidad en el PostgreSQL de destino y autorizar su instalación.
+7. **`farmacia`.** Sigue en **0008**; el código llega a **0011**. Ninguna migración nueva se aplica sin autorización.
+8. **Documentos desactualizados.** `CLAUDE.md` y `docs/AUTH_SUPABASE.md` todavía describen C2 como no implementado y
+    no incluyen G1/D-115 a D-127; se actualizarán en una fase documental posterior, fuera de D0.
+9. **Registro de D-107.** Su fila dice «Propuesta», pero el código 0009–0011 ya implementa el perfil de importación
+    y las solicitudes de importación. Se anota como registro desactualizado, sin reescribir la decisión.
+
+**Futuras, solo si la recepción vuelve al alcance (no bloquean el MVP):**
+
+- **P-9** — anulación o corrección de una compra con recepciones.
+- **P-10** — compra que nunca llega o recepción incompleta definitiva.
+- **P-11** — corrección de una recepción errónea.
+
+El diseño completo está en D-122 (retirada del MVP por D-126) y en el contrato §15.1.

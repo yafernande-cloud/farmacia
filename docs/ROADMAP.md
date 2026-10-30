@@ -2,31 +2,101 @@
 
 El orden no reduce el alcance: la presentación final a Pao integra todos los módulos.
 
-**Orden revisado el 2026-10-29 (D-073 a D-075):** el **cotizador** es la prioridad principal y **Telegram no bloquea** su
+**Estado vigente al 2026-10-30 (fase D0).** El **cotizador** es la prioridad principal y **Telegram no bloquea** su
 desarrollo. Las fases `C*` son el camino crítico; las `H*` siguen vigentes pero dejan de ser requisito previo.
+**D0** consolida el contrato v0.2 **revisión 5** y las decisiones D-113 y D-115 a **D-127**. La revisión 5 cierra el
+ciclo de reposición **sin recepción física** (cobertura con compras confirmadas, estado por Telegram y administradores
+que informan faltantes); la recepción y las diferencias de entrega quedan fuera del MVP (D-126). **D-127** fija la
+regla definitiva de cierre: cotizar cubre de forma provisional y **no cierra**; la necesidad queda gestionada solo
+cuando las compras confirmadas cubren toda la cantidad pedida, y una compra parcial mantiene abierto el mismo ciclo con
+el saldo, sin solicitud duplicada.
+**No se implementa código, no se crean ni aplican migraciones y no se toca la base `farmacia`.**
+
+## Estado real de migraciones
+
+| Ámbito | Versión | Notas |
+|---|---|---|
+| Base `farmacia` | **0008** | 32 tablas; la 0008 se aplicó el 2026-10-29 con respaldo `pg_dump` verificado, ensayo de subida y reversión y verificación por catálogo (D-098) |
+| Código (`backend/migrations/versions`) | **0011** | 0009 perfil de importación, 0010 estado de revisión de oferta y 0011 solicitudes de importación (C2). **No aplicadas a `farmacia`** |
+| Head propuesto | **0019** | G1 0012, C4 0013, C3 0014, C5-A 0015, O 0016, C5-B 0017 (3 tablas), C5-C 0018, C5-D 0019. No creado |
+
+**No se aplica ninguna migración nueva a `farmacia` sin autorización explícita.** Las migraciones de C2 ya existen en
+el código, pero su aplicación a la base real sigue pendiente de autorización.
+
+## Fases
 
 | Fase | Contenido | Criterios | Estado |
 |---|---|---|---|
-| **C0** | Contrato integral del cotizador (E1–E9): búsqueda, ofertas, comparación, proveedores, fuentes y **criterios comerciales con anotación (sin aplicación)**. Documento: `docs/contracts/cotizador-v0.md` | C0-01 a C0-19 | **Completada — contrato aprobado y congelado** (2026-10-29, D-078 a D-093) |
-| **C1** | Modelo de datos del cotizador, **diseño cerrado** (D-076/D-094, con adenda `chain_product`): artículo neutral al tipo de producto (`trade_item`), ficha publicada por cadena, proveedor, fuente, mapping, ofertas, despacho, referencias, importación, comparaciones, criterios y búsquedas. Se reparte en tres migraciones (**0008** catálogo y ofertas, 10 tablas; **0009** comparaciones y criterios; **0010** búsquedas) y suma `catalog-load` (carga inicial técnica, no administración cotidiana; D-097) | AC16–AC20 (base), AC29–AC31 (base) | **Hecha** (2026-10-29): migración **0008 aplicada** a `farmacia` con respaldo verificado y ensayo de subida y reversión (D-098). Sin endpoints: `catalog-load` y conectores son C2 |
-| **C2** | Contrato de conector + `manual_import` (Excel) + fuente `fixture` etiquetada | AC16, AC17 | **Diseño cerrado** (2026-10-29, D-077 cerrada; D-100 a D-108); implementación **pendiente de autorización**, incluido el esquema de D-107 |
-| **C3** | Comparador determinista: elegibilidad, cantidades con mínimo/múltiplo, impuestos/descuentos/despacho, total parcial, cota inferior (LB-1…LB-8), explicabilidad y **anotación de criterios (sin alterar números)**; incluye la migración **0009**, con la que recién pasan a tener persistencia real las notas y criterios | AC18–AC20, AC31 (base) | Pendiente |
-| **C4** | API de búsqueda y cotización (síncrona, D-075) y E9 `/commercial-criteria` (alta, edición, confirmación y desactivación auditadas); incluye la migración **0010** | AC16–AC19, AC29–AC31 | Pendiente |
-| **C5** | Lovable: buscador y cotizador | AC20, AC31 (parcial) | Diseño en paralelo desde C0; **criterios y notas solo como demostración no operativa hasta C3 (0009)**; integración tras C4 |
-| **C6** | Referencias de cadenas (precio público separado de la oferta) | AC20 | **Mecanismo abierto** (§9.3) |
 | **F0** | Base: repo, FastAPI, salud, config, Alembic, pruebas | — | **Hecha** (2026-10-28) |
-| **H1-A** | Persistencia y reglas de demanda (sin Telegram): modelos, migraciones, deduplicación determinista, SET/ADD/CLEAR, auditoría/outbox, API de faltantes | AC03–AC12 (núcleo) | **Hecha** (2026-10-28) |
-| **H1-B** | Telegram + sesiones de auxiliar + **fotografías** (sin texto, con texto, con cantidad) + interpretación contextual + identidad farmacéutica/comercial. Detalle y límites en `docs/H1B_TELEGRAM.md` | AC01, AC02, AC12 (e2e simulado), AC13 (API), AC14 | **Implementada con simuladores** (2026-10-28). Falta verificar con el bot real (token) y con un proveedor de visión real |
-| **H1-B.0** | Separación simulación / prueba real (organizaciones por tipo, procedencia, guardias, aislamiento) y personal (mantenedor, disponibilidad, botones dinámicos, «Finalizar reportes»). Plan de datos: `docs/decisions/0002-…` | AC33 (aislamiento), AC01/AC02 reforzados | **Aplicada en `farmacia`**: migraciones 0004 y 0005 aplicadas (Alembic en `0005`) y script de datos 0006 ejecutado |
-| **H1-B.4** | Acceso desde **múltiples cuentas** de Telegram: solicitud desde el bot, código temporal, aprobación/bloqueo/rehabilitación desde el frontend (API), identidad por cuenta, historial conservado. Detalle en `docs/H1B_TELEGRAM.md` | AC01/AC02 reforzados (autorización y trazabilidad) | **Implementada y probada con simulador de canal + PostgreSQL real; migración 0007 aplicada el 2026-10-28 (D-062)** |
-| **H1-B.5** | Verificación con Telegram real: crear bot, `telegram-check`, `/solicitar`, aprobar desde la API con JWT, `telegram-poll`; después el alta de la identidad de Pao (D-067); conectar proveedor de visión (requiere autorización y costo). La **primera administradora web** (`create-admin`, identidad separada de Pao) ya está creada y enlazada en `real_test` (2026-10-29, D-071/D-072) | AC12, AC13 reales | Pendiente, **no bloqueante** (D-073) |
-| **H1-C** | SSE con cursor sobre `outbox_event`, reconexión; dashboard Lovable (Faltantes) | AC15 | Paralela, no bloqueante (sirve a Faltantes) |
-| **H1b** | Dashboard en Lovable (Faltantes) conectado a la API | AC03–AC04, AC15 | Sección secundaria de Lovable (D-074) |
-| **H2** | Fotos, extracción con visión, resolución de catálogo | AC13–AC14 | |
-| **H3** | Conectores reales (lectura autorizada), referencias de cadenas, comparación estricta | AC16–AC20 | Se subdivide en C1–C4; referencias de cadenas en C6 (mecanismo abierto). Requiere validar acceso por proveedor |
-| **H4** | Propuestas por excepciones, carritos persistentes, **aplicación de criterios comerciales**: recomendación explicada, reglas duras y memoria/aprendizaje desde evaluaciones; propuestas masivas | AC21–AC24, AC29–AC31, AC37, AC39 | |
-| **H5** | Aprobaciones por snapshot, ejecución bloqueada/sandbox, conciliación, recepción | AC25–AC28, AC34, AC40 | Compra real fuera de alcance del demo |
-| **H6** | Piloto: evaluación semántica, seguridad, retención, observabilidad | AC36 y restantes | |
+| **H1-A** | Persistencia y reglas de demanda (sin Telegram): modelos, migraciones, deduplicación determinista, SET/ADD/CLEAR, auditoría/outbox, API de faltantes | AC03–AC12 (núcleo) | **Hecha** (2026-10-28) y corregida (D-015 a D-024) |
+| **H1-B** | Telegram + sesiones de auxiliar + fotografías + interpretación contextual + identidad farmacéutica/comercial | AC01, AC02, AC12 (e2e simulado), AC13 (API), AC14 | **Implementada con simuladores** (2026-10-28) |
+| **H1-B.0** | Separación simulación / prueba real y personal (mantenedor, disponibilidad, botones dinámicos) | AC33, AC01/AC02 reforzados | **Aplicada en `farmacia`**: 0004 y 0005, script de datos 0006 (D-037 a D-047) |
+| **H1-B.4** | Acceso desde múltiples cuentas de Telegram: solicitud, código temporal, aprobación/bloqueo/rehabilitación | AC01/AC02 reforzados | **Implementada y probada con simulador + PostgreSQL real**; 0007 aplicada (D-062) |
+| **H1-B.5** | Verificación con Telegram real: bot, `telegram-check`, `/solicitar`, aprobar con JWT, `telegram-poll`; alta de Pao; visión real | AC12, AC13 reales | **Pendiente, no bloqueante** (D-073) |
+| **H1-C** | SSE con cursor sobre `outbox_event`, reconexión; dashboard Lovable (Faltantes) | AC15 | **Pendiente**, paralela y no bloqueante |
+| **H1b** | Dashboard Lovable (Faltantes) conectado a la API | AC03–AC04, AC15 | Sección secundaria (D-074) |
+| **C0** | Contrato integral del cotizador (E1–E9): búsqueda, ofertas, comparación, proveedores, fuentes y criterios comerciales con anotación | C0-01 a C0-19 | **Completada — aprobada y congelada** (2026-10-29, D-078 a D-093) |
+| **C1** | Modelo de datos del cotizador: `trade_item`, ficha por cadena, proveedor, fuente, mapping, ofertas, despacho, referencias, importación, comparaciones, criterios y búsquedas | AC16–AC20 (base), AC29–AC31 (base) | **Hecha** (2026-10-29): **0008 aplicada** a `farmacia` (D-098) |
+| **C2** | Conector + `manual_import` (Excel) + fuente `fixture` etiquetada + `catalog-load` + revisión de ofertas + E8 | AC16, AC17 | **Implementada en código** (0009–0011 y endpoint E8), **no aplicada a `farmacia`**. D-077/D-100 a D-108 |
+| **D0** | Consolidación documental: contrato v0.2 rev5, D-113 y D-115 a D-127, este roadmap | — | **En curso** (2026-10-30); sin código ni migraciones |
+| **G1** | Acceso web con Google: solicitudes, campanita, roles, superadministradora, vencimiento y revocación | AC09 (web), D-117/D-119 | Pendiente; migración **0012** |
+| **C4** | E1 con `relation` y `attributes.ingredients[]` (E3 conserva su forma); búsqueda de cadenas E15 (sin persistencia) | AC16–AC20, AC29–AC31 | Pendiente; migración **0013** (3 tablas de búsqueda) |
+| **C3** | Comparador determinista E5: elegibilidad, cantidades, impuestos/descuentos/despacho, total parcial, cota inferior (LB-1…LB-8), explicabilidad y anotación de criterios | AC18–AC20, AC31 | Pendiente; migración **0014** (5 tablas) |
+| **C5-A + F1** | Cotizaciones, carritos por proveedor, líneas, vínculo a faltante, grilla «Productos faltantes» y «Buscar»; observaciones O1 | AC20, AC31, AC37 | Pendiente; migración **0015** |
+| **O1–O4** | Interpretación de observaciones con OpenAI: O2 interpretación, O3 precedencia, O4 consejo explicado | AC37, AC39 | Pendiente; migración **0016** |
+| **C5-B** | Compras registradas, inmutabilidad, correcciones, anulación y `purchase_index`; **cierre del faltante por compra confirmada y compras parciales** (D-127). **La recepción física queda fuera del MVP (D-126)** | AC21–AC24, AC39 | Pendiente; migración **0017** (**3 tablas**) |
+| **C5-C** | Historial operativo: búsqueda por índice con `pg_trgm`/`unaccent` | AC21, AC31 | Pendiente; migración **0018** (extensión e índices) |
+| **C5-D** | Archivo externo y purga controlada: diseño cerrado, **ejecución bloqueada** | AC36 (retención) | Pendiente; migración **0019** solo con proveedor aprobado |
+| **C5-E** | Enganche de navegación: Mis cotizaciones, Historial, Proveedores (E6) | AC20 | Pendiente; sin migración |
+| **C6a** | Cadenas reales: solo con autorización A1/A2 por cadena | AC20 | Pendiente; sin migración |
+| **T1** | Pantalla «Configuración de Telegram»: control individual por cuenta | AC01/AC02 | Pendiente; sin migración (reusa API de H1-B.4) |
+| **C6** | Referencias de cadenas (precio público separado de la oferta) | AC20 | **Mecanismo decidido en D-113/D-115; ninguna cadena habilitada** |
+| **H2** | Fotos, extracción con visión, resolución de catálogo | AC13–AC14 | Pendiente |
+| **H3** | Conectores reales (lectura autorizada), referencias de cadenas, comparación estricta | AC16–AC20 | Se subdivide en C1–C4; requiere validar acceso por proveedor |
+| **H4** | Propuestas por excepciones, carritos persistentes, aplicación de criterios comerciales, recomendación explicada y memoria | AC21–AC24, AC29–AC31, AC37, AC39 | Pendiente |
+| **H5** | Aprobaciones por snapshot, ejecución bloqueada/sandbox, conciliación; **recepción física** como funcionalidad futura | AC25–AC28, AC34, AC40 | Compra real fuera de alcance del demo; la recepción no está en el MVP (D-126) |
+| **H6** | Piloto: evaluación semántica, seguridad, retención, observabilidad | AC36 y restantes | Pendiente |
+
+## Reordenamiento D0 — bloques aprobados (2026-10-30)
+
+**Hecho:** contrato `docs/contracts/cotizador-v0.2.md` **revisión 5**; decisiones **D-113** y **D-115 a D-127**; este
+roadmap. **No se modificó código, modelo, base de datos, migraciones, OpenAPI ni el mockup aprobado.**
+
+**Orden de ejecución acordado:**
+
+| # | Bloque | Contenido | Depende de | Migración |
+|---|---|---|---|---|
+| 1 | **D0** | Contrato v0.2 rev5, decisiones y roadmap | C0/C1/C2 | — |
+| 2 | **G1** | Google, solicitudes, campanita, superadministradora, vencimiento y revocación web | D0 | **0012** |
+| 3 | **C4** | E1 con `relation`, `attributes.ingredients[]`, cualquier producto (E3 conserva su forma); E15 de cadenas | G1 | **0013** |
+| 4 | **C3** | E5: comparación, elegibilidad, totales, cotas y criterios | C4 | **0014** |
+| 5 | **C5-A + F1** | Cotizaciones, carritos, líneas, vínculo a faltante, grilla, «Buscar», observaciones O1 | C3 | **0015** |
+| 6 | **O1–O4** | Interpretación, precedencia y consejo explicado con OpenAI | C5-A | **0016** |
+| 7 | **C5-B** | Compras registradas, correcciones, anulación e índice de historial | C5-A | **0017** |
+| 8 | **C5-C** | Búsqueda del historial con `pg_trgm`/`unaccent` | C5-B | **0018** |
+| 9 | **C5-D** | Archivo externo y purga: diseño cerrado, ejecución bloqueada | C5-B, proveedor aprobado | **0019** |
+| 10 | **C6a** | Cadenas reales | A1/A2 por cadena | — |
+| 11 | **T1** | Configuración de Telegram por cuenta | H1-B.4 | — |
+
+**C5-E** (enganche de navegación) puede ir en paralelo con C5-A/C5-B; **C6a** y **T1** no crean migraciones.
+
+**Numeración ratificada (D-125).** D-112/D-114 proponían C3 = 0012 y C4 = 0013. Con G1 por delante y el código ya en
+0011, la numeración lineal del orden acordado es **C4 = 0013** y **C3 = 0014**, confirmada el 2026-10-30. Conservar
+C3 = 0013 exigiría **ejecutar C3 antes que C4**, lo que contradice el orden acordado; queda descartado. No se
+renumera en silencio: la numeración definitiva es la de esta tabla.
+
+**Tablas de búsqueda (D-125).** C0 describe **dos** tablas (`search_run`, `search_source_result`) y el diseño de C4
+propone **tres** (`search_result` como ampliación **aditiva** de C0, no un reemplazo). Las tres pertenecen a la
+migración 0013; el detalle está en el contrato §16.
+
+**Dependencias duras.**
+
+- G1 antes de C4: las pantallas nuevas necesitan acceso web real.
+- C5-A no puede empezar sin C3: la evaluación por carrito es E5; no se implementa una segunda lógica de dinero.
+- O1–O4 después de C5-A: sin observaciones no hay nada que interpretar.
+- C5-B después de C5-A: las compras referencian líneas cotizadas.
+- C5-C y C5-D al final: solo tienen sentido con compras y archivo.
+- C6a depende de autorización por cadena; T1 de la API de Telegram existente.
 
 ## Reordenamiento 2026-10-29 — cotizador primero
 
@@ -34,8 +104,9 @@ desarrollo. Las fases `C*` son el camino crítico; las `H*` siguen vigentes pero
 principal) y D-075 (búsqueda síncrona sobre catálogo local). **No se modificó código, base de datos, migraciones ni
 configuración.**
 
-**Qué cambia:** el camino crítico pasa a ser C0 → C1 → C2 → C3 → C4 → C5. **Qué no cambia:** alcance total, invariantes
-del HLD §2, compra real bloqueada y el comportamiento existente de Telegram y Supabase Auth (el cotizador es aditivo).
+**Qué cambia:** el camino crítico pasa a ser C0 → C1 → C2 → D0 → G1 → C4 → C3 → C5-A → O1–O4 → C5-B → C5-C → C5-D.
+**Qué no cambia:** alcance total, invariantes del HLD §2, compra real bloqueada y el comportamiento existente de
+Telegram y Supabase Auth (el cotizador es aditivo).
 
 **Rol del cotizador:** es una herramienta **interna** usada solo por los jefes de la farmacia. Todas sus operaciones
 exigen rol **`admin`** y `StrongActor`; no se crea un rol `purchasing` ni permisos nuevos, y los roles de los demás
@@ -76,54 +147,104 @@ final llegó el 2026-10-29 (D-093, sección siguiente).
 migración 0008 no se ejecuta y C1 no se inicia sin autorización nueva.**
 
 Qué implica el congelamiento:
+
 - Lovable y el backend implementan el contrato **tal cual**; los tres planos (cálculo determinista, criterios sin
   interferencia y recomendación futura en H4) no se mezclan.
 - Un cambio de alcance, esquema o semántica posterior exige una **decisión nueva** (D-094 en adelante) y una versión
   nueva del contrato; no se edita en silencio.
-- Quedaron abiertas sin bloquear C1–C4: **D-076** (esquema del catálogo), **cerrada el 2026-10-29** con el diseño de
-  C1 (sección siguiente), y **D-077** (contrato y formato de la planilla Excel), **cerrada el 2026-10-29** con el
-  diseño de C2 (D-100 a D-108).
 - El siguiente paso es **C1** (modelo de datos), que requiere **autorización explícita de migración**.
 
 ## Diseño de C1 — 2026-10-29 (D-076, D-094, adenda `chain_product`)
 
-**Hecho:** cerrado el diseño del modelo de datos del cotizador y registradas D-076 (esquema, con la adenda del mismo día
-que incorpora la ficha publicada por cadena), D-094 (catálogo neutral al tipo de producto, alternativa A), D-095 y D-096
-(diferidas) y D-097 (administración cotidiana del catálogo, pendiente). **No se escribió código, modelo, endpoint,
-migración ni cambio de base de datos; la 0008 no se ejecutó y el contrato C0 no se modificó.**
+**Hecho:** cerrado el diseño del modelo de datos del cotizador y registradas D-076 (esquema, con la adenda del mismo
+día que incorpora la ficha publicada por cadena), D-094 (catálogo neutral al tipo de producto, alternativa A), D-095 y
+D-096 (diferidas) y D-097 (administración cotidiana del catálogo, pendiente). **No se escribió código, modelo,
+endpoint, migración ni cambio de base de datos; la 0008 no se ejecutó y el contrato C0 no se modificó.**
 
 Qué queda definido:
+
 - **Artículo neutro:** `trade_item` admite medicamentos y productos no farmacéuticos; `product_kind` es interno,
   nullable y nunca inferido; ningún atributo farmacéutico es obligatorio. No se expone en E1/E3 (D-094).
 - **Ficha publicada por cadena:** `chain_product` guarda lo que publica cada cadena (nombre tal como se escribe,
-  descripción, laboratorio, presentación, `image_url`/`image_hash`, URL y fecha de consulta) como snapshot inmutable por
-  `content_hash`; `reference_price.chain_product_id` es obligatorio y el vínculo con `trade_item` es explícito o
+  descripción, laboratorio, presentación, `image_url`/`image_hash`, URL y fecha de consulta) como snapshot inmutable
+  por `content_hash`; `reference_price.chain_product_id` es obligatorio y el vínculo con `trade_item` es explícito o
   confirmado, nunca inferido por principio activo y dosis. E1/E3 no exponen esos campos.
-- **Tres migraciones por fase:** 0008 catálogo y ofertas (**10** tablas) → C2; 0009 comparaciones y criterios (5) → C3;
-  0010 búsquedas (3) → C4. Cada tabla nace cuando su fase la consume.
+- **Tres migraciones por fase:** 0008 catálogo y ofertas (**10** tablas) → C1; 0009 comparaciones y criterios (5) →
+  C3; 0010 búsquedas (3) → C4. Cada tabla nace cuando su fase la consume. *(Numeración histórica de este diseño: el
+  código real usa 0009–0011 para C2 y D0 renumera C4 = 0013 y C3 = 0014, §«Reordenamiento D0».)*
 - **Integridad:** FK compuestas por organización con claves auxiliares (`source`, `chain_product`, `comparison_line`),
-  snapshots inmutables por trigger, `enforce_data_origin` en las tablas con datos externos, exclusividad nota ↔ criterio
-  derivado y `complete ⇔ total` en la base (AC19).
+  snapshots inmutables por trigger, `enforce_data_origin` en las tablas con datos externos, exclusividad nota ↔
+  criterio derivado y `complete ⇔ total` en la base (AC19).
 - **Carga inicial:** `catalog-load` (CLI, idempotente, auditado, `--dry-run`), no un endpoint.
 
 Tres límites explícitos:
-1. **Notas y criterios no tienen persistencia real hasta la 0009.** El prototipo de Lovable puede mostrarlos como
-   demostración, pero **no** deben presentarse como funcionalidad operativa; todo dato así se etiqueta `fixture` o
-   `simulated` (HLD §22).
-2. **`catalog-load` no es la administración del catálogo.** El alta y edición diaria queda como **D-097 pendiente**, sin
-   endpoint nuevo y sin cambiar C0.
-3. **La fotografía de una cadena es una referencia, no un archivo propio.** `image_url` e `image_hash` permiten señalar la
-   imagen y detectar cambios, pero no garantizan que siga disponible; el almacenamiento propio queda pendiente para C6,
-   con decisión aparte.
+
+1. **Notas y criterios no tienen persistencia real hasta la migración de C3.** El prototipo de Lovable puede mostrarlos
+   como demostración, pero **no** deben presentarse como funcionalidad operativa; todo dato así se etiqueta `fixture`
+   o `simulated` (HLD §22).
+2. **`catalog-load` no es la administración del catálogo.** El alta y edición diaria queda como **D-097 pendiente**,
+   sin endpoint nuevo y sin cambiar C0.
+3. **La fotografía de una cadena es una referencia, no un archivo propio.** `image_url` e `image_hash` permiten
+   señalar la imagen y detectar cambios, pero no garantizan que siga disponible; el almacenamiento propio queda
+   pendiente para C6, con decisión aparte.
+
+## C2 — implementación en código (2026-10-29/30)
+
+**Hecho:** C2 está implementada en código: perfiles de importación (0009), estado de revisión de oferta (0010),
+solicitudes de importación (0011), `catalog-load`, conector `manual_import` y endpoint E8. **Las migraciones
+0009–0011 existen, pero no se aplicaron a `farmacia`.** La base real sigue en 0008.
+
+**Qué no cambió:** C0, el esquema aplicado a `farmacia`, los roles y el frontend. **Pendiente:** autorizar la
+aplicación de 0009–0011 a `farmacia`; hasta entonces C2 no se declara operativa en la base real.
+
+## C1 — aplicación de la migración 0008 (2026-10-29, D-098)
+
+**Hecho:** la migración **0008** (catálogo comercial, fichas de cadena, precios públicos y ofertas de proveedores,
+**10 tablas**) está **aplicada a `farmacia`**. La fase C1 queda cerrada: el esquema del cotizador existe, sin
+endpoints, sin `catalog-load` y sin conectores (eso es C2).
+
+Procedimiento ejecutado, cada paso con autorización explícita del usuario:
+
+1. **Respaldo (A1).** `pg_dump -Fc` de `farmacia` en 0007, guardado en `.backups/` y en `~/respaldos-farmacia/`
+   (fuera del repo), con SHA-256 `b176e73d…52bdc0`. Restaurado en una base desechable y comparado: misma versión,
+   22 tablas, 219 filas y huella de contenido idéntica por tabla.
+2. **Ensayo de subida (A2).** Copia de la base anterior → `farmacia_rehearsal_0008`; `upgrade 0008` → 32 tablas;
+   las 22 tablas originales conservaron sus 219 registros y su comportamiento; 14 comprobaciones de invariantes
+   aprobadas; inventario de 948 objetos idéntico al de una instalación desde cero.
+3. **Ensayo de reversión (A2-bis).** `downgrade 0007` → 22 tablas, 219 registros y 559 objetos idénticos al 0007
+   prístino, sin residuos; `upgrade 0008` de nuevo → 948 objetos idénticos y los mismos invariantes operativos.
+4. **Aplicación (A3).** `alembic upgrade 0008` sobre `farmacia` con guarda de destino, API y bot detenidos.
+   Verificación por catálogo: **0008**, **32 tablas**, 10 tablas nuevas vacías, **219 registros intactos**, 9
+   funciones, 30 triggers, 306 restricciones, 120 índices, y **ningún objeto previo alterado** (559/559 idénticos).
+5. **Comprobación funcional de la API (en proceso, solo GET).** `TestClient` de Starlette dentro del mismo
+   proceso —sin puerto, sin servidor y sin llamadas externas— sobre `farmacia`: **27/27 casos** con el estado
+   esperado. Salud y `ready` en 200; identidad por cabecera con 401 sin actor y con actor inexistente; listas,
+   catálogo, fotos, canal, personal y cuentas en 200 para la organización `simulation`; 403 `FORBIDDEN` cuando
+   falta el permiso (auxiliar en catálogo y observaciones); 404 y 400 con el contrato de error; y **403
+   `STRONG_AUTH_REQUIRED`** para `demo_header` sobre la organización `real_test` (D-071/D-072). Las 10 tablas
+   nuevas no se exponen: ninguna ruta del cotizador en el contrato. Instantánea de las 32 tablas (filas + MD5 por
+   tabla) **idéntica** antes y después: la comprobación no escribió nada.
+
+**Pruebas:** 365 pruebas automatizadas en verde sobre una base de pruebas dedicada en 0008, incluidas las 13 de
+`test_migration_0008.py` y `test_modelos_y_migracion_estan_sincronizados`.
+
+**Riesgos:** los invariantes nuevos exigen `data_origin` coherente con la organización en la primera carga
+(`real_test` solo admite `captured`/`ai_derived`); la 0008 no es idempotente; `alembic` no imprime nada en
+`upgrade`/`downgrade`, así que el éxito se verifica siempre por catálogo. El respaldo de A1 y las bases de ensayo
+se conservan hasta que el usuario autorice su eliminación. **Pendiente de seguridad antes del despliegue (D-099):**
+`AUTH_MODE=demo_header` permite hoy **leer** datos reales con una persona de `real_test` (solo bloquea la
+administración con `STRONG_AUTH_REQUIRED`); la publicación de un entorno con `APP_ENV=local`/`demo` exige antes
+restringir el modo demo a `simulation` o retirarlo. No se implementa en C1.
 
 ## Trabajo paralelo
 
 | Pista | Contenido | Depende de |
 |---|---|---|
-| **A · Backend cotizador** | C0 → C1 → C2 → C3 → C4 | C1 **cerrado** (0008 aplicada) y C2 con **diseño cerrado** (D-077/D-100 a D-108, 2026-10-29); falta autorizar el esquema de C2 (D-107) para implementar |
-| **B · Diseño Lovable** | Buscador y cotizador contra el contrato v0, con datos `fixture` etiquetados | C0 **cerrada** (contrato congelado el 2026-10-29): puede comenzar |
-| **C · Telegram** | H1-B.5 con el bot real (lo crea el usuario) | Token del bot |
+| **A · Backend cotizador** | D0 → G1 → C4 → C3 → C5-A → O1–O4 → C5-B → C5-C → C5-D; después C5-E | C1 **cerrado** (0008 aplicada); C2 implementado en código; D0 **en curso**; G1 requiere autorización de migración |
+| **B · Diseño Lovable** | Mockup aprobado, sin modificar; buscador y cotizador contra el contrato v0.2 rev5, con datos `fixture` etiquetados | C0 **cerrada**; D0 **en curso**; no consume endpoints que aún no existen |
+| **C · Telegram** | H1-B.5 con el bot real (lo crea el usuario); T1 (pantalla de control individual) | Token del bot; API de H1-B.4 ya existente |
 | **D · Operación** | Contrato generado desde FastAPI, `supabase_jwt` en demo, URL HTTPS + CORS, CI | Autorización de configuración y despliegue |
+| **E · Documentación** | Actualizar `CLAUDE.md` y `docs/AUTH_SUPABASE.md` (C2 implementado, G1, D-113/D-115 a D-127) | Posterior a D0, con autorización |
 
 ### Regla de integración real
 
@@ -147,7 +268,7 @@ Se cerraron por **revisión del documento**, no por pruebas. El contrato es `doc
 | C0-07 | Parcial sin `total` ni opción de ganar; `lowest_verified_total` acotado (`is_global_claim=false`) con cota inferior nullable (LB-1…LB-8) |
 | C0-08 | Estados `ok/stale/failed/not_configured`; una caída nunca es «sin ofertas» |
 | C0-09 | Seguridad declarada: Bearer, organización desde el `sub`, 404 entre organizaciones, rol `admin` + `StrongActor` |
-| C0-10 | Ninguna operación crea carrito, propuesta, aprobación ni ejecución |
+| C0-10 | Ninguna operación crea carrito, propuesta, aprobación ni ejecución (X1/X2 de D-114 son las únicas excepciones) |
 | C0-11 | Sección «fuera de v0» explícita |
 | C0-12 | Decisiones D-078 a D-093 registradas; D-076 y D-077 diferidas |
 | C0-13 | Revisión y aprobación final del usuario; solo entonces se congela para Lovable — **cumplido el 2026-10-29** (D-093) |
@@ -163,7 +284,7 @@ el rol con un chequeo de rol —sin crear permisos nuevos— y `StrongActor` con
 cabecera demo fuera de `simulation`; **no** es MFA). Leer precios, importar Excel, administrar proveedores o fuentes y
 registrar criterios no crea permisos nuevos: es el mismo rol administrativo existente.
 
-## Decisiones abiertas (no bloquean C1–C4)
+## Decisiones abiertas
 
 - ~~**D-076**~~ **cerrada el 2026-10-29** (esquema del catálogo, ver «Diseño de C1»).
 - ~~**D-077**~~ **cerrada el 2026-10-29**: contrato de entrada del catálogo propio y de las planillas de proveedor,
@@ -172,13 +293,83 @@ registrar criterios no crea permisos nuevos: es el mismo rol administrativo exis
   la interfaz). `catalog-load` es solo carga inicial; no se agrega endpoint ni se modifica C0 hasta decidirlo.
 - **D-095 (diferida):** productos no farmacéuticos en el módulo de faltantes (`demand_item.ingredient` es `NOT NULL`).
 - **D-096 (diferida):** unificación de `commercial_reference` y `trade_item`.
-- Mecanismo de extracción de precios públicos de cadenas (API, archivo, captura o navegador; sin eludir CAPTCHA/MFA).
-- **Almacenamiento propio de las imágenes y fichas publicadas por las cadenas (C6)**: hoy solo se conservan `image_url`,
-  `image_hash` y la ficha, sin garantía de disponibilidad futura ni condiciones de uso resueltas.
+- **D-107 (registro desactualizado):** la fila del registro dice «Propuesta», pero el código **0009–0011** ya implementa
+  el perfil de importación y las solicitudes de importación. Actualizar su estado en la fase documental posterior; no
+  se reescribe en D0.
+- **D-108 (pendiente):** puntos del diseño que tocarían C0 (`dry_run` en la API, códigos de archivo, fuente que no sea
+  `supplier`, detalle estructurado de filas rechazadas). No bloquean la implementación.
+- ~~**P-8 — cobertura y compras**~~ **resuelta el 2026-10-30 (D-121):** las compras `current` no anuladas cubren,
+  sin doble conteo con las líneas activas de cotizaciones `draft`, y cerrar una cotización no devuelve el faltante a
+  pendiente. **D-127** añade que esa cobertura por cotización es provisional y que el ciclo solo se cierra con compra
+  confirmada que cubra la cantidad pedida.
+- ~~**Numeración C4/C3**~~ **ratificada el 2026-10-30 (D-125):** C4 = **0013** y C3 = **0014**.
+- ~~**P-9, P-10 y P-11 — recepción**~~ **no bloquean D0 ni la demo desde el 2026-10-30 (D-126):** la recepción
+  física está fuera del MVP. Se conservan como preguntas **futuras**, solo si la recepción vuelve al alcance:
+  anular/corregir una compra con recepciones, compra que nunca llega o parcial definitiva, y corrección de una
+  recepción errónea. El diseño está en D-122 (retirada) y en el contrato §15.1.
+- **Superadministradora:** confirmar que el cruce entre organizaciones es **solo** para metadatos administrativos;
+  ampliarlo a datos operativos exige decisión nueva.
+- **Telegram `shared_device`:** el control individual es por cuenta; en un teléfono compartido el bloqueo afecta a
+  todas las personas. Confirmar que el control individual se limita a cuentas `personal`.
+- **Cadenas reales:** ninguna habilitada. Falta A1/A2 para Farmacias Ahumada y un conector autorizado para Cruz Verde y
+  Salcobrand. Sin eso, la demo muestra `not_configured` con motivo, no precios.
+- **OpenAI:** clave, modelo, presupuesto mensual, tarifa y autorización de costo. Sin ellos, O2–O4 quedan
+  deshabilitados; O1 sigue operativo.
+- **Archivo externo:** proveedor, costos, credenciales y política de retención. Sin ellos, C5-D sigue bloqueado.
+- **`pg_trgm`/`unaccent`:** verificar disponibilidad en el PostgreSQL de destino y autorizar su instalación antes de
+  C5-C.
+- **D-099 (pendiente):** restringir `AUTH_MODE=demo_header` a `simulation` o retirarlo antes de publicar un entorno
+  demo/local.
+- **Almacenamiento propio de las imágenes y fichas publicadas por las cadenas (C6):** hoy solo se conservan
+  `image_url`, `image_hash` y la ficha, sin garantía de disponibilidad futura ni condiciones de uso resueltas.
 - Acceso a portales privados de proveedores.
 - Cupos de crédito y condiciones comerciales (sin modelo de datos; requisito exploratorio).
 - Despliegue definitivo y escalado.
-- Proveedor de IA/visión (HLD §4.2: no hay modelo acordado).
+- Proveedor de IA/visión (HLD §4.2: no hay modelo acordado). OpenAI se usa solo para observaciones, no para visión.
+
+## Revisión 5 del contrato — 2026-10-30 (D-121 a D-127)
+
+**Hecho:** `docs/contracts/cotizador-v0.2.md` pasa a **revisión 5** y registra D-121 a D-127. Se documenta el ciclo
+completo de reposición —aviso del faltante, cobertura, compra y cierre— **sin recepción física**. **No se modificó
+código, modelo, base de datos, migraciones ni el mockup.**
+
+- **D-121 — cobertura con compras.** La cobertura de un faltante considera las compras `current` no anuladas además
+  de las líneas activas de cotizaciones `draft`, sin doble conteo. Anular o corregir una compra recalcula; cerrar
+  una cotización comprada **no** devuelve el faltante a pendiente. Resuelve P-8 sin migración.
+- **D-122 — recepción física (retirada del MVP por D-126).** El diseño (tablas `receipt`/`receipt_line`, parciales,
+  diferencias, cierre condicionado) se conserva como **funcionalidad futura**, separado del MVP; no crea tablas,
+  endpoints, permisos ni pantallas.
+- **D-123 — estado por Telegram.** Un usuario autorizado consulta el estado; informar de nuevo un faltante ya
+  comprado no crea una segunda necesidad: el bot responde que **hay una compra registrada**, sin afirmar que el
+  producto llegó. Cantidad adicional solo por `SET/ADD/CLEAR` explícitos (AC35). Sin IA: determinista y de solo
+  lectura.
+- **D-124 — administradores informan faltantes.** `admin` obtiene `REPORT_SHORTAGE` en la matriz de permisos y puede
+  informar por Telegram si su cuenta está `active`; no se crea un rol nuevo ni se excluye a nadie. Permisos web y
+  de Telegram son independientes. **El cambio de matriz no se implementa en D0.**
+- **D-125 — numeración y búsqueda.** C4 = **0013** y C3 = **0014** ratificados; las **tres** tablas de búsqueda de
+  C4 (`search_run`, `search_source_result`, `search_result`) quedan explicadas como ampliación aditiva de C0.
+- **D-126 — recepción fuera del MVP.** Se retira del alcance implementable todo el control de recepción física y
+  diferencias de entrega: sin `receipt`/`receipt_line`, cantidades entregadas, parciales, saldos pendientes de
+  recepción, correcciones/anulaciones de recepción, endpoints, permisos, validaciones ni pantallas, y sin cierre
+  condicionado a recepción. C5-B vuelve a **3 tablas** y v0.2 a **9 tablas**. Una compra confirmada marca el término
+  del proceso que administra el MVP; **no certifica** la llegada física.
+- **D-127 — cierre solo por compra confirmada.** La necesidad se considera gestionada cuando la cantidad solicitada
+  queda **completamente cubierta por compras confirmadas**; `fulfilled` no significa recibido. Cotizar cubre de forma
+  **provisional** (mientras la línea esté en un carrito activo) y **nunca** cierra. Compra parcial: 10 pedidas, 6
+  compradas → 6 cubiertas y 4 abiertas **en el mismo faltante**, sin solicitud duplicada, hasta completar o anular.
+  `is_pending` significa «el ciclo sigue abierto» y se distinguen dos saldos: `pending_quantity` (falta **cotizar**) y
+  el derivado `pending_purchase_quantity` (falta **comprar**); un faltante cubierto por un carrito se ve `in_quote`, no
+  «sin gestionar». La distinción
+  aviso repetido / ciclo nuevo depende del **ciclo**, no de un plazo ni de la recepción. Cantidad desconocida: no se
+  cierra automáticamente; solo sale del ciclo por `ADD`/`SET` explícito o anulación con motivo.
+
+**Cierre del ciclo (D-127).** Un `demand_item` `active` con cantidad pedida **conocida** pasa a `fulfilled` solo cuando
+las **compras confirmadas** alcanzan el objetivo. Con cantidad desconocida no se cierra automáticamente: la cantidad no
+se inventa. Cerrar no borra nada; si el faltante vuelve, se crea una solicitud nueva y se conserva el historial.
+
+**Pendientes reales antes de aprobar D0:** P-9/P-10/P-11 (recepción) **ya no bloquean D0 ni la demo**; quedan como
+preguntas futuras solo si la recepción vuelve al alcance. Los bloqueos externos siguen siendo los mismos (cadenas,
+OpenAI, archivo, `pg_trgm`, `farmacia`/0011 y documentos desactualizados).
 
 ## H1-B.0 — separación de datos y personal (2026-10-28)
 
@@ -272,42 +463,3 @@ perezosa, `/api/v1/health` (liveness) y `/health/ready` (503 honesto si falta/ca
 5. **Pruebas:** `backend/tests` (6 pasan; 1 contra Postgres real se omite sin `TEST_DATABASE_URL`).
 6. **Aceptación:** app arranca, salud responde, pruebas pasan. 7. **Riesgos:** PostgreSQL no verificado en vivo
 (Docker no estaba corriendo); Alembic no probado contra una BD. 8. **Continuar:** ver README y D-002/D-005.
-
-## C1 — aplicación de la migración 0008 (2026-10-29, D-098)
-
-**Hecho:** la migración **0008** (catálogo comercial, fichas de cadena, precios públicos y ofertas de proveedores,
-**10 tablas**) está **aplicada a `farmacia`**. La fase C1 queda cerrada: el esquema del cotizador existe, sin
-endpoints, sin `catalog-load` y sin conectores (eso es C2).
-
-Procedimiento ejecutado, cada paso con autorización explícita del usuario:
-
-1. **Respaldo (A1).** `pg_dump -Fc` de `farmacia` en 0007, guardado en `.backups/` y en `~/respaldos-farmacia/`
-   (fuera del repo), con SHA-256 `b176e73d…52bdc0`. Restaurado en una base desechable y comparado: misma versión,
-   22 tablas, 219 filas y huella de contenido idéntica por tabla.
-2. **Ensayo de subida (A2).** Copia de la base anterior → `farmacia_rehearsal_0008`; `upgrade 0008` → 32 tablas;
-   las 22 tablas originales conservaron sus 219 registros y su comportamiento; 14 comprobaciones de invariantes
-   aprobadas; inventario de 948 objetos idéntico al de una instalación desde cero.
-3. **Ensayo de reversión (A2-bis).** `downgrade 0007` → 22 tablas, 219 registros y 559 objetos idénticos al 0007
-   prístino, sin residuos; `upgrade 0008` de nuevo → 948 objetos idénticos y los mismos invariantes operativos.
-4. **Aplicación (A3).** `alembic upgrade 0008` sobre `farmacia` con guarda de destino, API y bot detenidos.
-   Verificación por catálogo: **0008**, **32 tablas**, 10 tablas nuevas vacías, **219 registros intactos**, 9
-   funciones, 30 triggers, 306 restricciones, 120 índices, y **ningún objeto previo alterado** (559/559 idénticos).
-5. **Comprobación funcional de la API (en proceso, solo GET).** `TestClient` de Starlette dentro del mismo
-   proceso —sin puerto, sin servidor y sin llamadas externas— sobre `farmacia`: **27/27 casos** con el estado
-   esperado. Salud y `ready` en 200; identidad por cabecera con 401 sin actor y con actor inexistente; listas,
-   catálogo, fotos, canal, personal y cuentas en 200 para la organización `simulation`; 403 `FORBIDDEN` cuando
-   falta el permiso (auxiliar en catálogo y observaciones); 404 y 400 con el contrato de error; y **403
-   `STRONG_AUTH_REQUIRED`** para `demo_header` sobre la organización `real_test` (D-071/D-072). Las 10 tablas
-   nuevas no se exponen: ninguna ruta del cotizador en el contrato. Instantánea de las 32 tablas (filas + MD5 por
-   tabla) **idéntica** antes y después: la comprobación no escribió nada.
-
-**Pruebas:** 365 pruebas automatizadas en verde sobre una base de pruebas dedicada en 0008, incluidas las 13 de
-`test_migration_0008.py` y `test_modelos_y_migracion_estan_sincronizados`.
-
-**Riesgos:** los invariantes nuevos exigen `data_origin` coherente con la organización en la primera carga
-(`real_test` solo admite `captured`/`ai_derived`); la 0008 no es idempotente; `alembic` no imprime nada en
-`upgrade`/`downgrade`, así que el éxito se verifica siempre por catálogo. El respaldo de A1 y las bases de ensayo
-se conservan hasta que el usuario autorice su eliminación. **Pendiente de seguridad antes del despliegue (D-099):**
-`AUTH_MODE=demo_header` permite hoy **leer** datos reales con una persona de `real_test` (solo bloquea la
-administración con `STRONG_AUTH_REQUIRED`); la publicación de un entorno con `APP_ENV=local`/`demo` exige antes
-restringir el modo demo a `simulation` o retirarlo. No se implementa en C1.
