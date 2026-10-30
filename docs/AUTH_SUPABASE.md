@@ -1,6 +1,7 @@
 # Autenticación web con Supabase Auth
 
-Estado (2026-10-29): **validador JWT, enlace de identidad y comando de bootstrap implementados y probados**. El
+Estado (2026-10-30, tras el cierre de D0, commit `38adb6b`): **validador JWT, enlace de identidad y comando de
+bootstrap implementados y probados**. El
 proyecto Supabase `faltantes-farmacia` existe (creado por el usuario, con Google OAuth en modo de prueba) y su JWKS
 público se verificó compatible (clave ES256/P-256). El frontend no está construido. En desarrollo local sigue
 rigiendo `AUTH_MODE=demo_header`, restringido a la organización de simulación para las operaciones administrativas.
@@ -12,10 +13,21 @@ organización `real_test`; sin token y con token inválido, **401**. **Pao sigue
 `real_test`, `simulation` y `legacy_mixed` (archivo), todas con `auth_subject = NULL`; solo se enlazará la de
 `real_test` y con su propia identidad (D-067).
 
+**Actualización de D0 (contrato del cotizador v0.2, revisión 5).** El acceso web con Google es un **plano propio**
+frente a Telegram y a la superadministración (D-117, D-119, contrato §1.5), pero **G1 no está implementado**: no
+existen la tabla `web_access_request`, las columnas `app_user.email`, `is_superadmin`, `web_access_expires_at`,
+`web_access_granted_by` y `web_access_granted_at`, ni los endpoints de solicitudes con campanita; su migración es
+**0012** y no está aplicada a `farmacia`. Lo que figura en «Qué está implementado» es lo único que corre hoy.
+Tampoco existe todavía ningún endpoint del cotizador: cotizar y registrar compras exigirán `admin` + `StrongActor`
+solo cuando se implementen E10/E11.
+
 Decisiones relacionadas: D-064 (una identidad por persona), D-065 (enlace administrativo, nunca automático),
 D-066 (sin recuperación ni registro público), D-067 (Pao en `real_test`), D-068 (firma asimétrica),
 D-069 (`/staff` exige sesión fuerte), D-070 (limitación multi-organización), D-071 (identidad de prueba separada
-de Pao), D-072 (bootstrap de la primera administradora).
+de Pao), D-072 (bootstrap de la primera administradora). Del contrato del cotizador: **D-117** (acceso web con
+Google y solicitudes), **D-119** (superadministradora), **D-124** (`admin` también informa faltantes por Telegram;
+permisos web y de Telegram independientes) y **D-126/D-127** (recepción fuera del MVP y cierre solo por compra
+confirmada, sin estados de recepción).
 
 ## Flujo
 1. El frontend (Lovable) inicia sesión con Supabase Auth: **Google** o **correo + contraseña**. No hay registro
@@ -57,6 +69,15 @@ de Pao), D-072 (bootstrap de la primera administradora).
   el flujo completo de enlace/desenlace con sus validaciones (`backend/tests/test_auth_identity.py`) y las
   restricciones del bootstrap (`backend/tests/test_bootstrap_admin.py`: solo `admin`, sin enlace, auditoría con
   `actor_id = NULL`, negativa en producción, una sola bootstrap activa y recuperación si se desactiva).
+
+**Aprobado y todavía sin código (D0):**
+- **G1 — acceso web del cotizador:** `web_access_request` (`pending | approved | rejected`, sin otorgar roles al
+  aprobar) y las cinco columnas de `app_user`; vencimiento evaluado en cada petición; campanita de solicitudes;
+  superadministradora como bandera (`is_superadmin`), **no** como rol nuevo. Migración **0012**, no creada.
+- **Cotizador E10/E11:** cotizar y registrar compras exigen `admin` + `StrongActor`; aún no hay endpoints.
+- **D-124:** `admin` **todavía no** puede reportar faltantes: la matriz no le da `REPORT_SHORTAGE` y
+  `sessions.list_reporters` lo excluye del selector del bot. Cambia en la fase que habilite T1/C5-A.
+- **Un plano no otorga el otro:** tener JWT válido no habilita Telegram y una cuenta de Telegram no otorga roles web.
 
 ## Bootstrap de la primera administradora (`create-admin`, D-071/D-072)
 Problema que resuelve: para enlazar una identidad hace falta un administrador (`--by`), pero al principio **nadie**
@@ -113,16 +134,22 @@ Reglas del enlace:
    `sub` y el mismo 200 en la prueba aislada; con la sesión de correo/contraseña también responde 200.
 4. Alta manual de la identidad de Pao cuando corresponda (correo + contraseña, correo confirmado) y enlace a su fila
    de `real_test` (D-067), sin modificar sus roles.
-5. Configurar `SUPABASE_JWKS_URL`, `SUPABASE_JWT_ISSUER` y `AUTH_MODE=supabase_jwt` en el entorno desplegado;
+5. **Implementar G1** (migración `0012`, con autorización explícita): `web_access_request`, columnas de `app_user`,
+   solicitudes con campanita, aprobación/rechazo por `admin`, vencimiento del acceso web y superadministradora
+   limitada a metadatos. Hasta entonces el acceso web es solo el validador + enlace + `/staff`.
+6. Configurar `SUPABASE_JWKS_URL`, `SUPABASE_JWT_ISSUER` y `AUTH_MODE=supabase_jwt` en el entorno desplegado;
    añadir el origen del frontend a `CORS_ORIGINS`.
-6. Frontend Lovable: ingreso con Google y correo/contraseña, sin registro ni recuperación; enviar el bearer y
-   tratar 401 (volver a ingresar) y 403 `USER_NOT_PROVISIONED` (cuenta no habilitada, sin ofrecer alta).
+7. Frontend Lovable: ingreso con Google y correo/contraseña, sin registro ni recuperación; enviar el bearer y
+   tratar 401 (volver a ingresar) y 403 `USER_NOT_PROVISIONED` (cuenta no habilitada, sin ofrecer alta). El
+   cotizador (E10–E15) llega después de G1, según `docs/ROADMAP.md`.
 
 ## Fuera de alcance / riesgos
 - **Sin recuperación de contraseña** (D-066): si se pierden ambos accesos, el restablecimiento es operativo desde
   el panel de Supabase, no una función del producto.
 - **Multi-organización (D-070):** `auth_subject` es único en toda la base. Hoy solo se enlaza `real_test`; al
   habilitar `production` habrá que decidir cómo una persona accede a más de una organización.
-- Aprobar o comprar exigirá autenticación fuerte reciente (re-autenticación/MFA) en H5.
+- Aprobar o comprar exigirá autenticación fuerte reciente (re-autenticación/MFA) en H5; mientras tanto, el contrato
+  v0.2 exige `admin` + `StrongActor` para cotizar y registrar compras (sin implementar). La recepción física no
+  forma parte del MVP (D-126) y no habrá permisos de recepción que autenticar.
 - Si Supabase deja de usarse, basta otro emisor OIDC: solo cambia el validador de JWT.
 - Telegram **no** usa Supabase Auth: se identifica por cuenta autorizada + sesión de canal (H1-B).
