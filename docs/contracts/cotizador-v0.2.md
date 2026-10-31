@@ -1,8 +1,9 @@
 # Contrato del cotizador — v0.2 (cotizaciones, compras, historial, observaciones, accesos y precios públicos)
 
-**Estado: BORRADOR PARA REVISIÓN, 2026-10-30 (revisión 5).** No aprobado, no implementado. Este documento **no
-modifica C0** (`docs/contracts/cotizador-v0.md`, congelado por D-093): lo **amplía** y declara cada ampliación de forma
-explícita. Mientras no se apruebe, nada de lo aquí escrito está permitido en el sistema.
+**Estado: aprobado conceptualmente, 2026-10-30 (revisión 6).** No implementado. La revisión 5 se aprobó en el cierre de
+D0; este encabezado corrige la contradicción que la llamaba «borrador no aprobado» (**C-0**, resuelta en D-128). Este
+documento **no modifica C0** (`docs/contracts/cotizador-v0.md`, congelado por D-093): lo **amplía** y declara cada
+ampliación de forma explícita. Ninguna de sus operaciones corre en el sistema mientras no se implemente.
 
 **Revisión 3 (fase D0, 2026-10-30):** consolidó **D-113** (búsqueda de precios públicos de cadenas) y **D-115 a
 D-120** (mecanismo y captura por cadena; observaciones y aprendizaje con OpenAI; acceso web con Google; control
@@ -24,11 +25,20 @@ saldos pendientes de recepción, sin endpoints ni pantallas asociados y sin cier
 columnas** respecto del esquema actual. Ratifica **C4 = 0013** y **C3 = 0014**, y aclara las tres tablas de búsqueda
 frente a las dos que nombra C0. **Sustituye la revisión 4**; no cambia C0.
 
+**Revisión 6 (fase documental, 2026-10-30; D-128):** la aprobación de una solicitud de acceso web **otorga el rol
+operativo `purchasing`** y habilita el Cotizador de inmediato, sin segunda autorización; el Cotizador (E10–E15) admite
+**`admin` o `purchasing`** + `StrongActor`, salvo la revisión de interpretaciones, que sigue siendo de `admin` (§8.3).
+**No agrega tablas ni columnas** (siguen 9 y 7), **no crea roles** y **no cambia Telegram**: la web nunca concede
+acceso al bot (§9.10). `purchasing` conserva sus permisos actuales y **no se amplía ni rediseña la gestión de alias**
+(§9.3, paso 8). Sustituye la cláusula «aprobar no asigna roles» de las
+revisiones 3 a 5 y enmienda **D-079**, **D-114** y **D-117** sin reescribir su historial.
+
 **Cierre del ciclo (D-127, 2026-10-30):** la cobertura por **cotización** es **provisional** y nunca cierra; solo la
 **compra confirmada** cierra, y solo cuando cubre **toda** la cantidad pedida conocida. Una compra **parcial** deja el
 mismo ciclo abierto con el saldo visible, sin crear una necesidad duplicada. `fulfilled` no significa recibido.
 
-**Decisión que lo respalda:** D-114, con las enmiendas de D0 registradas en la misma sección de decisiones.
+**Decisión que lo respalda:** D-114, con las enmiendas de D0 registradas en la misma sección de decisiones, y **D-128**
+(aprobación web con el rol operativo `purchasing`).
 **Decisiones relacionadas:** D-037 (separación de datos), D-064 a D-072 (Supabase Auth y enlaces), D-079/D-086
 (permisos y `StrongActor`), D-087/D-088 (cotas y cálculo), D-091 (criterios comerciales), D-110 (`review_status`),
 D-111 (idempotencia de importación), D-112 (investigación de catálogos de cadenas).
@@ -117,15 +127,20 @@ Son tres planos distintos. **Ninguno otorga el otro.**
 | **Web** | JWT de Supabase válido + `app_user.auth_subject` + `app_user.active` + `web_access_expires_at` vigente + `roles` | Acceso a Telegram; roles por sí solo no habilita el bot |
 | **Telegram** | `telegram_account.status = active` + identidad vigente resuelta en el servidor | Acceso web ni roles |
 | **Superadministración** | `app_user.is_superadmin` | Datos operativos de otras organizaciones; solo metadatos administrativos (§9.6) |
-| **Cotizador (E10–E12)** | rol `admin` **y** `StrongActor` | Nada fuera de su organización |
+| **Cotizador (E10–E12)** | rol `admin` **o** `purchasing`, **y** `StrongActor` (D-128) | Nada fuera de su organización; `purchasing` no administra usuarios ni la matriz `MANAGE_*` |
 | **Informar faltantes (Telegram)** | `telegram_account.status = active` + identidad vigente + `REPORT_SHORTAGE` | Acceso web; el rol `admin` **no** habilita el bot por sí solo |
 
 **Sin permisos de recepción (D-126).** El MVP no tiene operación de recepción física, así que no crea permiso, pantalla
-ni endpoint para confirmarla. Cotizar y confirmar compras siguen siendo operaciones web de `admin` + `StrongActor`.
+ni endpoint para confirmarla. Cotizar y confirmar compras siguen siendo operaciones web de `admin` **o** `purchasing` +
+`StrongActor` (D-128).
 
 Una persona puede tener Telegram sin web y web sin Telegram. Bloquear Telegram no revoca la web; revocar la web no
 bloquea Telegram. La **desactivación de la persona** (`app_user.active = false`) es una suspensión más fuerte y corta
 ambos planos. El token de Telegram nunca se expone en la API web.
+
+**Aprobar una solicitud web no concede Telegram (D-128).** No crea cuenta de Telegram, ni vínculo, ni solicitud, ni
+autoriza chat alguno; la autorización del bot sigue siendo por cuenta y por chat (D-118). El selector del teléfono
+compartido es identificación declarada dentro de un chat ya autorizado, no una lista de autorizados (§9.10).
 
 **`admin` también informa faltantes (D-124).** El rol `admin` conserva sus permisos de gestión y **además** obtiene
 `REPORT_SHORTAGE`; no se crea un rol nuevo ni se fusionan planos. Para usar Telegram, una administradora necesita su
@@ -159,8 +174,8 @@ físico desde la API, y auditoría en `audit_event` dentro de la misma transacci
 `purchase_index`) y 3 de la revisión 3 (`commercial_observation`, `observation_interpretation`,
 `web_access_request`). **Columnas nuevas respecto del esquema actual: 7**: `quote_line.demand_item_id` (ya prevista en
 la revisión 2), `quote_line.coverage_relation` (nueva en la revisión 3) y cinco en `app_user` (§2.10). **6 son nuevas
-en la revisión 3; las revisiones 4 y 5 no agregan columnas.** La revisión 5 no agrega tablas: retira las dos de
-recepción que proponía la revisión 4 (D-126).
+en la revisión 3; las revisiones 4, 5 y 6 no agregan columnas.** La revisión 5 no agrega tablas: retira las dos de
+recepción que proponía la revisión 4 (D-126). La revisión 6 tampoco agrega tablas ni columnas (D-128).
 
 ### 2.1 `quote` — cotización general
 
@@ -385,7 +400,8 @@ Nombre deliberadamente distinto de `telegram_access_request` (D-118) para no con
 
 `UNIQUE (organization_id, auth_subject) WHERE status='pending'`: una solicitud pendiente por persona y organización;
 las rechazadas se conservan y permiten una nueva solicitud posterior. **La solicitud no otorga nada**: solo la
-aprobación habilita, y la aprobación **no asigna roles** (§9.5).
+aprobación habilita. La aprobación **asigna el rol operativo `purchasing`** y nada más (D-128): no otorga `admin`, ni
+permisos `MANAGE_*`, ni la bandera `is_superadmin`, y no crea ninguna cuenta de Telegram (§9.3, paso 8; §9.10).
 
 ### 2.10 Columnas nuevas en `app_user`
 
@@ -398,6 +414,12 @@ aprobación habilita, y la aprobación **no asigna roles** (§9.5).
 
 `roles` sigue siendo `ARRAY['auxiliary','purchasing','approver','admin']::text[]` con su CHECK. **No se agrega
 `superadmin` a `roles`**: sería ambiguo con el modelo de permisos existente (D-119).
+
+**Sin columnas adicionales (D-128).** La revisión 6 **no** agrega una bandera de reportante por persona:
+`app_user` conserva exactamente estas cinco columnas. Aprobar una solicitud escribe `roles = ['purchasing']`; el
+enlace de identidad y la asignación de roles de personas preexistentes siguen siendo operaciones separadas y auditadas,
+con los comandos y endpoints ya existentes. La independencia con Telegram se resuelve por autorización de cuenta y no
+por una columna nueva (§9.10).
 
 ---
 
@@ -510,10 +532,18 @@ pendiente no altera la cantidad cotizada ni la compra histórica.
 
 ## 5. E10 — Cotizaciones y carritos
 
-Todas las operaciones: **rol `admin` + `StrongActor`**, conforme a C0 §6 y C0-09 (D-079/D-086). Cualquier otro rol
-recibe `403 FORBIDDEN`; en organizaciones reales sin sesión fuerte, `403 STRONG_AUTH_REQUIRED`. La organización sale
-del `Actor`, nunca del cuerpo. **No se amplían permisos a auxiliares en esta etapa.** Importes siempre como string +
-moneda (C0 §2.2).
+Todas las operaciones: **rol `admin` o `purchasing` + `StrongActor`**, conforme a C0 §6 y C0-09 (D-079/D-086, con la
+enmienda de **D-128**). Cualquier otro rol recibe `403 FORBIDDEN`; en una organización real con la cabecera de
+demostración, `403 STRONG_AUTH_REQUIRED`. La organización sale del `Actor`, nunca del cuerpo. **No se amplían permisos a `auxiliary` ni a
+`approver` en esta etapa**, y `purchasing` no obtiene ningún permiso `MANAGE_*`. Importes siempre como string + moneda
+(C0 §2.2).
+
+**Qué exige `StrongActor` (D-086/D-099, confirmado el 2026-10-30).** Se verifica, en este orden: (a) JWT de Supabase
+válido —firma, `iss`, `aud`, `exp`, `sub` y `role=authenticated`— y persona `app_user.active` enlazada por
+`auth_subject`; (b) rol `admin` **o** `purchasing`; (c) organización tomada del `Actor`, nunca del cuerpo; (d)
+`StrongActor` con su **semántica vigente**: rechaza la cabecera de demostración fuera de `simulation` y **no es MFA ni
+una segunda autenticación**. La autenticación fuerte real (MFA o re-autenticación) queda para **H5**, como decisión
+futura: G1 y el Cotizador no la implementan y no modifican ningún control de seguridad existente.
 
 ### 5.1 Cotizaciones
 
@@ -660,7 +690,8 @@ Garantías exigibles, no supuestos:
 
 ## 6. E11 — Compras registradas
 
-Permisos: **rol `admin` + `StrongActor`** (§5), sin excepciones para auxiliares.
+Permisos: **rol `admin` o `purchasing` + `StrongActor`** (§5, D-128), sin excepciones para auxiliares. Registrar una
+compra sigue sin ejecutar nada: `purchase_execution` permanece `blocked`.
 
 ### 6.1 Registrar
 
@@ -770,7 +801,7 @@ saldo, aunque la cotización se cierre (D-127).
 | `GET /api/v1/quotes/{quote_id}/purchases` | Compras vigentes y sustituidas de la cotización, con su estado |
 | `GET /api/v1/purchases/{purchase_id}` | Detalle inmutable completo |
 
-Las consultas exigen rol `admin` + `StrongActor` y quedan acotadas a la organización del `Actor`. **Nunca** se listan
+Las consultas exigen rol `admin` o `purchasing` + `StrongActor` y quedan acotadas a la organización del `Actor`. **Nunca** se listan
 compras de otra organización, ni siquiera para la superadministradora (§9.7). **No hay consultas de recepción:** esa
 funcionalidad está fuera del MVP (D-126).
 
@@ -792,7 +823,8 @@ diferencias, productos equivocados, saldos pendientes de recepción ni cierre co
 
 ## 7. E12 — Historial de cotizaciones
 
-Permisos: **rol `admin` + `StrongActor`** (§5). Leer historial archivado no cambia el registro ni reintroduce datos.
+Permisos: **rol `admin` o `purchasing` + `StrongActor`** (§5, D-128). Leer historial archivado no cambia el registro ni
+reintroduce datos.
 El historial conserva la compra, sus líneas y la cadena de correcciones; el MVP no registra recepciones (D-126).
 
 ### 7.1 Operaciones
@@ -909,7 +941,7 @@ Por eso cada observación es una fila independiente, inmutable y acumulativa (§
 | `POST /api/v1/quotes/{quote_id}/lines/{line_id}/observations` | Atajo para registrar la observación ya asociada a una línea de cotización. Cuerpo: `{ "text": "..." }`. Sin categorías ni selectores. Responde `201` con la observación y, si la IA está habilitada, con `interpretation_status` |
 | `GET /api/v1/quotes/{quote_id}/lines/{line_id}/observations` | Observaciones de la línea, más recientes primero, con sus interpretaciones y estado de revisión |
 | `GET /api/v1/observations?trade_item_id=...` | Historial de observaciones **del artículo exacto**, para la vista de producto |
-| `POST /api/v1/observation-interpretations/{id}/review` | Revisión humana: `{ "decision": "confirm" \| "reject", "note": "..." }`. Solo `admin` + `StrongActor`. Transición sin retorno; auditada |
+| `POST /api/v1/observation-interpretations/{id}/review` | Revisión humana: `{ "decision": "confirm" \| "reject", "note": "..." }`. Solo `admin` + `StrongActor`. Transición sin retorno; auditada. **D-128 no la amplía a `purchasing`** (P-7 resuelto el 2026-10-30: se mantiene solo `admin`) |
 | `GET /api/v1/quotes/{quote_id}` | Incluye `advice` por línea (§8.4) |
 
 La interfaz **no cambia**: botón «Observación», campo de texto libre, Guardar/Cancelar. **Sin** categorías,
@@ -1038,10 +1070,18 @@ Los nombres son personas, no código. Los roles siguen siendo los cuatro existen
    Si Google/Supabase Auth no está configurado → `503 ACCESS_NOT_CONFIGURED`.
 6. `POST /api/v1/web-access-requests` crea una solicitud `pending` en la organización **configurada en el servidor**.
 7. La campanita de Pao la muestra. Aprobar o rechazar es de un `admin` de esa organización.
-8. **Aprobar no asigna roles.** Crea o enlaza el `app_user` con `roles = []` y `active = true`; el acceso queda
-   limitado a lo que un usuario sin roles puede ver. Los roles se otorgan después, por la superadministradora.
+8. **Aprobar asigna el rol operativo `purchasing` (D-128).** Crea el `app_user` con `roles = ['purchasing']`,
+   `active = true` y el `auth_subject` de la solicitud, **en el mismo paso**: la persona entra al Cotizador de
+   inmediato, sin segunda autorización ni intervención de la superadministradora. No otorga `admin`, ni permisos
+   `MANAGE_*`, ni `is_superadmin`, y no crea ni autoriza nada en Telegram (§9.10). `purchasing` conserva sus
+   permisos actuales de la matriz (`VIEW_LIST`, `REPORT_SHORTAGE`, `APPLY_QUANTITY`, `RESOLVE_OBSERVATION`,
+   `CONFIRM_ATTRIBUTES`); G1 **no los amplía ni rediseña la gestión de alias**.
    Si el nombre visible ya existe activo en la organización, la aprobación responde `409` y se pide renombrar;
-   **nunca se vincula por nombre ni se sobrescribe** una persona existente.
+   **nunca se vincula por nombre ni se sobrescribe** una persona existente. Para una persona que ya tiene fila, el
+   enlace de identidad (`link-auth-subject`) y la asignación de roles
+   (`POST /api/v1/admin/users/{user_id}/web-access`) siguen siendo operaciones **separadas y auditadas**, sin comandos
+   nuevos. La aprobación **no fija** `web_access_expires_at`: queda `NULL`, es decir, **sin vencimiento automático**
+   (§9.8).
 
 **Pao, Danny y Julio se habilitan previamente** con `create-admin` / `link-auth-subject` (D-071/D-072) y entran con
 Google sin pasar por la campanita. La campanita es para solicitudes nuevas o excepcionales.
@@ -1052,7 +1092,7 @@ Google sin pasar por la campanita. La campanita es para solicitudes nuevas o exc
 |---|---|---|
 | `POST /api/v1/web-access-requests` | JWT válido, sin `app_user` | Crear solicitud. Cuerpo `{}`; organización desde configuración del servidor. Idempotente por `(organization_id, auth_subject)` pendiente |
 | `GET /api/v1/web-access-requests` | `admin` de la organización **o** superadministradora | `{ "pending_count": 1, "items": [{ "id", "email", "requested_at", "organization"? }] }`; `organization` solo para la superadministradora |
-| `POST /api/v1/web-access-requests/{id}/approve` | `admin` de la organización | Aprueba; crea/enlaza `app_user` con `roles = []`, `active = true`. Responde 200 |
+| `POST /api/v1/web-access-requests/{id}/approve` | `admin` de la organización | Aprueba; crea el `app_user` con `roles = ['purchasing']`, `active = true` y `auth_subject` (D-128), sin vencimiento (`web_access_expires_at = NULL`). Responde 200 |
 | `POST /api/v1/web-access-requests/{id}/reject` | `admin` de la organización | Rechaza con motivo opcional; no crea usuario |
 | `POST /api/v1/admin/users/{user_id}/web-access` | **Superadministradora** | Otorga o cambia roles y `expires_at`. Solo roles existentes; auditado |
 | `POST /api/v1/admin/users/{user_id}/web-access/revoke` | **Superadministradora** | Revoca **solo la web** (`web_access_expires_at = now`); no toca Telegram ni `active` |
@@ -1090,11 +1130,15 @@ Google sin pasar por la campanita. La campanita es para solicitudes nuevas o exc
   organización.** Ampliar el cruce a datos operativos exige una decisión nueva.
 - `set-superadmin` es de uso único, auditado y no se ejecuta en esta fase.
 - **La superadministradora no informa faltantes ni opera el cotizador en nombre de otra organización.** Cotizar y
-  confirmar compras son datos operativos: solo un `admin` de la organización dueña puede hacerlo. Su capacidad de
-  informar por Telegram existe **solo** si tiene una cuenta de Telegram autorizada en esa organización.
+  confirmar compras son datos operativos: solo un `admin` o un `purchasing` de la organización dueña puede hacerlo
+  (D-128). Su capacidad de informar por Telegram existe **solo** si tiene una cuenta de Telegram autorizada en esa
+  organización.
 
 ### 9.8 Vencimiento y revocación
 
+- **La aprobación no fija vencimiento (D-128).** `web_access_expires_at` queda `NULL` = **acceso sin fecha de
+  expiración**; sigue vigente hasta una revocación, una desactivación o un vencimiento fijado explícitamente por la
+  superadministradora. **No hay plazo automático** (ni 90 días ni otro).
 - `web_access_expires_at` se evalúa en **cada** petición; si venció → `403 WEB_ACCESS_EXPIRED`. No hay job en
   segundo plano.
 - Revocar la web no borra la persona, no borra su historial y no bloquea Telegram.
@@ -1104,6 +1148,25 @@ Google sin pasar por la campanita. La campanita es para solicitudes nuevas o exc
 
 No hay recuperación de contraseña ni registro público (D-066). El alta es por Google + solicitud aprobada, o por
 `create-admin` / `link-auth-subject` para las personas ya previstas.
+
+### 9.10 Independencia con Telegram (D-128)
+
+**Aprobar una solicitud web no otorga ningún acceso a Telegram.** El plano del bot se autoriza por cuenta, no por
+persona con roles web:
+
+- La aprobación **no crea** `telegram_account`, **no crea** `channel_binding`, **no crea** `telegram_access_request` y
+  **no autoriza** ningún chat; `resolve_access` sigue cortando en cada mensaje si el chat o la cuenta no están
+  autorizados (D-118).
+- En un **teléfono personal** la identidad la fija la cuenta autorizada. Un aprobado web sin cuenta personal **no puede
+  reportar** por el bot, aunque tenga `REPORT_SHORTAGE` en la matriz.
+- En un **teléfono compartido** la autorización es del dispositivo y la persona se **declara** eligiéndose en un
+  teclado (`actor_session.identity_level = declared`). Ese selector **no es una lista de autorizados**: es una
+  identificación declarada dentro de un chat ya autorizado, y por eso puede incluir a cualquier persona activa,
+  disponible y con `REPORT_SHORTAGE`, incluida una aprobada por la web.
+- **G1 no modifica el bot ni agrega una bandera de reportante por persona.** Excluir a alguien del selector compartido
+  exigiría una señal por persona y es una decisión de **T1** (D-118), no de esta fase.
+- **`CONFIRM_ATTRIBUTES` conserva su alcance actual.** No se amplía ni se rediseña la gestión de alias en G1; cualquier
+  cambio de ese alcance es una decisión propia (D-015 a D-024).
 
 ---
 
@@ -1639,7 +1702,7 @@ viaja en `warnings[]`; nunca bloquea ni recorta cantidades. **Los códigos de re
 | V-24 | La superadministradora solo cruza organizaciones para metadatos administrativos, de forma auditada; los datos operativos siguen acotados |
 | V-25 | La búsqueda de cadenas no persiste, no usa datos ficticios y nunca presenta un precio anterior como actual |
 | V-26 | `relation` es aditivo; `match.level` se conserva y ningún resultado se oculta por su clasificación |
-| V-27 | Aprobar una solicitud de acceso nunca asigna un rol automáticamente |
+| V-27 | Aprobar una solicitud de acceso asigna **solo** el rol operativo `purchasing` (D-128): nunca `admin`, `is_superadmin`, permisos `MANAGE_*` ni acceso a Telegram |
 | V-28 | La IA nunca decide dinero, cantidades, permisos ni visibilidad; la clave de OpenAI vive solo en el backend |
 | V-29 | Las columnas de archivo de `purchase` solo se escriben por función restringida; el encabezado nunca se elimina |
 | V-30 | Un carrito `dismissed` no se evalúa, no suma al total y no cubre faltantes |
@@ -1650,7 +1713,7 @@ viaja en `warnings[]`; nunca bloquea ni recorta cantidades. **Los códigos de re
 | V-35 | No hay control de recepción, cantidades entregadas, saldos pendientes de recepción ni diferencias de entrega en el MVP (D-126) |
 | V-36 | Cerrar un faltante no borra nada; un nuevo faltante del mismo producto es un ciclo nuevo con su propio historial |
 | V-37 | Permisos web y autorización de Telegram son independientes; `admin` también informa si su cuenta de Telegram está autorizada, sin exclusiones |
-| V-38 | Telegram nunca registra compras ni confirma llegadas; cotizar y comprar son operaciones web de `admin` + `StrongActor` |
+| V-38 | Telegram nunca registra compras ni confirma llegadas; cotizar y comprar son operaciones web de `admin` **o** `purchasing` + `StrongActor` (D-128) |
 | V-39 | Cotizar cubre de forma provisional y nunca cierra: un faltante con el total cotizado sigue abierto en `in_quote` hasta que haya compra confirmada |
 | V-40 | Una compra parcial mantiene abierto el mismo ciclo con el saldo visible; el saldo se cotiza y se compra sobre ese faltante, sin crear una solicitud duplicada |
 
@@ -1676,7 +1739,8 @@ el mockup aprobado.**
 El análisis completo se conserva en el registro de decisiones (**D-122**, retirada por **D-126**): tablas `receipt` y
 `receipt_line` inmutables, recepciones parciales y acumulativas, diferencias (`missing`, `wrong_product`, `damaged`,
 `other`), producto equivocado con `received_quantity = 0`, saldos pendientes de recepción, cierre condicionado y sus
-permisos web de `admin` + `StrongActor`. Permanecen abiertas como preguntas **futuras**, no como bloqueos del MVP:
+permisos web de `admin` o `purchasing` + `StrongActor` (regla de D-128, aplicable si la recepción vuelve al alcance).
+Permanecen abiertas como preguntas **futuras**, no como bloqueos del MVP:
 anulación o corrección de una compra con recepciones, compra que nunca llega o parcial definitiva, y corrección de una
 recepción errónea. Nada de esto se implementa en el MVP ni se promete en la interfaz.
 
@@ -1705,8 +1769,8 @@ Las tres se crean en la misma migración **0013**; ninguna se implementa en D0.
 
 | Etapa | Contenido | Migración |
 |---|---|---|
-| **D0** | Contrato v0.2 rev5, D-113 y D-115 a D-127, ROADMAP | — |
-| **G1** | Acceso web con Google, solicitudes, campanita, superadministradora y vencimiento | **0012** (`web_access_request` + 5 columnas de `app_user`) |
+| **D0** | Contrato v0.2 rev6, D-113 y D-115 a D-128, ROADMAP | — |
+| **G1** | Acceso web con Google, solicitudes, campanita con aprobación que asigna `purchasing`, superadministradora y vencimiento; Telegram sin cambios (D-128) | **0012** (`web_access_request` + 5 columnas de `app_user`) |
 | **C4** | E1 con `relation` y `attributes.ingredients[]` (E3 conserva su forma); búsqueda de cadenas E15 (sin persistencia) | **0013** (3 tablas de búsqueda) |
 | **C3** | Comparación E5 | **0014** (5 tablas) |
 | **C5-A + F1** | Cotizaciones, carritos, líneas, vínculo a faltante, grilla y «Buscar»; observaciones O1 | **0015** (`quote`, `quote_cart`, `quote_line`, `commercial_observation`; 2 columnas de `quote_line`: `demand_item_id`, ya previsto en rev2, y `coverage_relation`) |
@@ -1739,13 +1803,14 @@ Ninguna migración nueva se aplica sin autorización explícita.
 
 ## 17. Aprobaciones y pendientes
 
-**Aprobado conceptualmente el 2026-10-30 (D0):** D-113 y D-115 a **D-127**; cobertura reversible de faltantes sin
+**Aprobado conceptualmente el 2026-10-30 (D0):** D-113 y D-115 a **D-128**; cobertura reversible de faltantes sin
 confirmación adicional; cobertura con compras vigentes sin doble conteo (P-8 resuelto); **recepción física fuera del
 alcance del MVP** (D-126); **cierre exclusivamente por compra confirmada** que cubre la cantidad pedida, con compras
 parciales en el mismo ciclo (D-127); estado por Telegram sin duplicar necesidades; `admin` puede informar por Telegram si su
 cuenta está autorizada; `relation` junto a `match.level`; OpenAI por Responses API desde el backend; separación de
 permisos web/Telegram; superadministradora global limitada a metadatos; control individual de Telegram; **nueve
-tablas** y siete columnas (seis nuevas en la revisión 3); numeración **C4 = 0013 / C3 = 0014** ratificada.
+tablas** y siete columnas (seis nuevas en la revisión 3); numeración **C4 = 0013 / C3 = 0014** ratificada; revisión
+**6** con aprobación que otorga `purchasing` y Cotizador para `admin` o `purchasing` (**D-128**).
 
 **Pendiente de ratificación:**
 
@@ -1783,6 +1848,6 @@ tablas** y siete columnas (seis nuevas en la revisión 3); numeración **C4 = 00
     llega o parcial definitiva (P-10) y corrección de una recepción errónea (P-11). Dejan de ser bloqueos de D0 y de
     la demo; se retoman solo si la recepción vuelve al alcance.
 
-**Fuera de D0:** actualizar `CLAUDE.md` y `docs/AUTH_SUPABASE.md`, que todavía describen C2 como no implementado y no
-incluyen G1/D-115 a D-127. **D-107** sigue con la fila «Propuesta» aunque el código 0009–0011 ya implementa el perfil
-y las solicitudes; se anota, no se reescribe. Se hará en una fase documental posterior, con autorización.
+**Fase documental (2026-10-30, D-128):** `CLAUDE.md`, `docs/AUTH_SUPABASE.md` y `docs/ROADMAP.md` quedan alineados con
+la revisión 6, D-128 y el cierre de D0. **D-107** sigue con la fila «Propuesta» aunque el código 0009–0011 ya implementa
+el perfil y las solicitudes; se anota, no se reescribe.

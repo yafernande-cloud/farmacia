@@ -4,12 +4,13 @@ El orden no reduce el alcance: la presentación final a Pao integra todos los m�
 
 **Estado vigente al 2026-10-30 (fase D0).** El **cotizador** es la prioridad principal y **Telegram no bloquea** su
 desarrollo. Las fases `C*` son el camino crítico; las `H*` siguen vigentes pero dejan de ser requisito previo.
-**D0** consolida el contrato v0.2 **revisión 5** y las decisiones D-113 y D-115 a **D-127**. La revisión 5 cierra el
+**D0** consolida el contrato v0.2 **revisión 6** y las decisiones D-113 y D-115 a **D-128**. La revisión 5 cierra el
 ciclo de reposición **sin recepción física** (cobertura con compras confirmadas, estado por Telegram y administradores
 que informan faltantes); la recepción y las diferencias de entrega quedan fuera del MVP (D-126). **D-127** fija la
 regla definitiva de cierre: cotizar cubre de forma provisional y **no cierra**; la necesidad queda gestionada solo
 cuando las compras confirmadas cubren toda la cantidad pedida, y una compra parcial mantiene abierto el mismo ciclo con
-el saldo, sin solicitud duplicada.
+el saldo, sin solicitud duplicada. La **revisión 6 (D-128)** añade que aprobar una solicitud de acceso web otorga el rol
+operativo `purchasing` y habilita el Cotizador, sin tocar Telegram ni el esquema.
 **No se implementa código, no se crean ni aplican migraciones y no se toca la base `farmacia`.**
 
 ## Estado real de migraciones
@@ -38,8 +39,8 @@ el código, pero su aplicación a la base real sigue pendiente de autorización.
 | **C0** | Contrato integral del cotizador (E1–E9): búsqueda, ofertas, comparación, proveedores, fuentes y criterios comerciales con anotación | C0-01 a C0-19 | **Completada — aprobada y congelada** (2026-10-29, D-078 a D-093) |
 | **C1** | Modelo de datos del cotizador: `trade_item`, ficha por cadena, proveedor, fuente, mapping, ofertas, despacho, referencias, importación, comparaciones, criterios y búsquedas | AC16–AC20 (base), AC29–AC31 (base) | **Hecha** (2026-10-29): **0008 aplicada** a `farmacia` (D-098) |
 | **C2** | Conector + `manual_import` (Excel) + fuente `fixture` etiquetada + `catalog-load` + revisión de ofertas + E8 | AC16, AC17 | **Implementada en código** (0009–0011 y endpoint E8), **no aplicada a `farmacia`**. D-077/D-100 a D-108 |
-| **D0** | Consolidación documental: contrato v0.2 rev5, D-113 y D-115 a D-127, este roadmap | — | **En curso** (2026-10-30); sin código ni migraciones |
-| **G1** | Acceso web con Google: solicitudes, campanita, roles, superadministradora, vencimiento y revocación | AC09 (web), D-117/D-119 | Pendiente; migración **0012** |
+| **D0** | Consolidación documental: contrato v0.2 rev6, D-113 y D-115 a D-128, este roadmap | — | **Cerrada** (2026-10-30); sin código ni migraciones |
+| **G1** | Acceso web con Google: solicitudes, campanita con aprobación que asigna `purchasing` (D-128) y sin vencimiento automático, superadministradora, revocación y vencimiento explícito; seguridad JWT + `StrongActor` vigente (sin MFA); Telegram sin cambios | AC09 (web), D-117/D-119/D-128 | Pendiente; migración **0012** |
 | **C4** | E1 con `relation` y `attributes.ingredients[]` (E3 conserva su forma); búsqueda de cadenas E15 (sin persistencia) | AC16–AC20, AC29–AC31 | Pendiente; migración **0013** (3 tablas de búsqueda) |
 | **C3** | Comparador determinista E5: elegibilidad, cantidades, impuestos/descuentos/despacho, total parcial, cota inferior (LB-1…LB-8), explicabilidad y anotación de criterios | AC18–AC20, AC31 | Pendiente; migración **0014** (5 tablas) |
 | **C5-A + F1** | Cotizaciones, carritos por proveedor, líneas, vínculo a faltante, grilla «Productos faltantes» y «Buscar»; observaciones O1 | AC20, AC31, AC37 | Pendiente; migración **0015** |
@@ -59,8 +60,9 @@ el código, pero su aplicación a la base real sigue pendiente de autorización.
 
 ## Reordenamiento D0 — bloques aprobados (2026-10-30)
 
-**Hecho:** contrato `docs/contracts/cotizador-v0.2.md` **revisión 5**; decisiones **D-113** y **D-115 a D-127**; este
-roadmap. **No se modificó código, modelo, base de datos, migraciones, OpenAPI ni el mockup aprobado.**
+**Hecho:** contrato `docs/contracts/cotizador-v0.2.md` **revisión 5** (→ **revisión 6** en la fase documental del
+2026-10-30, D-128); decisiones **D-113** y **D-115 a D-127** (→ **D-128** en esa misma fase); este roadmap. **No se
+modificó código, modelo, base de datos, migraciones, OpenAPI ni el mockup aprobado.**
 
 **Orden de ejecución acordado:**
 
@@ -79,6 +81,13 @@ roadmap. **No se modificó código, modelo, base de datos, migraciones, OpenAPI 
 | 11 | **T1** | Configuración de Telegram por cuenta | H1-B.4 | — |
 
 **C5-E** (enganche de navegación) puede ir en paralelo con C5-A/C5-B; **C6a** y **T1** no crean migraciones.
+
+**Enmienda D-128 (revisión 6, 2026-10-30).** Aprobar una solicitud en G1 crea el `app_user` con `roles =
+['purchasing']` y `auth_subject` en el mismo paso; el Cotizador (E10–E15) admite `admin` **o** `purchasing` +
+`StrongActor`, salvo la revisión de interpretaciones, que sigue siendo de `admin`. G1 conserva sus **5 columnas** y su
+única tabla: no se agrega `telegram_reporter` ni ninguna otra columna. Aprobar no crea cuenta ni vínculo de Telegram;
+el selector del teléfono compartido sigue siendo identificación declarada dentro de un chat autorizado. Excluir a
+alguien de ese selector es una decisión de **T1** (D-118).
 
 **Numeración ratificada (D-125).** D-112/D-114 proponían C3 = 0012 y C4 = 0013. Con G1 por delante y el código ya en
 0011, la numeración lineal del orden acordado es **C4 = 0013** y **C3 = 0014**, confirmada el 2026-10-30. Conservar
@@ -109,8 +118,9 @@ configuración.**
 Telegram y Supabase Auth (el cotizador es aditivo).
 
 **Rol del cotizador:** es una herramienta **interna** usada solo por los jefes de la farmacia. Todas sus operaciones
-exigen rol **`admin`** y `StrongActor`; no se crea un rol `purchasing` ni permisos nuevos, y los roles de los demás
-módulos no cambian (D-079).
+exigen rol **`admin` o `purchasing`** + `StrongActor` (D-079/D-086, con la enmienda de D-128 del 2026-10-30, que
+sustituye «único rol autorizado: `admin`»); no se crea ningún rol ni permiso nuevo —`purchasing` ya existe en el código
+y lo asigna la aprobación web— y los roles de los demás módulos no cambian.
 
 ## Revisión del contrato C0 — 2026-10-29 (D-086 a D-092)
 
@@ -240,11 +250,11 @@ restringir el modo demo a `simulation` o retirarlo. No se implementa en C1.
 
 | Pista | Contenido | Depende de |
 |---|---|---|
-| **A · Backend cotizador** | D0 → G1 → C4 → C3 → C5-A → O1–O4 → C5-B → C5-C → C5-D; después C5-E | C1 **cerrado** (0008 aplicada); C2 implementado en código; D0 **en curso**; G1 requiere autorización de migración |
-| **B · Diseño Lovable** | Mockup aprobado, sin modificar; buscador y cotizador contra el contrato v0.2 rev5, con datos `fixture` etiquetados | C0 **cerrada**; D0 **en curso**; no consume endpoints que aún no existen |
+| **A · Backend cotizador** | D0 → G1 → C4 → C3 → C5-A → O1–O4 → C5-B → C5-C → C5-D; después C5-E | C1 **cerrado** (0008 aplicada); C2 implementado en código; D0 **cerrado**; G1 requiere autorización de migración |
+| **B · Diseño Lovable** | Mockup aprobado, sin modificar; buscador y cotizador contra el contrato v0.2 rev6, con datos `fixture` etiquetados | C0 **cerrada**; D0 **cerrado**; no consume endpoints que aún no existen |
 | **C · Telegram** | H1-B.5 con el bot real (lo crea el usuario); T1 (pantalla de control individual) | Token del bot; API de H1-B.4 ya existente |
 | **D · Operación** | Contrato generado desde FastAPI, `supabase_jwt` en demo, URL HTTPS + CORS, CI | Autorización de configuración y despliegue |
-| **E · Documentación** | Actualizar `CLAUDE.md` y `docs/AUTH_SUPABASE.md` (C2 implementado, G1, D-113/D-115 a D-127) | Posterior a D0, con autorización |
+| **E · Documentación** | ~~Actualizar `CLAUDE.md` y `docs/AUTH_SUPABASE.md`~~ **Hecho el 2026-10-30** (C2 implementado, G1, D-113/D-115 a D-128, contrato rev6): sin código ni migraciones | Cerrada con autorización del 2026-10-30 |
 
 ### Regla de integración real
 
@@ -267,7 +277,7 @@ Se cerraron por **revisión del documento**, no por pruebas. El contrato es `doc
 | C0-06 | Elegibilidad tri-estado **por candidato** con causas; solo `eligible` compone un total `complete`; estar en `supplier_totals` no implica elegibilidad |
 | C0-07 | Parcial sin `total` ni opción de ganar; `lowest_verified_total` acotado (`is_global_claim=false`) con cota inferior nullable (LB-1…LB-8) |
 | C0-08 | Estados `ok/stale/failed/not_configured`; una caída nunca es «sin ofertas» |
-| C0-09 | Seguridad declarada: Bearer, organización desde el `sub`, 404 entre organizaciones, rol `admin` + `StrongActor` |
+| C0-09 | Seguridad declarada: Bearer, organización desde el `sub`, 404 entre organizaciones, rol `admin` o `purchasing` + `StrongActor` (D-079/D-086, ampliados por D-128) |
 | C0-10 | Ninguna operación crea carrito, propuesta, aprobación ni ejecución (X1/X2 de D-114 son las únicas excepciones) |
 | C0-11 | Sección «fuera de v0» explícita |
 | C0-12 | Decisiones D-078 a D-093 registradas; D-076 y D-077 diferidas |
@@ -279,10 +289,11 @@ Se cerraron por **revisión del documento**, no por pruebas. El contrato es `doc
 | C0-18 | No interferencia comprobable: un criterio no altera precios, totales, elegibilidad ni visibilidad |
 | C0-19 | Nota vs criterio confirmado sin estados ambiguos: no existe `proposed`; nada se auto-promueve y **una nota y su criterio nunca están activos a la vez** |
 
-Todas las operaciones del cotizador exigen rol `admin` (D-079) **y** `StrongActor` (D-086), verificados por separado:
+Todas las operaciones del cotizador exigen rol `admin` **o** `purchasing` **y** `StrongActor` (D-079/D-086, con la
+enmienda de D-128), verificados por separado:
 el rol con un chequeo de rol —sin crear permisos nuevos— y `StrongActor` con su semántica real actual (rechazo de la
 cabecera demo fuera de `simulation`; **no** es MFA). Leer precios, importar Excel, administrar proveedores o fuentes y
-registrar criterios no crea permisos nuevos: es el mismo rol administrativo existente.
+registrar criterios no crea permisos nuevos: es el mismo rol operativo existente.
 
 ## Decisiones abiertas
 
@@ -463,3 +474,27 @@ perezosa, `/api/v1/health` (liveness) y `/health/ready` (503 honesto si falta/ca
 5. **Pruebas:** `backend/tests` (6 pasan; 1 contra Postgres real se omite sin `TEST_DATABASE_URL`).
 6. **Aceptación:** app arranca, salud responde, pruebas pasan. 7. **Riesgos:** PostgreSQL no verificado en vivo
 (Docker no estaba corriendo); Alembic no probado contra una BD. 8. **Continuar:** ver README y D-002/D-005.
+
+## Revisión 6 del contrato — fase documental (2026-10-30, D-128)
+
+**Hecho:** `docs/contracts/cotizador-v0.2.md` pasa a **revisión 6**; se registra **D-128**; y se alinean `CLAUDE.md`,
+`docs/AUTH_SUPABASE.md` y este roadmap. **No se modificó código, modelo, pruebas, migración ni base de datos.**
+
+- **D-128 — aprobación web con rol operativo.** Aprobar una solicitud crea el `app_user` con `roles = ['purchasing']`,
+  `active = true` y `auth_subject` en el mismo paso. El Cotizador (E10–E15) admite `admin` **o** `purchasing` +
+  `StrongActor`, salvo la revisión de interpretaciones, que sigue siendo de `admin`. Aprobar no otorga `admin`,
+  `is_superadmin`, permisos `MANAGE_*` ni acceso a Telegram.
+- **Enmiendas, sin reescribir historia.** D-079 («único rol autorizado `admin`»), D-114 (`admin` + `StrongActor` para
+  E10/E11/E12) y D-117 («aprobar no asigna roles») conservan su texto y reciben la nota «vigente según D-128».
+- **Telegram intacto.** La web no crea cuenta, vínculo ni chat autorizado; la autorización es por cuenta (D-118) y el
+  selector del teléfono compartido es identificación declarada dentro de un chat ya autorizado. **No se agrega
+  `telegram_reporter`** ni ninguna columna nueva; excluir a alguien de ese selector es decisión de **T1**.
+- **Sin cambios de esquema.** v0.2 sigue con **9 tablas** y **7 columnas**; G1 sigue con **1 tabla** y **5 columnas** en
+  `0012`. `farmacia` sigue en **0008** y el código en **0011**.
+- **Seguridad y vigencia, confirmadas el 2026-10-30.** La autenticación es el **JWT de Supabase validado** y
+  `StrongActor` con su semántica vigente (D-086/D-099): **no es MFA ni una segunda autenticación**, no bloquea a una
+  persona aprobada en modo JWT y la autenticación fuerte real queda para **H5**. La aprobación **no fija vencimiento**
+  (`web_access_expires_at = NULL`, sin plazo automático): el acceso sigue vigente hasta revocación, desactivación o
+  vencimiento explícito.
+- **P-7 resuelto:** la revisión de interpretaciones de IA sigue exigiendo `admin` + `StrongActor`; no se amplía a
+  `purchasing`.
