@@ -2,27 +2,31 @@
 
 El orden no reduce el alcance: la presentación final a Pao integra todos los módulos.
 
-**Estado vigente al 2026-10-30 (fase D0).** El **cotizador** es la prioridad principal y **Telegram no bloquea** su
-desarrollo. Las fases `C*` son el camino crítico; las `H*` siguen vigentes pero dejan de ser requisito previo.
-**D0** consolida el contrato v0.2 **revisión 6** y las decisiones D-113 y D-115 a **D-128**. La revisión 5 cierra el
-ciclo de reposición **sin recepción física** (cobertura con compras confirmadas, estado por Telegram y administradores
-que informan faltantes); la recepción y las diferencias de entrega quedan fuera del MVP (D-126). **D-127** fija la
-regla definitiva de cierre: cotizar cubre de forma provisional y **no cierra**; la necesidad queda gestionada solo
-cuando las compras confirmadas cubren toda la cantidad pedida, y una compra parcial mantiene abierto el mismo ciclo con
-el saldo, sin solicitud duplicada. La **revisión 6 (D-128)** añade que aprobar una solicitud de acceso web otorga el rol
-operativo `purchasing` y habilita el Cotizador, sin tocar Telegram ni el esquema.
-**No se implementa código, no se crean ni aplican migraciones y no se toca la base `farmacia`.**
+**Estado vigente al 2026-11-02 (G1 implementado en código).** El **cotizador** es la prioridad principal y **Telegram
+no bloquea** su desarrollo. Las fases `C*` son el camino crítico; las `H*` siguen vigentes pero dejan de ser requisito
+previo. **D0** consolidó el contrato v0.2 **revisión 5 → 6**; la **revisión 7 (2026-11-02, D-130)** establece que el
+**único perfil funcional web es `admin`** y que **aprobar una solicitud de acceso otorga `admin`** (reemplaza D-128;
+`purchasing` y `auxiliary` quedan como roles de Telegram). La revisión 5 cierra el ciclo de reposición **sin recepción
+física** (cobertura con compras confirmadas, estado por Telegram y administradores que informan faltantes); la recepción
+y las diferencias de entrega quedan fuera del MVP (D-126). **D-127** fija la regla definitiva de cierre: cotizar cubre
+de forma provisional y **no cierra**; la necesidad queda gestionada solo cuando las compras confirmadas cubren toda la
+cantidad pedida. **Enmienda del 2026-11-02: la compra es todo o nada** —se registra completa o no se registra, y al
+registrarse libera el faltante—; **no hay compras parciales por productos ni cantidades en la demo**. D-131
+(reporte repetido por Telegram) y D-132 (observaciones abiertas a cualquier `admin`, sin pasos extra) son documentales.
+**G1 está implementado en código con la migración 0012 creada y probada, pero no se aplicó a ninguna base operativa y
+no hay despliegue.**
 
 ## Estado real de migraciones
 
 | Ámbito | Versión | Notas |
 |---|---|---|
 | Base `farmacia` | **0008** | 32 tablas; la 0008 se aplicó el 2026-10-29 con respaldo `pg_dump` verificado, ensayo de subida y reversión y verificación por catálogo (D-098) |
-| Código (`backend/migrations/versions`) | **0011** | 0009 perfil de importación, 0010 estado de revisión de oferta y 0011 solicitudes de importación (C2). **No aplicadas a `farmacia`** |
-| Head propuesto | **0019** | G1 0012, C4 0013, C3 0014, C5-A 0015, O 0016, C5-B 0017 (3 tablas), C5-C 0018, C5-D 0019. No creado |
+| Código (`backend/migrations/versions`) | **0012** | 0009–0011 de C2 y **0012** de G1 (acceso web, solicitudes y superadministración). **No aplicadas a `farmacia`** |
+| Head propuesto | **0019** | G1 0012 (**creada**), C4 0013, C3 0014, C5-A 0015, O 0016, C5-B 0017 (3 tablas), C5-C 0018, C5-D 0019. Desde 0013, no creadas |
 
-**No se aplica ninguna migración nueva a `farmacia` sin autorización explícita.** Las migraciones de C2 ya existen en
-el código, pero su aplicación a la base real sigue pendiente de autorización.
+**No se aplica ninguna migración nueva a `farmacia` sin autorización explícita.** Las migraciones de C2 y G1 ya existen
+en el código, pero su aplicación a la base real sigue pendiente de autorización (0012 tampoco se aplicó a
+`farmacia_demo`, que sigue en 0011).
 
 ## Fases
 
@@ -39,13 +43,13 @@ el código, pero su aplicación a la base real sigue pendiente de autorización.
 | **C0** | Contrato integral del cotizador (E1–E9): búsqueda, ofertas, comparación, proveedores, fuentes y criterios comerciales con anotación | C0-01 a C0-19 | **Completada — aprobada y congelada** (2026-10-29, D-078 a D-093) |
 | **C1** | Modelo de datos del cotizador: `trade_item`, ficha por cadena, proveedor, fuente, mapping, ofertas, despacho, referencias, importación, comparaciones, criterios y búsquedas | AC16–AC20 (base), AC29–AC31 (base) | **Hecha** (2026-10-29): **0008 aplicada** a `farmacia` (D-098) |
 | **C2** | Conector + `manual_import` (Excel) + fuente `fixture` etiquetada + `catalog-load` + revisión de ofertas + E8 | AC16, AC17 | **Implementada en código** (0009–0011 y endpoint E8), **no aplicada a `farmacia`**. D-077/D-100 a D-108 |
-| **D0** | Consolidación documental: contrato v0.2 rev6, D-113 y D-115 a D-128, este roadmap | — | **Cerrada** (2026-10-30); sin código ni migraciones |
-| **G1** | Acceso web con Google: solicitudes, campanita con aprobación que asigna `purchasing` (D-128) y sin vencimiento automático, superadministradora, revocación y vencimiento explícito; seguridad JWT + `StrongActor` vigente (sin MFA); Telegram sin cambios | AC09 (web), D-117/D-119/D-128 | Pendiente; migración **0012** |
+| **D0** | Consolidación documental: contrato v0.2 rev6, D-113 y D-115 a D-128, este roadmap | — | **Cerrada** (2026-10-30); sin código ni migraciones. Revisión 7 del 2026-11-02 (D-130 a D-132) la supera en el modelo de acceso |
+| **G1** | Acceso web con Google: solicitudes, campanita con aprobación que **otorga `admin`** (D-130) y sin vencimiento automático, superadministradora como control técnico, revocación y vencimiento explícito; seguridad JWT + `StrongActor` vigente (sin MFA); Telegram sin cambios | AC09 (web), D-117/D-119/D-130 | **Implementada en código** (2026-11-02); migración **0012** creada y probada, **no aplicada a `farmacia`** |
 | **C4** | E1 con `relation` y `attributes.ingredients[]` (E3 conserva su forma); búsqueda de cadenas E15 (sin persistencia) | AC16–AC20, AC29–AC31 | Pendiente; migración **0013** (3 tablas de búsqueda) |
 | **C3** | Comparador determinista E5: elegibilidad, cantidades, impuestos/descuentos/despacho, total parcial, cota inferior (LB-1…LB-8), explicabilidad y anotación de criterios | AC18–AC20, AC31 | Pendiente; migración **0014** (5 tablas) |
 | **C5-A + F1** | Cotizaciones, carritos por proveedor, líneas, vínculo a faltante, grilla «Productos faltantes» y «Buscar»; observaciones O1 | AC20, AC31, AC37 | Pendiente; migración **0015** |
 | **O1–O4** | Interpretación de observaciones con OpenAI: O2 interpretación, O3 precedencia, O4 consejo explicado | AC37, AC39 | Pendiente; migración **0016** |
-| **C5-B** | Compras registradas, inmutabilidad, correcciones, anulación y `purchase_index`; **cierre del faltante por compra confirmada y compras parciales** (D-127). **La recepción física queda fuera del MVP (D-126)** | AC21–AC24, AC39 | Pendiente; migración **0017** (**3 tablas**) |
+| **C5-B** | Compras registradas **todo o nada** (enmienda a D-127, 2026-11-02), inmutabilidad, correcciones, anulación y `purchase_index`; **cierre y liberación del faltante por compra confirmada**. **La recepción física queda fuera del MVP (D-126)**; las compras parciales también quedan fuera de la demo | AC21–AC24, AC39 | Pendiente; migración **0017** (**3 tablas**) |
 | **C5-C** | Historial operativo: búsqueda por índice con `pg_trgm`/`unaccent` | AC21, AC31 | Pendiente; migración **0018** (extensión e índices) |
 | **C5-D** | Archivo externo y purga controlada: diseño cerrado, **ejecución bloqueada** | AC36 (retención) | Pendiente; migración **0019** solo con proveedor aprobado |
 | **C5-E** | Enganche de navegación: Mis cotizaciones, Historial, Proveedores (E6) | AC20 | Pendiente; sin migración |
@@ -61,15 +65,16 @@ el código, pero su aplicación a la base real sigue pendiente de autorización.
 ## Reordenamiento D0 — bloques aprobados (2026-10-30)
 
 **Hecho:** contrato `docs/contracts/cotizador-v0.2.md` **revisión 5** (→ **revisión 6** en la fase documental del
-2026-10-30, D-128); decisiones **D-113** y **D-115 a D-127** (→ **D-128** en esa misma fase); este roadmap. **No se
-modificó código, modelo, base de datos, migraciones, OpenAPI ni el mockup aprobado.**
+2026-10-30, D-128; → **revisión 7** el 2026-11-02, D-130); decisiones **D-113** y **D-115 a D-127** (→ **D-128** en esa
+misma fase, luego superada); este roadmap. **No se modificó código, modelo, base de datos, migraciones, OpenAPI ni el
+mockup aprobado** en D0.
 
 **Orden de ejecución acordado:**
 
 | # | Bloque | Contenido | Depende de | Migración |
 |---|---|---|---|---|
 | 1 | **D0** | Contrato v0.2 rev5, decisiones y roadmap | C0/C1/C2 | — |
-| 2 | **G1** | Google, solicitudes, campanita, superadministradora, vencimiento y revocación web | D0 | **0012** |
+| 2 | **G1** | Google, solicitudes, campanita, superadministradora, vencimiento y revocación web | D0 | **0012** (creada) |
 | 3 | **C4** | E1 con `relation`, `attributes.ingredients[]`, cualquier producto (E3 conserva su forma); E15 de cadenas | G1 | **0013** |
 | 4 | **C3** | E5: comparación, elegibilidad, totales, cotas y criterios | C4 | **0014** |
 | 5 | **C5-A + F1** | Cotizaciones, carritos, líneas, vínculo a faltante, grilla, «Buscar», observaciones O1 | C3 | **0015** |
@@ -82,8 +87,8 @@ modificó código, modelo, base de datos, migraciones, OpenAPI ni el mockup apro
 
 **C5-E** (enganche de navegación) puede ir en paralelo con C5-A/C5-B; **C6a** y **T1** no crean migraciones.
 
-**Enmienda D-128 (revisión 6, 2026-10-30).** Aprobar una solicitud en G1 crea el `app_user` con `roles =
-['purchasing']` y `auth_subject` en el mismo paso; el Cotizador (E10–E15) admite `admin` **o** `purchasing` +
+**Enmienda D-128 (revisión 6, 2026-10-30) — superada por D-130 el 2026-11-02.** Aprobar una solicitud en G1 crea el
+`app_user` con `roles = ['admin']` y `auth_subject` en el mismo paso (D-130); el Cotizador (E10–E15) admite `admin` +
 `StrongActor`, salvo la revisión de interpretaciones, que sigue siendo de `admin`. G1 conserva sus **5 columnas** y su
 única tabla: no se agrega `telegram_reporter` ni ninguna otra columna. Aprobar no crea cuenta ni vínculo de Telegram;
 el selector del teléfono compartido sigue siendo identificación declarada dentro de un chat autorizado. Excluir a
@@ -118,9 +123,9 @@ configuración.**
 Telegram y Supabase Auth (el cotizador es aditivo).
 
 **Rol del cotizador:** es una herramienta **interna** usada solo por los jefes de la farmacia. Todas sus operaciones
-exigen rol **`admin` o `purchasing`** + `StrongActor` (D-079/D-086, con la enmienda de D-128 del 2026-10-30, que
-sustituye «único rol autorizado: `admin`»); no se crea ningún rol ni permiso nuevo —`purchasing` ya existe en el código
-y lo asigna la aprobación web— y los roles de los demás módulos no cambian.
+exigen rol **`admin`** + `StrongActor` (D-130, que sustituye la enmienda D-128 y la cláusula «único rol autorizado:
+`admin`» de D-079); no se crea ningún rol ni permiso nuevo. `purchasing` y `auxiliary` siguen existiendo para Telegram
+y no habilitan el Cotizador.
 
 ## Revisión del contrato C0 — 2026-10-29 (D-086 a D-092)
 
@@ -250,11 +255,11 @@ restringir el modo demo a `simulation` o retirarlo. No se implementa en C1.
 
 | Pista | Contenido | Depende de |
 |---|---|---|
-| **A · Backend cotizador** | D0 → G1 → C4 → C3 → C5-A → O1–O4 → C5-B → C5-C → C5-D; después C5-E | C1 **cerrado** (0008 aplicada); C2 implementado en código; D0 **cerrado**; G1 requiere autorización de migración |
-| **B · Diseño Lovable** | Mockup aprobado, sin modificar; buscador y cotizador contra el contrato v0.2 rev6, con datos `fixture` etiquetados | C0 **cerrada**; D0 **cerrado**; no consume endpoints que aún no existen |
-| **C · Telegram** | H1-B.5 con el bot real (lo crea el usuario); T1 (pantalla de control individual) | Token del bot; API de H1-B.4 ya existente |
+| **A · Backend cotizador** | D0 → G1 → C4 → C3 → C5-A → O1–O4 → C5-B → C5-C → C5-D; después C5-E | C1 **cerrado** (0008 aplicada); C2 y **G1 implementados en código**; D0 **cerrado**; G1 requiere autorización para aplicar `0012` |
+| **B · Diseño Lovable** | Mockup aprobado, sin modificar; buscador y cotizador contra el contrato v0.2 rev7, con datos `fixture` etiquetados | C0 **cerrada**; D0 **cerrado**; no consume endpoints que aún no existen |
+| **C · Telegram** | H1-B.5 con el bot real (lo crea el usuario); T1 (pantalla de control individual, con D-131) | Token del bot; API de H1-B.4 ya existente |
 | **D · Operación** | Contrato generado desde FastAPI, `supabase_jwt` en demo, URL HTTPS + CORS, CI | Autorización de configuración y despliegue |
-| **E · Documentación** | ~~Actualizar `CLAUDE.md` y `docs/AUTH_SUPABASE.md`~~ **Hecho el 2026-10-30** (C2 implementado, G1, D-113/D-115 a D-128, contrato rev6): sin código ni migraciones | Cerrada con autorización del 2026-10-30 |
+| **E · Documentación** | **Hecho el 2026-11-02**: contrato **rev7**, **D-130 a D-132**, `CLAUDE.md`, `docs/AUTH_SUPABASE.md` y este roadmap alineados con G1 implementado | Cerrada con la orden del 2026-11-02 |
 
 ### Regla de integración real
 
@@ -277,7 +282,7 @@ Se cerraron por **revisión del documento**, no por pruebas. El contrato es `doc
 | C0-06 | Elegibilidad tri-estado **por candidato** con causas; solo `eligible` compone un total `complete`; estar en `supplier_totals` no implica elegibilidad |
 | C0-07 | Parcial sin `total` ni opción de ganar; `lowest_verified_total` acotado (`is_global_claim=false`) con cota inferior nullable (LB-1…LB-8) |
 | C0-08 | Estados `ok/stale/failed/not_configured`; una caída nunca es «sin ofertas» |
-| C0-09 | Seguridad declarada: Bearer, organización desde el `sub`, 404 entre organizaciones, rol `admin` o `purchasing` + `StrongActor` (D-079/D-086, ampliados por D-128) |
+| C0-09 | Seguridad declarada: Bearer, organización desde el `sub`, 404 entre organizaciones, rol `admin` + `StrongActor` (D-130; D-128 superada) |
 | C0-10 | Ninguna operación crea carrito, propuesta, aprobación ni ejecución (X1/X2 de D-114 son las únicas excepciones) |
 | C0-11 | Sección «fuera de v0» explícita |
 | C0-12 | Decisiones D-078 a D-093 registradas; D-076 y D-077 diferidas |
@@ -289,8 +294,8 @@ Se cerraron por **revisión del documento**, no por pruebas. El contrato es `doc
 | C0-18 | No interferencia comprobable: un criterio no altera precios, totales, elegibilidad ni visibilidad |
 | C0-19 | Nota vs criterio confirmado sin estados ambiguos: no existe `proposed`; nada se auto-promueve y **una nota y su criterio nunca están activos a la vez** |
 
-Todas las operaciones del cotizador exigen rol `admin` **o** `purchasing` **y** `StrongActor` (D-079/D-086, con la
-enmienda de D-128), verificados por separado:
+Todas las operaciones del cotizador exigen rol `admin` **y** `StrongActor` (D-130, que supera la enmienda D-128),
+verificados por separado:
 el rol con un chequeo de rol —sin crear permisos nuevos— y `StrongActor` con su semántica real actual (rechazo de la
 cabecera demo fuera de `simulation`; **no** es MFA). Leer precios, importar Excel, administrar proveedores o fuentes y
 registrar criterios no crea permisos nuevos: es el mismo rol operativo existente.
@@ -364,10 +369,12 @@ código, modelo, base de datos, migraciones ni el mockup.**
   recepción, correcciones/anulaciones de recepción, endpoints, permisos, validaciones ni pantallas, y sin cierre
   condicionado a recepción. C5-B vuelve a **3 tablas** y v0.2 a **9 tablas**. Una compra confirmada marca el término
   del proceso que administra el MVP; **no certifica** la llegada física.
-- **D-127 — cierre solo por compra confirmada.** La necesidad se considera gestionada cuando la cantidad solicitada
-  queda **completamente cubierta por compras confirmadas**; `fulfilled` no significa recibido. Cotizar cubre de forma
-  **provisional** (mientras la línea esté en un carrito activo) y **nunca** cierra. Compra parcial: 10 pedidas, 6
-  compradas → 6 cubiertas y 4 abiertas **en el mismo faltante**, sin solicitud duplicada, hasta completar o anular.
+- **D-127 — cierre solo por compra confirmada (enmienda del 2026-11-02: compra todo o nada).** La necesidad se
+  considera gestionada cuando la cantidad solicitada queda **completamente cubierta por compras confirmadas**;
+  `fulfilled` no significa recibido. Cotizar cubre de forma **provisional** (mientras la línea esté en un carrito
+  activo) y **nunca** cierra. La compra se registra **completa o no se registra**; al registrarse cierra y libera el
+  faltante para un nuevo reporte. ~~Compra parcial: 10 pedidas, 6 compradas → 6 cubiertas y 4 abiertas en el mismo
+  faltante~~ **Fuera de la demo (2026-11-02):** no hay compras parciales por productos ni cantidades.
   `is_pending` significa «el ciclo sigue abierto» y se distinguen dos saldos: `pending_quantity` (falta **cotizar**) y
   el derivado `pending_purchase_quantity` (falta **comprar**); un faltante cubierto por un carrito se ve `in_quote`, no
   «sin gestionar». La distinción
@@ -475,7 +482,11 @@ perezosa, `/api/v1/health` (liveness) y `/health/ready` (503 honesto si falta/ca
 6. **Aceptación:** app arranca, salud responde, pruebas pasan. 7. **Riesgos:** PostgreSQL no verificado en vivo
 (Docker no estaba corriendo); Alembic no probado contra una BD. 8. **Continuar:** ver README y D-002/D-005.
 
-## Revisión 6 del contrato — fase documental (2026-10-30, D-128)
+## Revisión 6 del contrato — fase documental (2026-10-30, D-128) — **superada por la revisión 7**
+
+> Se conserva como historial. **D-130 (2026-11-02) reemplaza D-128:** aprobar otorga `admin` y `purchasing` no es
+> perfil web. Lo demás —aprobación transaccional, Telegram intacto, seguridad JWT + `StrongActor` sin MFA, acceso sin
+> vencimiento automático, P-7— sigue vigente.
 
 **Hecho:** `docs/contracts/cotizador-v0.2.md` pasa a **revisión 6**; se registra **D-128**; y se alinean `CLAUDE.md`,
 `docs/AUTH_SUPABASE.md` y este roadmap. **No se modificó código, modelo, pruebas, migración ni base de datos.**
@@ -498,3 +509,29 @@ perezosa, `/api/v1/health` (liveness) y `/health/ready` (503 honesto si falta/ca
   vencimiento explícito.
 - **P-7 resuelto:** la revisión de interpretaciones de IA sigue exigiendo `admin` + `StrongActor`; no se amplía a
   `purchasing`.
+
+## Revisión 7 del contrato y G1 implementado en código (2026-11-02, D-130 a D-132)
+
+**Hecho:** `docs/contracts/cotizador-v0.2.md` pasa a **revisión 7**; se registran **D-130** (reemplaza D-128),
+**D-131** y **D-132**; se alinean `CLAUDE.md`, `docs/AUTH_SUPABASE.md` y este roadmap; y **G1 queda implementado en
+código** con la migración **0012** creada y probada. **No se aplicó ninguna migración a una base operativa**
+(`farmacia` sigue en 0008, `farmacia_demo` en 0011), **no se desplegó** y **no se tocó Lovable**.
+
+- **D-130 — un solo perfil funcional web: `admin`.** Google/Supabase identifica pero no concede; se solicita acceso;
+  todas las `admin` ven las pendientes; cualquier `admin` aprueba o rechaza; aprobar crea `roles = ['admin']`,
+  `active` y `auth_subject` en un paso, sin vencimiento. `superadmin` es control técnico (ve todas las organizaciones,
+  otorga/revoca, no aprueba en nombre de una farmacia). Telegram y la web siguen separados.
+- **D-131 — reporte repetido por Telegram.** Si el producto ya está en la lista activa, el bot informa quién lo
+  reportó antes y, si la persona confirma, registra un reporte **dentro del faltante existente** sin duplicar el
+  producto; el producto se libera al registrar la compra; el historial se conserva; **Telegram no usa OpenAI**.
+  Se implementa en **T1**.
+- **D-132 — observaciones comerciales abiertas.** Cualquier `admin` usa el botón «Observación» con texto libre; las
+  observaciones persisten y afectan las propuestas de IA; no se exigen explicaciones ni formularios ni pasos extra.
+  Complementa D-116; se implementa en **O1–O4 (C5-A)**.
+- **D-129 sigue vigente:** observaciones comerciales en `/api/v1/commercial-observations`; `/api/v1/observations`
+  queda solo para faltantes. El contrato rev7 ya nombró la ruta.
+- **G1 en código:** tabla `web_access_request`, cinco columnas en `app_user`, índice de una sola superadministradora
+  activa, endpoints de solicitud/campanita/aprobación/rechazo y de otorgar/revocar, `set-superadmin` por CLI,
+  permiso `MANAGE_WEB_ACCESS` solo para `admin`, `WEB_ACCESS_ORGANIZATION_ID`, cabeceras demo `X-Demo-*` y
+  `403 WEB_ACCESS_EXPIRED`. **16 pruebas nuevas; 472 en la suite con `REQUIRE_DB=1`.**
+- **Siguiente paso:** solicitar autorización para aplicar `0012` y, después, **C4** (`0013`).

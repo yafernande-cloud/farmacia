@@ -1,6 +1,6 @@
 # Contrato del cotizador — v0.2 (cotizaciones, compras, historial, observaciones, accesos y precios públicos)
 
-**Estado: aprobado conceptualmente, 2026-10-30 (revisión 6).** No implementado. La revisión 5 se aprobó en el cierre de
+**Estado: aprobado conceptualmente, 2026-10-30 (revisión 7, 2026-11-02).** No implementado. La revisión 5 se aprobó en el cierre de
 D0; este encabezado corrige la contradicción que la llamaba «borrador no aprobado» (**C-0**, resuelta en D-128). Este
 documento **no modifica C0** (`docs/contracts/cotizador-v0.md`, congelado por D-093): lo **amplía** y declara cada
 ampliación de forma explícita. Ninguna de sus operaciones corre en el sistema mientras no se implemente.
@@ -33,12 +33,27 @@ acceso al bot (§9.10). `purchasing` conserva sus permisos actuales y **no se am
 (§9.3, paso 8). Sustituye la cláusula «aprobar no asigna roles» de las
 revisiones 3 a 5 y enmienda **D-079**, **D-114** y **D-117** sin reescribir su historial.
 
-**Cierre del ciclo (D-127, 2026-10-30):** la cobertura por **cotización** es **provisional** y nunca cierra; solo la
-**compra confirmada** cierra, y solo cuando cubre **toda** la cantidad pedida conocida. Una compra **parcial** deja el
-mismo ciclo abierto con el saldo visible, sin crear una necesidad duplicada. `fulfilled` no significa recibido.
+**Revisión 7 (corrección funcional, 2026-11-02; D-130):** el Cotizador tiene **un único perfil funcional web:
+`admin`**. Se elimina `purchasing` como perfil del Cotizador: la aprobación de una solicitud de acceso crea el
+`app_user` con **`roles = ['admin']`**, `active` y `auth_subject` en el mismo paso, sin vencimiento automático, y la
+persona obtiene acceso completo. Cualquier `admin` aprueba o rechaza; no hay un aprobador separado. `superadmin` sigue
+siendo **control técnico** de la propietaria, no un perfil funcional. `purchasing` y `auxiliary` **siguen existiendo**
+para Telegram y los flujos de faltantes, pero **no son perfiles del Cotizador web**. **No agrega tablas ni columnas**
+(siguen 9 y 7). Sustituye a D-128; mantiene la independencia con Telegram y la seguridad JWT + `StrongActor`.
 
-**Decisión que lo respalda:** D-114, con las enmiendas de D0 registradas en la misma sección de decisiones, y **D-128**
-(aprobación web con el rol operativo `purchasing`).
+**Corrección de alcance (2026-11-02; enmienda a D-127):** para la demo, la compra es **todo o nada**. Se registra
+completa —todos los productos y cantidades seleccionados— o no se registra; al registrarse, los faltantes cubiertos se
+cierran y se liberan para nuevos reportes por Telegram. **No hay compras parciales por productos ni cantidades**; no
+se implementa lógica para ellas y quedan fuera del alcance de la demo.
+
+**Cierre del ciclo (D-127, 2026-10-30):** la cobertura por **cotización** es **provisional** y nunca cierra; solo la
+**compra confirmada** cierra, y solo cuando cubre **toda** la cantidad pedida conocida. **Compra todo o nada (enmienda a
+D-127, 2026-11-02):** la compra se registra **completa** —todos los productos y cantidades seleccionados— o no se
+registra; al registrarse, los faltantes cubiertos se cierran y el producto vuelve a poder reportarse. **No hay compras
+parciales por productos ni cantidades en la demo.** `fulfilled` no significa recibido.
+
+**Decisión que lo respalda:** D-114, con las enmiendas de D0 registradas en la misma sección de decisiones, y **D-130**
+(perfil único `admin`; aprobación web que otorga ese perfil), que sustituye a D-128.
 **Decisiones relacionadas:** D-037 (separación de datos), D-064 a D-072 (Supabase Auth y enlaces), D-079/D-086
 (permisos y `StrongActor`), D-087/D-088 (cotas y cálculo), D-091 (criterios comerciales), D-110 (`review_status`),
 D-111 (idempotencia de importación), D-112 (investigación de catálogos de cadenas).
@@ -127,20 +142,20 @@ Son tres planos distintos. **Ninguno otorga el otro.**
 | **Web** | JWT de Supabase válido + `app_user.auth_subject` + `app_user.active` + `web_access_expires_at` vigente + `roles` | Acceso a Telegram; roles por sí solo no habilita el bot |
 | **Telegram** | `telegram_account.status = active` + identidad vigente resuelta en el servidor | Acceso web ni roles |
 | **Superadministración** | `app_user.is_superadmin` | Datos operativos de otras organizaciones; solo metadatos administrativos (§9.6) |
-| **Cotizador (E10–E12)** | rol `admin` **o** `purchasing`, **y** `StrongActor` (D-128) | Nada fuera de su organización; `purchasing` no administra usuarios ni la matriz `MANAGE_*` |
+| **Cotizador (E10–E12)** | rol **`admin`**, **y** `StrongActor` (D-130) | Nada fuera de su organización; no existe un segundo perfil funcional web |
 | **Informar faltantes (Telegram)** | `telegram_account.status = active` + identidad vigente + `REPORT_SHORTAGE` | Acceso web; el rol `admin` **no** habilita el bot por sí solo |
 
 **Sin permisos de recepción (D-126).** El MVP no tiene operación de recepción física, así que no crea permiso, pantalla
-ni endpoint para confirmarla. Cotizar y confirmar compras siguen siendo operaciones web de `admin` **o** `purchasing` +
-`StrongActor` (D-128).
+ni endpoint para confirmarla. Cotizar y confirmar compras son operaciones web de **`admin`** + `StrongActor` (D-130).
 
 Una persona puede tener Telegram sin web y web sin Telegram. Bloquear Telegram no revoca la web; revocar la web no
 bloquea Telegram. La **desactivación de la persona** (`app_user.active = false`) es una suspensión más fuerte y corta
 ambos planos. El token de Telegram nunca se expone en la API web.
 
-**Aprobar una solicitud web no concede Telegram (D-128).** No crea cuenta de Telegram, ni vínculo, ni solicitud, ni
+**Aprobar una solicitud web no concede Telegram (D-130).** No crea cuenta de Telegram, ni vínculo, ni solicitud, ni
 autoriza chat alguno; la autorización del bot sigue siendo por cuenta y por chat (D-118). El selector del teléfono
-compartido es identificación declarada dentro de un chat ya autorizado, no una lista de autorizados (§9.10).
+compartido es identificación declarada dentro de un chat ya autorizado, no una lista de autorizados (§9.10). La
+persona aprobada recibe el perfil **`admin`**, que tampoco la habilita en el bot: son planos distintos.
 
 **`admin` también informa faltantes (D-124).** El rol `admin` conserva sus permisos de gestión y **además** obtiene
 `REPORT_SHORTAGE`; no se crea un rol nuevo ni se fusionan planos. Para usar Telegram, una administradora necesita su
@@ -175,7 +190,7 @@ físico desde la API, y auditoría en `audit_event` dentro de la misma transacci
 `web_access_request`). **Columnas nuevas respecto del esquema actual: 7**: `quote_line.demand_item_id` (ya prevista en
 la revisión 2), `quote_line.coverage_relation` (nueva en la revisión 3) y cinco en `app_user` (§2.10). **6 son nuevas
 en la revisión 3; las revisiones 4, 5 y 6 no agregan columnas.** La revisión 5 no agrega tablas: retira las dos de
-recepción que proponía la revisión 4 (D-126). La revisión 6 tampoco agrega tablas ni columnas (D-128).
+recepción que proponía la revisión 4 (D-126). Las revisiones 6 y 7 tampoco agregan tablas ni columnas (D-128/D-130).
 
 ### 2.1 `quote` — cotización general
 
@@ -400,8 +415,9 @@ Nombre deliberadamente distinto de `telegram_access_request` (D-118) para no con
 
 `UNIQUE (organization_id, auth_subject) WHERE status='pending'`: una solicitud pendiente por persona y organización;
 las rechazadas se conservan y permiten una nueva solicitud posterior. **La solicitud no otorga nada**: solo la
-aprobación habilita. La aprobación **asigna el rol operativo `purchasing`** y nada más (D-128): no otorga `admin`, ni
-permisos `MANAGE_*`, ni la bandera `is_superadmin`, y no crea ninguna cuenta de Telegram (§9.3, paso 8; §9.10).
+aprobación habilita. La aprobación **crea la persona con el perfil `admin`** (D-130): `roles = ['admin']`, `active` y
+`auth_subject` en el mismo paso. No otorga `is_superadmin`, no crea cuenta ni vínculo de Telegram (§9.3, paso 8;
+§9.10) y nunca enlaza ni sobrescribe una fila existente.
 
 ### 2.10 Columnas nuevas en `app_user`
 
@@ -415,11 +431,11 @@ permisos `MANAGE_*`, ni la bandera `is_superadmin`, y no crea ninguna cuenta de 
 `roles` sigue siendo `ARRAY['auxiliary','purchasing','approver','admin']::text[]` con su CHECK. **No se agrega
 `superadmin` a `roles`**: sería ambiguo con el modelo de permisos existente (D-119).
 
-**Sin columnas adicionales (D-128).** La revisión 6 **no** agrega una bandera de reportante por persona:
-`app_user` conserva exactamente estas cinco columnas. Aprobar una solicitud escribe `roles = ['purchasing']`; el
-enlace de identidad y la asignación de roles de personas preexistentes siguen siendo operaciones separadas y auditadas,
-con los comandos y endpoints ya existentes. La independencia con Telegram se resuelve por autorización de cuenta y no
-por una columna nueva (§9.10).
+**Sin columnas adicionales (D-130).** Las revisiones 6 y 7 **no** agregan una bandera de reportante por persona:
+`app_user` conserva exactamente estas cinco columnas. Aprobar una solicitud escribe `roles = ['admin']`; el enlace de
+identidad y la asignación de roles de personas preexistentes siguen siendo operaciones separadas y auditadas, con los
+comandos y endpoints ya existentes. La independencia con Telegram se resuelve por autorización de cuenta y no por una
+columna nueva (§9.10).
 
 ---
 
@@ -513,6 +529,10 @@ pendiente no altera la cantidad cotizada ni la compra histórica.
 | Consejo de una línea | observaciones del artículo + interpretaciones revisadas | `advice` (§8.4) |
 
 - `exceeded`: se compró más de lo cotizado. **No se bloquea**; se advierte y se conservan ambas cantidades (§6.4).
+- **Compra todo o nada (enmienda a D-127, 2026-11-02):** el flujo de compra de la demo no produce
+  `partially_purchased`. Una línea queda `pending`, `purchased` o `exceeded`; un carrito o una cotización pueden
+  quedar sin algunos productos **porque no se compraron**, nunca por haber dividido una compra por productos o
+  cantidades. Los valores siguen definidos en el modelo y no se renombran.
 - Una línea puede quedar `pending` para siempre. **No se asume que lo cotizado se compra.**
 - La segunda dimensión (`remainder`) no es un `purchase_state`: `closed_by_user` = Pao desistió de lo que falta
   (§5.3); `closed_by_quote` = la cotización se cerró con productos no comprados (§6.5). Así una línea comprada a
@@ -532,15 +552,15 @@ pendiente no altera la cantidad cotizada ni la compra histórica.
 
 ## 5. E10 — Cotizaciones y carritos
 
-Todas las operaciones: **rol `admin` o `purchasing` + `StrongActor`**, conforme a C0 §6 y C0-09 (D-079/D-086, con la
-enmienda de **D-128**). Cualquier otro rol recibe `403 FORBIDDEN`; en una organización real con la cabecera de
-demostración, `403 STRONG_AUTH_REQUIRED`. La organización sale del `Actor`, nunca del cuerpo. **No se amplían permisos a `auxiliary` ni a
-`approver` en esta etapa**, y `purchasing` no obtiene ningún permiso `MANAGE_*`. Importes siempre como string + moneda
+Todas las operaciones: **rol `admin` + `StrongActor`**, conforme a C0 §6 y C0-09 (D-079/D-086, con la corrección de
+**D-130**). Cualquier otro rol recibe `403 FORBIDDEN`; en una organización real con la cabecera de demostración,
+`403 STRONG_AUTH_REQUIRED`. La organización sale del `Actor`, nunca del cuerpo. **No se amplían permisos a `auxiliary`
+ni a `approver` en esta etapa**, y no existe un segundo perfil funcional web. Importes siempre como string + moneda
 (C0 §2.2).
 
 **Qué exige `StrongActor` (D-086/D-099, confirmado el 2026-10-30).** Se verifica, en este orden: (a) JWT de Supabase
 válido —firma, `iss`, `aud`, `exp`, `sub` y `role=authenticated`— y persona `app_user.active` enlazada por
-`auth_subject`; (b) rol `admin` **o** `purchasing`; (c) organización tomada del `Actor`, nunca del cuerpo; (d)
+`auth_subject`; (b) rol **`admin`**; (c) organización tomada del `Actor`, nunca del cuerpo; (d)
 `StrongActor` con su **semántica vigente**: rechaza la cabecera de demostración fuera de `simulation` y **no es MFA ni
 una segunda autenticación**. La autenticación fuerte real (MFA o re-autenticación) queda para **H5**, como decisión
 futura: G1 y el Cotizador no la implementan y no modifican ningún control de seguridad existente.
@@ -690,7 +710,7 @@ Garantías exigibles, no supuestos:
 
 ## 6. E11 — Compras registradas
 
-Permisos: **rol `admin` o `purchasing` + `StrongActor`** (§5, D-128), sin excepciones para auxiliares. Registrar una
+Permisos: **rol `admin` + `StrongActor`** (§5, D-130), sin excepciones para auxiliares. Registrar una
 compra sigue sin ejecutar nada: `purchase_execution` permanece `blocked`.
 
 ### 6.1 Registrar
@@ -733,11 +753,12 @@ IDEMPOTENCY_KEY_REUSED`.
 - Los precios de la compra son los **registrados por Pao**, no se re-leen de la oferta. No hay conciliación automática.
 - **No se puede registrar una compra sobre una cotización `closed`** sin reabrirla: `409 QUOTE_CLOSED`. Reabrir es
   explícito y auditado.
-- **Cierre del faltante en la misma transacción (D-127).** Si las líneas registradas llevan `demand_item_id` y la suma
-  de compras confirmadas de ese faltante alcanza su cantidad pedida conocida, la compra lo pasa a `fulfilled` (§12.3).
-  Si no la alcanza, el faltante sigue `purchased` con el saldo, y esa misma compra puede completarse más adelante con
-  una compra posterior sobre el **mismo** faltante, sin crear otra solicitud. La respuesta incluye el faltante
-  afectado y su `replenishment_state` resultante.
+- **Cierre del faltante en la misma transacción (D-127, todo o nada).** La compra se registra **completa**: cada línea
+  lleva la cantidad pendiente completa del faltante y la selección entera en una sola operación; no se acepta una
+  cantidad menor ni una compra dividida por productos o cantidades. Si las líneas registradas llevan `demand_item_id` y
+  la suma de compras confirmadas de ese faltante alcanza su cantidad pedida conocida, la compra lo pasa a `fulfilled`
+  y el producto queda **liberado** para un nuevo reporte (§12.3). Si no la alcanza, el faltante no se cierra ni se
+  libera. La respuesta incluye el faltante afectado y su `replenishment_state` resultante.
 
 ### 6.2 Correcciones y anulaciones
 
@@ -791,8 +812,8 @@ cerrar una cotización con líneas compradas **no devuelve el faltante a pendien
 las compras vigentes (§12.3). Si la compra se anula y no queda ninguna otra cobertura, el saldo vuelve a mostrarse
 como pendiente de compra; si la compra se corrige, solo cuenta el registro vigente. Una compra vigente cubre el faltante mientras nadie la anule
 o corrija: el estado lo muestra como **comprado** y no afirma que llegó (§12.6). El cierre del ciclo exige que las
-**compras confirmadas** cubran toda la cantidad pedida conocida; una compra parcial mantiene el faltante abierto con el
-saldo, aunque la cotización se cierre (D-127).
+**compras confirmadas** cubran toda la cantidad pedida conocida, y como la compra es **todo o nada** (enmienda a
+D-127), al registrarla el faltante se cierra y se libera, aunque la cotización siga abierta o se cierre después.
 
 ### 6.6 Consultas
 
@@ -801,7 +822,7 @@ saldo, aunque la cotización se cierre (D-127).
 | `GET /api/v1/quotes/{quote_id}/purchases` | Compras vigentes y sustituidas de la cotización, con su estado |
 | `GET /api/v1/purchases/{purchase_id}` | Detalle inmutable completo |
 
-Las consultas exigen rol `admin` o `purchasing` + `StrongActor` y quedan acotadas a la organización del `Actor`. **Nunca** se listan
+Las consultas exigen rol `admin` + `StrongActor` y quedan acotadas a la organización del `Actor`. **Nunca** se listan
 compras de otra organización, ni siquiera para la superadministradora (§9.7). **No hay consultas de recepción:** esa
 funcionalidad está fuera del MVP (D-126).
 
@@ -814,8 +835,8 @@ diferencias, productos equivocados, saldos pendientes de recepción ni cierre co
   llegado; el sistema no afirma ni niega la llegada.
 - Una compra confirmada y vigente **cubre** el faltante (§12.3) aunque la cotización se cierre después.
 - El faltante pasa a `fulfilled` **solo** cuando las **compras confirmadas** cubren la cantidad pedida conocida
-  (§12.3, §12.6); no se espera ninguna confirmación de entrega para cerrarlo. Una compra **parcial** deja el ciclo
-  abierto con el saldo, sin duplicar la necesidad (D-127).
+  (§12.3, §12.6); no se espera ninguna confirmación de entrega para cerrarlo. La compra es **todo o nada** (enmienda a
+  D-127): al registrarse cubre completa, cierra el faltante y lo libera; no hay saldos nacidos de una compra parcial.
 - La compra sigue siendo **inmutable** y su anulación o corrección recalcula la cobertura (§6.2, §12.4).
 - El diseño completo de recepción (tablas, endpoints, reglas de diferencias y cierre) queda registrado como
   **funcionalidad futura** en el registro de decisiones (**D-122**, retirada por **D-126**) y en §15; no forma parte de
@@ -823,7 +844,7 @@ diferencias, productos equivocados, saldos pendientes de recepción ni cierre co
 
 ## 7. E12 — Historial de cotizaciones
 
-Permisos: **rol `admin` o `purchasing` + `StrongActor`** (§5, D-128). Leer historial archivado no cambia el registro ni
+Permisos: **rol `admin` + `StrongActor`** (§5, D-130). Leer historial archivado no cambia el registro ni
 reintroduce datos.
 El historial conserva la compra, sus líneas y la cadena de correcciones; el MVP no registra recepciones (D-126).
 
@@ -913,9 +934,14 @@ superen los 6 meses.
 
 ### 8.1 Principio
 
-Pao escribe observaciones libres sobre un producto, una marca o un proveedor («este medicamento no me gusta por el
-laboratorio», «este proveedor despacha tarde»). El sistema las **guarda siempre** y la IA **solo sugiere** una
-interpretación y un consejo. **La observación es de Pao; el consejo es una sugerencia marcada como tal.**
+**Cualquier `admin`** escribe observaciones libres sobre un producto, una marca o un proveedor («este medicamento no
+me gusta por el laboratorio», «este proveedor despacha tarde», «nos fue mal en ventas», «prefiero Laboratorio Chile»,
+«no volver a sugerir este laboratorio»). El sistema las **guarda siempre** y la IA **solo sugiere** una interpretación
+y un consejo. **La observación es de la persona; el consejo es una sugerencia marcada como tal.**
+
+Las observaciones **persisten** y **afectan las propuestas futuras de la IA** (§8.4). No se exige explicar cada
+recomendación, ni un formulario técnico, ni un paso adicional de confirmación: botón «Observación», texto libre,
+Guardar/Cancelar (D-132).
 
 No se reemplaza el aprendizaje por un conjunto de reglas presentado como IA. Si no hay proveedor de IA configurado o
 falla, la observación se guarda igual y el consejo dice **«sin interpretación»**; no se inventa una recomendación ni
@@ -937,12 +963,15 @@ Por eso cada observación es una fila independiente, inmutable y acumulativa (§
 
 | Método y ruta | Para qué |
 |---|---|
-| `POST /api/v1/observations` | Registrar observación **sin línea**, desde la tarjeta de una oferta o una ficha: `{ "text": "...", "trade_item_id": "uuid", "supplier_id": "uuid?", "offer_snapshot_id": "uuid?", "quote_id": "uuid?" }`. Es la ruta que usa el botón «Observación» del buscador. Responde `201` |
+| `POST /api/v1/commercial-observations` | Registrar observación **sin línea**, desde la tarjeta de una oferta o una ficha: `{ "text": "...", "trade_item_id": "uuid", "supplier_id": "uuid?", "offer_snapshot_id": "uuid?", "quote_id": "uuid?" }`. Es la ruta que usa el botón «Observación» del buscador. Responde `201` |
 | `POST /api/v1/quotes/{quote_id}/lines/{line_id}/observations` | Atajo para registrar la observación ya asociada a una línea de cotización. Cuerpo: `{ "text": "..." }`. Sin categorías ni selectores. Responde `201` con la observación y, si la IA está habilitada, con `interpretation_status` |
 | `GET /api/v1/quotes/{quote_id}/lines/{line_id}/observations` | Observaciones de la línea, más recientes primero, con sus interpretaciones y estado de revisión |
-| `GET /api/v1/observations?trade_item_id=...` | Historial de observaciones **del artículo exacto**, para la vista de producto |
-| `POST /api/v1/observation-interpretations/{id}/review` | Revisión humana: `{ "decision": "confirm" \| "reject", "note": "..." }`. Solo `admin` + `StrongActor`. Transición sin retorno; auditada. **D-128 no la amplía a `purchasing`** (P-7 resuelto el 2026-10-30: se mantiene solo `admin`) |
+| `GET /api/v1/commercial-observations?trade_item_id=...` | Historial de observaciones **del artículo exacto**, para la vista de producto |
+| `POST /api/v1/observation-interpretations/{id}/review` | Revisión humana: `{ "decision": "confirm" \| "reject", "note": "..." }`. Solo `admin` + `StrongActor`. Transición sin retorno; auditada. **Sigue siendo solo de `admin`** (P-7), que es el único perfil web (D-130) |
 | `GET /api/v1/quotes/{quote_id}` | Incluye `advice` por línea (§8.4) |
+
+`/api/v1/observations` **no** es esta ruta: es el registro y la bandeja de observaciones de **faltantes** (D-129).
+Las observaciones comerciales viven en `/api/v1/commercial-observations` y las rutas de faltantes no cambian.
 
 La interfaz **no cambia**: botón «Observación», campo de texto libre, Guardar/Cancelar. **Sin** categorías,
 selectores, etiquetas predefinidas ni formularios adicionales.
@@ -1050,15 +1079,17 @@ La interpretación **no puede**:
 Google/Supabase **autentica** (quién es). Nuestra base **autoriza** (qué puede hacer). Un JWT válido no basta: debe
 existir un `app_user` activo con `auth_subject` enlazado y acceso vigente.
 
-### 9.2 Tres niveles
+### 9.2 Un solo perfil funcional: `admin`
 
 | Nivel | Quién | Puede | No puede |
 |---|---|---|---|
-| **Superadministradora** | Yarella Fernández | Administración global del sistema, organizaciones, administradoras y permisos globales | Ser revocada o degradada por una administradora de farmacia |
-| **Administradora de farmacia** | Pao, Danny y Julio | Gestionar usuarios autorizados de **su** farmacia; aprobar, rechazar y revocar accesos; usar el cotizador (cotizar y confirmar compras) | Privilegios globales; otras organizaciones; registrar recepciones (fuera del MVP) |
-| **Usuario autorizado** | Personas con Google | Solo las funciones permitidas por sus roles | Administración automática por tener cuenta Google |
+| **Superadministración técnica** | Yarella Fernández | Control técnico del sistema (código, base, infraestructura); `is_superadmin` para tareas globales | Ser un perfil funcional diferenciado; aprobar accesos en nombre de una farmacia; operar datos de otra organización |
+| **`admin` (único perfil web)** | Pao, Danny, Julio y toda persona aprobada | Todo el Cotizador (cotizar, comprar, historial, observaciones) y la administración de **su** farmacia (personal, accesos, campanita) | Privilegios globales; otras organizaciones; registrar recepciones (fuera del MVP) |
+| **Sin aprobación** | Personas con Google | Solicitar acceso | Cualquier función del Cotizador: Google identifica, no autoriza |
 
-Los nombres son personas, no código. Los roles siguen siendo los cuatro existentes; **no se crea un rol nuevo**.
+Los nombres son personas, no código. `roles` conserva sus cuatro valores por compatibilidad con Telegram y los flujos
+de faltantes, pero el Cotizador web **solo** acepta el perfil `admin`. Aprobar una solicitud otorga exactamente ese
+perfil. **No se crea un rol nuevo ni un segundo perfil funcional.**
 
 ### 9.3 Flujo
 
@@ -1069,19 +1100,17 @@ Los nombres son personas, no código. Los roles siguen siendo los cuatro existen
 5. Si no existe o no está enlazado → `403 USER_NOT_PROVISIONED`; la pantalla ofrece **«Solicitar acceso»**.
    Si Google/Supabase Auth no está configurado → `503 ACCESS_NOT_CONFIGURED`.
 6. `POST /api/v1/web-access-requests` crea una solicitud `pending` en la organización **configurada en el servidor**.
-7. La campanita de Pao la muestra. Aprobar o rechazar es de un `admin` de esa organización.
-8. **Aprobar asigna el rol operativo `purchasing` (D-128).** Crea el `app_user` con `roles = ['purchasing']`,
-   `active = true` y el `auth_subject` de la solicitud, **en el mismo paso**: la persona entra al Cotizador de
-   inmediato, sin segunda autorización ni intervención de la superadministradora. No otorga `admin`, ni permisos
-   `MANAGE_*`, ni `is_superadmin`, y no crea ni autoriza nada en Telegram (§9.10). `purchasing` conserva sus
-   permisos actuales de la matriz (`VIEW_LIST`, `REPORT_SHORTAGE`, `APPLY_QUANTITY`, `RESOLVE_OBSERVATION`,
-   `CONFIRM_ATTRIBUTES`); G1 **no los amplía ni rediseña la gestión de alias**.
+7. La campanita la ven **todas** las personas con `admin` de esa organización; cualquiera aprueba o rechaza.
+8. **Aprobar otorga el único perfil funcional: `admin` (D-130).** Crea el `app_user` con `roles = ['admin']`,
+   `active = true` y el `auth_subject` de la solicitud, **en el mismo paso**: la persona entra al Cotizador con acceso
+   completo, sin segunda autorización ni intervención de la superadministradora. No otorga `is_superadmin` y no crea
+   ni autoriza nada en Telegram (§9.10). No existe un perfil `purchasing` del Cotizador: ese rol sigue existiendo solo
+   para los flujos de Telegram y faltantes.
    Si el nombre visible ya existe activo en la organización, la aprobación responde `409` y se pide renombrar;
-   **nunca se vincula por nombre ni se sobrescribe** una persona existente. Para una persona que ya tiene fila, el
-   enlace de identidad (`link-auth-subject`) y la asignación de roles
-   (`POST /api/v1/admin/users/{user_id}/web-access`) siguen siendo operaciones **separadas y auditadas**, sin comandos
-   nuevos. La aprobación **no fija** `web_access_expires_at`: queda `NULL`, es decir, **sin vencimiento automático**
-   (§9.8).
+   **nunca se vincula por nombre ni se sobrescribe** una persona existente. Si el `auth_subject` ya está vinculado a
+   una persona (activa o no), la aprobación responde `409 USER_ALREADY_EXISTS`: enlazar o reactivar una fila existente
+   es una operación **separada y auditada** (`link-auth-subject`, `POST /api/v1/admin/users/{user_id}/web-access`).
+   La aprobación **no fija** `web_access_expires_at`: queda `NULL`, es decir, **sin vencimiento automático** (§9.8).
 
 **Pao, Danny y Julio se habilitan previamente** con `create-admin` / `link-auth-subject` (D-071/D-072) y entran con
 Google sin pasar por la campanita. La campanita es para solicitudes nuevas o excepcionales.
@@ -1092,7 +1121,7 @@ Google sin pasar por la campanita. La campanita es para solicitudes nuevas o exc
 |---|---|---|
 | `POST /api/v1/web-access-requests` | JWT válido, sin `app_user` | Crear solicitud. Cuerpo `{}`; organización desde configuración del servidor. Idempotente por `(organization_id, auth_subject)` pendiente |
 | `GET /api/v1/web-access-requests` | `admin` de la organización **o** superadministradora | `{ "pending_count": 1, "items": [{ "id", "email", "requested_at", "organization"? }] }`; `organization` solo para la superadministradora |
-| `POST /api/v1/web-access-requests/{id}/approve` | `admin` de la organización | Aprueba; crea el `app_user` con `roles = ['purchasing']`, `active = true` y `auth_subject` (D-128), sin vencimiento (`web_access_expires_at = NULL`). Responde 200 |
+| `POST /api/v1/web-access-requests/{id}/approve` | Cualquier `admin` de la organización | Aprueba; crea el `app_user` con `roles = ['admin']`, `active = true` y `auth_subject` (D-130), sin vencimiento (`web_access_expires_at = NULL`). Responde 200 |
 | `POST /api/v1/web-access-requests/{id}/reject` | `admin` de la organización | Rechaza con motivo opcional; no crea usuario |
 | `POST /api/v1/admin/users/{user_id}/web-access` | **Superadministradora** | Otorga o cambia roles y `expires_at`. Solo roles existentes; auditado |
 | `POST /api/v1/admin/users/{user_id}/web-access/revoke` | **Superadministradora** | Revoca **solo la web** (`web_access_expires_at = now`); no toca Telegram ni `active` |
@@ -1130,13 +1159,12 @@ Google sin pasar por la campanita. La campanita es para solicitudes nuevas o exc
   organización.** Ampliar el cruce a datos operativos exige una decisión nueva.
 - `set-superadmin` es de uso único, auditado y no se ejecuta en esta fase.
 - **La superadministradora no informa faltantes ni opera el cotizador en nombre de otra organización.** Cotizar y
-  confirmar compras son datos operativos: solo un `admin` o un `purchasing` de la organización dueña puede hacerlo
-  (D-128). Su capacidad de informar por Telegram existe **solo** si tiene una cuenta de Telegram autorizada en esa
-  organización.
+  confirmar compras son datos operativos: solo un `admin` de la organización dueña puede hacerlo (D-130). Su capacidad
+  de informar por Telegram existe **solo** si tiene una cuenta de Telegram autorizada en esa organización.
 
 ### 9.8 Vencimiento y revocación
 
-- **La aprobación no fija vencimiento (D-128).** `web_access_expires_at` queda `NULL` = **acceso sin fecha de
+- **La aprobación no fija vencimiento (D-130).** `web_access_expires_at` queda `NULL` = **acceso sin fecha de
   expiración**; sigue vigente hasta una revocación, una desactivación o un vencimiento fijado explícitamente por la
   superadministradora. **No hay plazo automático** (ni 90 días ni otro).
 - `web_access_expires_at` se evalúa en **cada** petición; si venció → `403 WEB_ACCESS_EXPIRED`. No hay job en
@@ -1149,7 +1177,7 @@ Google sin pasar por la campanita. La campanita es para solicitudes nuevas o exc
 No hay recuperación de contraseña ni registro público (D-066). El alta es por Google + solicitud aprobada, o por
 `create-admin` / `link-auth-subject` para las personas ya previstas.
 
-### 9.10 Independencia con Telegram (D-128)
+### 9.10 Independencia con Telegram (D-130)
 
 **Aprobar una solicitud web no otorga ningún acceso a Telegram.** El plano del bot se autoriza por cuenta, no por
 persona con roles web:
@@ -1209,6 +1237,25 @@ Requieren `MANAGE_ACCOUNTS` + `StrongActor`; en organización real, JWT de Supab
   compras en la web. Ningún permiso web se infiere de la cuenta de Telegram ni al revés. El bot **no** registra
   compras, **no** confirma llegadas y **no** aplica cantidades.
 - El token del bot sigue del lado del servidor y nunca se muestra en esta pantalla.
+
+### 10.5 Reporte repetido de un producto activo (D-131)
+
+Mientras un faltante está **`active`**, la conversación del bot sigue estas reglas, sin IA:
+
+1. **Identifica** quién reporta, qué producto y qué cantidad, y **conserva lo escrito** (`original_text`).
+2. Si el producto **ya está en la lista activa**, informa **quién lo reportó anteriormente** y pregunta si desea
+   reportarlo también. La pregunta es del flujo determinista, no de un modelo.
+3. Si la persona **confirma**, el nuevo aviso se registra **dentro del faltante existente**, como observación del
+   mismo ciclo; **no se duplica el producto ni se suma cantidad**.
+4. Mientras el faltante siga `active`, **no se inicia otro ciclo** para el mismo producto.
+5. Al **registrar una compra** que cubre la cantidad pedida, el faltante se cierra (`fulfilled`, no «recibido») y el
+   producto **se libera**: puede volver a reportarse como un faltante nuevo si hace falta. La compra es **todo o nada**
+   (enmienda a D-127): se registra completa o no se registra, y al registrarse libera el faltante en la misma
+   transacción. No hay compras parciales que dejen un saldo abierto.
+6. **Se conserva el historial**: quién reportó cada aviso, cuándo y qué dijo. Nada se borra.
+
+El bot **no usa OpenAI** para interpretar mensajes: producto, cantidad e identidad se resuelven con las reglas
+existentes y, ante ambigüedad, con candidatos para que compras decida (D-025 a D-036).
 
 ---
 
@@ -1490,10 +1537,13 @@ faltante, porque no tiene vínculo con el aviso.
     declare la cantidad pedida (con lo que pasa a regir la regla anterior) o por una anulación explícita con motivo. No
     se inventa la cantidad ni una confirmación de recepción.
   - `fulfilled` **no borra nada** y no se reabre: un aviso posterior crea un ciclo nuevo (§12.6, §12.7).
-- **Compra parcial (D-127).** Si se pidieron 10 y se compraron 6, las 6 quedan cubiertas y las 4 restantes siguen
-  siendo necesidad abierta **en el mismo faltante**: `purchased_quantity = 6`, `pending_purchase_quantity = 4`,
-  `is_pending = true`, estado `purchased`. Cotizar y comprar esas 4 no crea otra solicitud: se agregan con
-  `demand_item_id` al mismo faltante y, al cubrirse las 10, el faltante cierra.
+- **Compra todo o nada (enmienda a D-127, 2026-11-02).** La compra se registra completa o no se registra: no existe
+  una compra de 6 cuando se pidieron 10. Al confirmar, cada línea lleva la cantidad pendiente completa del faltante y
+  la selección entera se guarda en una sola transacción; si alcanza la cantidad pedida conocida, el faltante pasa a
+  `fulfilled` y el producto queda **liberado** para un nuevo reporte de Telegram. Si la compra no se confirma, no se
+  registra ni se libera nada. No se crea una solicitud duplicada porque no queda saldo de una compra parcial. Las
+  **compras parciales por productos o cantidades quedan fuera de la demo** y solo se evaluarán en una versión posterior
+  si Pao prueba y aprueba el sistema.
 - **Compra no es recepción:** el MVP no registra llegada física; la cobertura cuenta lo comprado y nada más (§6.7).
 
 ### 12.4 Reglas de reversibilidad
@@ -1517,8 +1567,9 @@ faltante, porque no tiene vínculo con el aviso.
 10. **El historial original nunca se borra**: el faltante, su mensaje, su autor y su fecha se conservan. La cobertura
     es una lectura, no una edición.
 11. **Registrar una compra** cubre de inmediato: lo comprado sustituye la cantidad cotizada de esa línea y no depende
-    de que la cotización siga `draft`. Si la compra confirmada cubre **toda** la cantidad pedida conocida, el faltante
-    pasa a `fulfilled` en la misma transacción; si cubre una parte, queda `purchased` con el saldo. Cerrar la
+    de que la cotización siga `draft`. La compra es **todo o nada** (enmienda a D-127): si cubre **toda** la cantidad
+    pedida conocida, el faltante pasa a `fulfilled` en la misma transacción y queda **liberado**; si no la cubre, no
+    se cierra ni se libera. No existe el caso «queda `purchased` con el saldo» por una compra parcial. Cerrar la
     cotización **no** le quita la cobertura a la compra (P-8 resuelto).
 12. **Anular o corregir una compra** recalcula: la anulación deja de cubrir; la corrección sustituye, nunca suma las
     dos. Si el faltante sigue `active` y su saldo vuelve a quedar sin compra, se muestra como pendiente de compra; un
@@ -1527,10 +1578,11 @@ faltante, porque no tiene vínculo con el aviso.
 13. **Comprar no es recibir:** la cobertura no cambia porque la mercadería llegue o no; el MVP no registra llegadas
     y el sistema nunca afirma que el producto fue recibido (D-126).
 14. **Un faltante con compra no se vuelve a pedir, pero el saldo se compra en el mismo ciclo.** Si hay compra
-    confirmada, el faltante no reaparece como necesidad nueva aunque la cotización se cierre o se descarte; el saldo
-    se cotiza y se compra **sobre el mismo faltante**, con `demand_item_id`, sin crear una solicitud duplicada
-    (D-127). Solo una anulación o corrección que deje el total comprado por debajo del objetivo devuelve el saldo a
-    pendiente.
+    confirmada, el faltante no reaparece como necesidad nueva aunque la cotización se cierre o se descarte; cualquier
+    saldo se cotiza y se compra **sobre el mismo faltante**, con `demand_item_id`, sin crear una solicitud duplicada
+    (D-127). Con la compra todo o nada de la demo, ese saldo solo existe si la cantidad pedida era desconocida o si
+    una corrección dejó la cobertura por debajo del objetivo. Solo una anulación o corrección que deje el total
+    comprado por debajo del objetivo devuelve el saldo a pendiente.
 15. **Cubrir con cotización no cierra:** el faltante queda `in_quote` mientras no haya compra confirmada, aunque el
     carrito cubra el total. Si el carrito se descarta o la cotización se cierra sin compra, la necesidad sigue ahí.
 
@@ -1569,8 +1621,10 @@ if quoted_quantity > 0:                     -> in_quote
 ```
 
 - `purchased`: hay **compra confirmada** que no alcanza a cubrir toda la cantidad pedida, o la cantidad pedida es
-  desconocida. El ciclo sigue abierto con el saldo a la vista; **no** se presenta como recibido ni como cerrado. El
-  saldo se cotiza y se compra sobre este mismo faltante, sin duplicar la necesidad (D-127).
+  desconocida. El ciclo sigue abierto con el saldo a la vista; **no** se presenta como recibido ni como cerrado. Con
+  la compra **todo o nada** de la demo (enmienda a D-127), con cantidad pedida conocida una compra registrada cubre
+  completa y cierra; `purchased` aparece cuando la cantidad es desconocida o cuando una **corrección** deja la
+  cobertura por debajo del objetivo.
 - `in_quote`: está cubierto por cotizaciones, sin compra confirmada. Es cobertura **provisional**: el faltante sigue
   abierto y `is_pending` sigue `true`; si la cobertura no alcanza, el saldo se muestra además en `pending_quantity`.
 - `pending`: no hay ninguna cobertura vigente.
@@ -1587,15 +1641,16 @@ y **no** está cerrado. Solo la compra confirmada baja el segundo saldo y cierra
 
 **Compra confirmada = término del proceso del MVP y, si cubre toda la cantidad pedida, cierre del ciclo.** No hay un
 estado de recepción y no se inventa uno: si la cantidad pedida se conoce y las **compras confirmadas** la alcanzan, el
-faltante queda `fulfilled`; si cubren una parte, sigue `purchased` con el saldo visible y el mismo ciclo abierto.
-Ningún cierre depende de que la mercadería llegue (D-126) y ninguno se produce por cotizar (D-127).
+faltante queda `fulfilled` y se libera; la compra es todo o nada, así que no queda un saldo nacido de una compra
+parcial. Si la cantidad pedida es desconocida, el faltante no se cierra automáticamente. Ningún cierre depende de que
+la mercadería llegue (D-126) y ninguno se produce por cotizar (D-127).
 
 ### 12.7 Estado por Telegram (D-123)
 
 1. **Un aviso repetido no crea una segunda necesidad.** Si el producto coincide con un faltante `active` del mismo
-   ciclo —pendiente, en cotización o con compra parcial—, se registra la observación en ese faltante y la respuesta
-   informa el estado: pendiente, en cotización, comprado (con las cantidades compradas y, si no alcanzan, el saldo por
-   comprar) o cerrado.
+   ciclo —pendiente, en cotización o con compra registrada—, se registra la observación en ese faltante y la respuesta
+   informa el estado: pendiente, en cotización, comprado (con las cantidades compradas y, si el ciclo sigue abierto, el
+   saldo por comprar) o cerrado.
 2. **Si el producto ya tiene compra registrada**, el bot lo dice explícitamente: «ya hay una compra registrada» y
    muestra las cantidades compradas y, si el ciclo sigue abierto, cuánto falta por comprar. **No** vuelve a crear la
    necesidad, **no** suma cantidad y **no** afirma que el producto fue recibido: compra y recepción son cosas
@@ -1702,7 +1757,7 @@ viaja en `warnings[]`; nunca bloquea ni recorta cantidades. **Los códigos de re
 | V-24 | La superadministradora solo cruza organizaciones para metadatos administrativos, de forma auditada; los datos operativos siguen acotados |
 | V-25 | La búsqueda de cadenas no persiste, no usa datos ficticios y nunca presenta un precio anterior como actual |
 | V-26 | `relation` es aditivo; `match.level` se conserva y ningún resultado se oculta por su clasificación |
-| V-27 | Aprobar una solicitud de acceso asigna **solo** el rol operativo `purchasing` (D-128): nunca `admin`, `is_superadmin`, permisos `MANAGE_*` ni acceso a Telegram |
+| V-27 | Aprobar una solicitud de acceso otorga **solo** el perfil `admin` (D-130): nunca `is_superadmin` ni acceso a Telegram |
 | V-28 | La IA nunca decide dinero, cantidades, permisos ni visibilidad; la clave de OpenAI vive solo en el backend |
 | V-29 | Las columnas de archivo de `purchase` solo se escriben por función restringida; el encabezado nunca se elimina |
 | V-30 | Un carrito `dismissed` no se evalúa, no suma al total y no cubre faltantes |
@@ -1713,9 +1768,9 @@ viaja en `warnings[]`; nunca bloquea ni recorta cantidades. **Los códigos de re
 | V-35 | No hay control de recepción, cantidades entregadas, saldos pendientes de recepción ni diferencias de entrega en el MVP (D-126) |
 | V-36 | Cerrar un faltante no borra nada; un nuevo faltante del mismo producto es un ciclo nuevo con su propio historial |
 | V-37 | Permisos web y autorización de Telegram son independientes; `admin` también informa si su cuenta de Telegram está autorizada, sin exclusiones |
-| V-38 | Telegram nunca registra compras ni confirma llegadas; cotizar y comprar son operaciones web de `admin` **o** `purchasing` + `StrongActor` (D-128) |
+| V-38 | Telegram nunca registra compras ni confirma llegadas; cotizar y comprar son operaciones web de `admin` + `StrongActor` (D-130) |
 | V-39 | Cotizar cubre de forma provisional y nunca cierra: un faltante con el total cotizado sigue abierto en `in_quote` hasta que haya compra confirmada |
-| V-40 | Una compra parcial mantiene abierto el mismo ciclo con el saldo visible; el saldo se cotiza y se compra sobre ese faltante, sin crear una solicitud duplicada |
+| V-40 | La compra es **todo o nada** (enmienda a D-127): se registra completa —todos los productos y cantidades seleccionados— o no se registra; no hay compras parciales por productos ni cantidades. Al registrarse, el faltante cubierto se cierra y se libera para nuevos reportes |
 
 ---
 
@@ -1730,16 +1785,16 @@ público o recuperación de contraseña, y cualquier decisión de dinero, cantid
 llegada, no se registran cantidades entregadas, no hay recepciones completas ni parciales, saldos pendientes de
 recepción, productos equivocados, correcciones ni anulaciones de recepción, tablas `receipt`/`receipt_line`, ni
 endpoints, permisos, validaciones o pantallas asociados. Tampoco se condiciona el cierre de un faltante a la recepción.
-Sigue fuera **ejecutar** una orden o modificar la compra. Las **compras parciales** sí forman parte del MVP y se
-documentan en §12.3 (D-127); lo que no existe en el MVP son **recepciones** parciales. **No se modifica C0, el HLD ni
-el mockup aprobado.**
+Sigue fuera **ejecutar** una orden o modificar la compra. **Las compras parciales por productos o cantidades quedan
+fuera de la demo** (enmienda a D-127, 2026-11-02): la compra se registra todo o nada. Lo que tampoco existe en el MVP
+son **recepciones** parciales. **No se modifica C0, el HLD ni el mockup aprobado.**
 
 ### 15.1 Funcionalidad futura — recepción física (no es parte del MVP)
 
 El análisis completo se conserva en el registro de decisiones (**D-122**, retirada por **D-126**): tablas `receipt` y
 `receipt_line` inmutables, recepciones parciales y acumulativas, diferencias (`missing`, `wrong_product`, `damaged`,
 `other`), producto equivocado con `received_quantity = 0`, saldos pendientes de recepción, cierre condicionado y sus
-permisos web de `admin` o `purchasing` + `StrongActor` (regla de D-128, aplicable si la recepción vuelve al alcance).
+permisos web de `admin` + `StrongActor` (regla de D-130, aplicable si la recepción vuelve al alcance).
 Permanecen abiertas como preguntas **futuras**, no como bloqueos del MVP:
 anulación o corrección de una compra con recepciones, compra que nunca llega o parcial definitiva, y corrección de una
 recepción errónea. Nada de esto se implementa en el MVP ni se promete en la interfaz.
@@ -1770,7 +1825,7 @@ Las tres se crean en la misma migración **0013**; ninguna se implementa en D0.
 | Etapa | Contenido | Migración |
 |---|---|---|
 | **D0** | Contrato v0.2 rev6, D-113 y D-115 a D-128, ROADMAP | — |
-| **G1** | Acceso web con Google, solicitudes, campanita con aprobación que asigna `purchasing`, superadministradora y vencimiento; Telegram sin cambios (D-128) | **0012** (`web_access_request` + 5 columnas de `app_user`) |
+| **G1** | Acceso web con Google, solicitudes, campanita con aprobación que otorga `admin`, superadministradora y vencimiento; Telegram sin cambios (D-130) | **0012** (`web_access_request` + 5 columnas de `app_user`) |
 | **C4** | E1 con `relation` y `attributes.ingredients[]` (E3 conserva su forma); búsqueda de cadenas E15 (sin persistencia) | **0013** (3 tablas de búsqueda) |
 | **C3** | Comparación E5 | **0014** (5 tablas) |
 | **C5-A + F1** | Cotizaciones, carritos, líneas, vínculo a faltante, grilla y «Buscar»; observaciones O1 | **0015** (`quote`, `quote_cart`, `quote_line`, `commercial_observation`; 2 columnas de `quote_line`: `demand_item_id`, ya previsto en rev2, y `coverage_relation`) |
@@ -1805,12 +1860,14 @@ Ninguna migración nueva se aplica sin autorización explícita.
 
 **Aprobado conceptualmente el 2026-10-30 (D0):** D-113 y D-115 a **D-128**; cobertura reversible de faltantes sin
 confirmación adicional; cobertura con compras vigentes sin doble conteo (P-8 resuelto); **recepción física fuera del
-alcance del MVP** (D-126); **cierre exclusivamente por compra confirmada** que cubre la cantidad pedida, con compras
-parciales en el mismo ciclo (D-127); estado por Telegram sin duplicar necesidades; `admin` puede informar por Telegram si su
+alcance del MVP** (D-126); **cierre exclusivamente por compra confirmada** que cubre la cantidad pedida, con la compra
+**todo o nada** de la demo (enmienda a D-127, 2026-11-02; sin compras parciales por productos ni cantidades); estado
+por Telegram sin duplicar necesidades; `admin` puede informar por Telegram si su
 cuenta está autorizada; `relation` junto a `match.level`; OpenAI por Responses API desde el backend; separación de
 permisos web/Telegram; superadministradora global limitada a metadatos; control individual de Telegram; **nueve
 tablas** y siete columnas (seis nuevas en la revisión 3); numeración **C4 = 0013 / C3 = 0014** ratificada; revisión
-**6** con aprobación que otorga `purchasing` y Cotizador para `admin` o `purchasing` (**D-128**).
+**6** con aprobación que otorga `purchasing` y Cotizador para `admin` o `purchasing` (**D-128**, superada por la
+revisión **7**: perfil único `admin`, **D-130**).
 
 **Pendiente de ratificación:**
 
@@ -1823,10 +1880,10 @@ tablas** y siete columnas (seis nuevas en la revisión 3); numeración **C4 = 00
    exige decisión nueva (§9.7).
 5. Confirmar que el control individual de Telegram exige cuentas `personal`; en `shared_device` el bloqueo afecta a
    todas las personas del teléfono (§10.4).
-6. Confirmar la regla de cierre (D-127): un faltante `active` con cantidad pedida **conocida** pasa a `fulfilled`
-   solo cuando las **compras confirmadas** la alcanzan; cubrir con cotización es provisional y **no** cierra; una
-   compra parcial mantiene el ciclo abierto con el saldo; con cantidad desconocida no se cierra automáticamente
-   (§12.3, §12.6).
+6. Confirmar la regla de cierre (D-127, con su enmienda del 2026-11-02): un faltante `active` con cantidad pedida
+   **conocida** pasa a `fulfilled` solo cuando las **compras confirmadas** la alcanzan; cubrir con cotización es
+   provisional y **no** cierra; la compra se registra **todo o nada** y al registrarse cierra y libera el faltante;
+   con cantidad desconocida no se cierra automáticamente (§12.3, §12.6).
 
 **Bloqueos externos, sin aprobar:**
 
@@ -1851,3 +1908,8 @@ tablas** y siete columnas (seis nuevas en la revisión 3); numeración **C4 = 00
 **Fase documental (2026-10-30, D-128):** `CLAUDE.md`, `docs/AUTH_SUPABASE.md` y `docs/ROADMAP.md` quedan alineados con
 la revisión 6, D-128 y el cierre de D0. **D-107** sigue con la fila «Propuesta» aunque el código 0009–0011 ya implementa
 el perfil y las solicitudes; se anota, no se reescribe.
+
+**Corrección de alcance (2026-11-02, enmienda a D-127):** la demo registra compras **todo o nada**, sin compras
+parciales por productos ni cantidades. Se ajustan §4.2, §6.1, §6.5, §6.7, §10.5, §12.3, §12.4, §12.6, §12.7, §15,
+V-40 y este §17; `CLAUDE.md` y `docs/ROADMAP.md` se alinean en la misma fecha. **No hubo cambios de código, esquema ni
+migraciones**, porque C5-B aún no se implementa.

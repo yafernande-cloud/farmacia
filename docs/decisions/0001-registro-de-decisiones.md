@@ -895,7 +895,7 @@ en E10/E11/E12; purga diseñada y **deshabilitada** hasta que exista almacenamie
 | D-123 | Tomada (2026-10-30) | **Estado por Telegram sin duplicar necesidades.** Un aviso repetido se registra como observación del mismo faltante `active`; no crea un segundo faltante ni suma cantidad. La respuesta informa el estado: pendiente, en cotización, comprado (con cantidades y, si es parcial, el saldo por comprar) o cerrado. Si ya hay compra, el bot dice «ya hay una compra registrada» y **no** afirma que llegó; ajustado por D-126 (sin estados de recepción). Cantidad adicional solo por `ADD`/`SET`/`CLEAR` explícito. Consulta `estado <texto>` determinista, sin IA, de solo lectura, con candidatos ante ambigüedad. **D-127:** la distinción aviso repetido / necesidad nueva depende del **ciclo** (mientras el faltante esté `active`), no de un plazo ni de la recepción; con cantidad desconocida la necesidad no se cierra por un aviso. Después de `fulfilled`, un nuevo aviso crea un nuevo faltante. |
 | D-124 | Tomada (2026-10-30) | **Las personas con rol `admin` también informan faltantes por Telegram.** Se agrega `REPORT_SHORTAGE` al rol `admin` en la matriz de permisos; no se crea un rol nuevo ni se fusionan planos. Para usar Telegram, una administradora necesita su propia cuenta `telegram_account` `active` e identidad vigente, igual que un auxiliar. Los permisos web y la autorización de Telegram siguen siendo independientes: tener `admin` no habilita el bot, y tener Telegram no otorga roles web. Sin exclusión alguna que impida a `admin` reportar. |
 | D-126 | Tomada (2026-10-30) | **La recepción física y las diferencias de entrega quedan fuera del MVP/demo.** El objetivo es demostrar solicitud de faltantes, búsqueda, comparación, cotización y compra; no un sistema de inventario ni de recepción. Se retiran del alcance implementable: confirmación de recepción, recepciones completas o parciales, cantidades entregadas, diferencias y productos equivocados, saldos pendientes de recepción, correcciones/anulaciones de recepción, tablas `receipt`/`receipt_line`, endpoints, permisos, validaciones y pantallas asociados, y cierre condicionado a recepción. Subsiste D-121: la cobertura suma líneas activas de cotización y compras confirmadas, sin duplicar cantidades; una compra confirmada **no certifica llegada física**, solo marca el término del proceso que administra el MVP. **D-127** precisa que lo cotizado cubre de forma provisional y nunca cierra: la necesidad pasa a `fulfilled` solo cuando las compras confirmadas cubren toda la cantidad pedida conocida. C5-B vuelve a **3 tablas** (`purchase`, `purchase_line`, `purchase_index`) y v0.2 a **9 tablas**. P-9/P-10/P-11 dejan de bloquear D0 o la demo y se conservan como funcionalidad futura. D-122 y A10 quedan retiradas; D-123 y D-124 se mantienen con la redacción ajustada. |
-| D-127 | Tomada (2026-10-30) | **Regla definitiva de cierre del ciclo de reposición y compras parciales.** Una necesidad se considera gestionada cuando la cantidad solicitada queda **completamente cubierta por compras confirmadas**; `fulfilled` no significa recibido físicamente. Cubrir con **cotización** es provisional —mientras la línea siga en un carrito activo— y **nunca** cierra el ciclo. Compra parcial (10 pedidas, 6 compradas): las 6 quedan cubiertas, las 4 restantes siguen como necesidad abierta **en el mismo faltante** (`purchased`, `pending_purchase_quantity = 4`), sin crear una solicitud duplicada, y se cotizan y compran sobre ese faltante hasta cerrar. `is_pending` significa «el ciclo sigue abierto» y no se apaga por cotizar; se distinguen `pending_quantity` (falta
+| D-127 | Tomada (2026-10-30); **compras parciales fuera de la demo por enmienda del 2026-11-02** | **Regla definitiva de cierre del ciclo de reposición y compras parciales.** Una necesidad se considera gestionada cuando la cantidad solicitada queda **completamente cubierta por compras confirmadas**; `fulfilled` no significa recibido físicamente. Cubrir con **cotización** es provisional —mientras la línea siga en un carrito activo— y **nunca** cierra el ciclo. Compra parcial (10 pedidas, 6 compradas): las 6 quedan cubiertas, las 4 restantes siguen como necesidad abierta **en el mismo faltante** (`purchased`, `pending_purchase_quantity = 4`), sin crear una solicitud duplicada, y se cotizan y compran sobre ese faltante hasta cerrar. `is_pending` significa «el ciclo sigue abierto» y no se apaga por cotizar; se distinguen `pending_quantity` (falta
 **cotizar**) y el derivado `pending_purchase_quantity` (falta **comprar**), sin tabla ni endpoint nuevos. La distinción aviso repetido / ciclo nuevo depende del **ciclo** (`active` vs. `fulfilled`), no de un plazo ni de la recepción. Cantidad desconocida: no se cierra automáticamente; sale del ciclo solo por `ADD`/`SET` explícito que declare la cantidad o por anulación con motivo, nunca inventando una cantidad ni una confirmación de recepción. Sin migración ni código. |
 | D-125 | Tomada (2026-10-30) | **Tres tablas de búsqueda en C4 y numeración definitiva.** C0 nombra dos tablas (`search_run`, `search_source_result`); el diseño aprobado usa tres: se agrega `search_result` (filas de resultado por producto) como **ampliación aditiva**, sin editar C0. Las tres se crean en la migración **0013**. Se ratifica **C4 = 0013** y **C3 = 0014**; no se invierte el orden. |
 
@@ -1010,6 +1010,10 @@ si la IA falla o está deshabilitada, la observación se guarda y el consejo dic
 costo, solo O1 queda operativo.
 
 ### D-117 — Acceso web con Google, solicitudes y niveles (2026-10-30)
+
+> **Cláusula `roles = []` superada por D-128 y luego por D-130.** Hoy aprobar crea `roles = ['admin']` (D-130). Las
+> tres entidades de esta decisión —Google autentica y la base autoriza, el flujo por solicitud y campanita, y la
+> separación entre niveles técnicos y funcionales— siguen vigentes.
 
 **Separación.** Google/Supabase **autentica**; nuestra base **autoriza**. Un JWT válido no basta: debe existir
 `app_user` activo, con `auth_subject` enlazado y acceso vigente.
@@ -1257,13 +1261,14 @@ quedan excluidos. La superadministradora no confirma en otra organización.
 
 - Un aviso repetido se registra como observación del **mismo** faltante `active`; no crea otra necesidad ni suma
   cantidad.
-- La respuesta informa el estado: pendiente, en cotización, comprado (con cantidades y, si es parcial, el saldo por
-  comprar) o cerrado. Si ya hay compra, dice «ya hay una compra registrada» y **nunca** afirma que llegó.
+- La respuesta informa el estado: pendiente, en cotización, comprado (con cantidades y, si el ciclo sigue abierto, el
+  saldo por comprar) o cerrado. Si ya hay compra, dice «ya hay una compra registrada» y **nunca** afirma que llegó.
 - **Ajuste por D-126:** con la recepción fuera del MVP, el bot no informa recepción parcial ni saldos de recepción;
   después de la compra solo informa las cantidades compradas.
 - **Ajuste por D-127:** la distinción entre aviso repetido y necesidad nueva depende del **ciclo de reposición**
-  (mientras el faltante esté `active`), no de un plazo arbitrario ni de la recepción física. Una compra **parcial**
-  mantiene el ciclo abierto y el bot informa cuánto falta por comprar.
+  (mientras el faltante esté `active`), no de un plazo arbitrario ni de la recepción física. Con la **compra todo o
+  nada** (enmienda del 2026-11-02), una compra confirmada cierra el ciclo; si el ciclo sigue abierto —cantidad
+  desconocida o corrección—, el bot informa cuánto falta por comprar.
 - Cantidad adicional solo con `ADD`/`SET`/`CLEAR` explícito y el permiso correspondiente; no hay suma implícita
   (AC35).
 - **Cantidad desconocida:** el bot informa que la necesidad sigue abierta; no la cierra, no inventa la cantidad ni
@@ -1339,7 +1344,7 @@ ni niega la llegada.
 **Sin migración ni código.** D-126 es solo documental: no crea ni elimina migraciones, no toca la base y no modifica el
 mockup.
 
-### D-127 — Regla definitiva de cierre y compras parciales (2026-10-30)
+### D-127 — Regla definitiva de cierre y compras parciales (2026-10-30) — **compras parciales fuera de la demo (enmienda 2026-11-02)**
 
 **Problema.** Las revisiones 4 y 5 cerraban el ciclo con la **cobertura total** (cotizado sin compra + compras
 vigentes). Eso permitía que un carrito en preparación diera por gestionada una necesidad que nunca se compró, y no
@@ -1386,6 +1391,40 @@ calcula en vivo: **sin tabla, columna, endpoint ni migración nuevos**; v0.2 sig
 **3**. Precisan este criterio el contrato §12.3–§12.7, V-34, V-39 y V-40, y el roadmap (C5-B). D-121 y D-126 quedan
 intactas en lo demás; D-122 sigue fuera del MVP.
 
+#### Enmienda a D-127 — compra **todo o nada** para la demo (2026-11-02)
+
+**Decisión del usuario (prevalece).** Para la demo del 2026-11-13 **no se implementan compras parciales**. La compra
+es **todo o nada**:
+
+1. Cuando un administrador **confirma** una compra, se registra **completa**, con **todos los productos y cantidades
+   seleccionados**, en una sola transacción.
+2. Al **registrar la compra**, se **liberan los faltantes correspondientes**: se cierran (`fulfilled`) y el producto
+   puede volver a reportarse por Telegram como un ciclo nuevo.
+3. Si la compra **no se confirma**, **no se registra ni se libera nada**.
+4. **No se permite** registrar parcialmente una compra **por productos ni por cantidades**: no hay endpoint,
+   parámetro, pantalla ni flujo para dividir una compra.
+
+**Reglas resultantes.**
+
+- La cantidad de cada línea comprada es la **cantidad pendiente completa** del faltante al momento de confirmar; no
+  se admite una cantidad menor. La compra se guarda íntegra e inmutable, como ya exige D-114.
+- El cierre sigue siendo el de D-127: `fulfilled` solo cuando las compras confirmadas cubren **toda** la cantidad
+  pedida conocida, en la misma transacción. Como la compra cubre completa, la transición ocurre al registrarla.
+- Con cantidad **desconocida** no se cierra automáticamente (V-06): sigue vigente el `ADD`/`SET` explícito.
+- `pending_purchase_quantity` se conserva como derivado, pero en la demo no aparece un **saldo nacido de una compra
+  parcial**: es 0 o el pendiente completo. Los estados `partially_purchased` siguen nombrados en el modelo y **no se
+  producen** por el flujo de compra de la demo; no se renombran ni se eliminan.
+- **Correcciones y anulaciones** de una compra ya registrada mantienen sus reglas (§6.2, §12.4): recalculan cobertura
+  y no reabren un faltante `fulfilled`. No son una compra parcial.
+
+**Alcance.** Solo documental: no hay código, endpoint, columna ni migración nuevos; C5-B sigue sin implementar. Las
+compras parciales quedan **fuera de la demo** y se evaluarán en una versión posterior **solo si Pao prueba y aprueba el
+sistema**.
+
+**Ajustes que esta enmienda obliga.** Contrato §4.2 (nota de estados), §6.5, §6.7, §10.5, §12.3, §12.4, V-40 y §15;
+D-131; `CLAUDE.md` y `docs/ROADMAP.md`. Todo lo demás de D-127 (cotizar no cierra, cierre solo por compra confirmada,
+`fulfilled` ≠ recibido, avisos repetidos, dos saldos) sigue intacto.
+
 ### Enmienda D0 a D-114 (2026-10-30)
 
 Esta enmienda **no reemplaza** D-114: conserva X1/X2, las seis tablas originales, la inmutabilidad de compras, el
@@ -1426,11 +1465,14 @@ retira la recepción del MVP (D-126) y sustituye a la revisión 4 sin reescribir
 
 ### Enmienda de la revisión 5 a D-114 (2026-10-30, D-126 y D-127)
 
+> **Actualizado el 2026-11-02:** la fila «Compras parciales» y la cláusula de compra parcial del «Cierre del ciclo»
+> quedan sustituidas por la **enmienda todo o nada a D-127** (2026-11-02). Lo demás sigue vigente.
+
 | Punto | Corrección |
 |---|---|
 | **Recepción** | D-122 la había incorporado; **D-126 la retira del MVP**. Sin `receipt`, `receipt_line`, endpoints, permisos, validaciones ni pantallas; sin cierre condicionado a recepción. Se conserva como funcionalidad futura (§15.1 del contrato) |
-| **Cierre del ciclo** | ~~La cobertura alcanza el objetivo~~ **Precisado por D-127:** un faltante `active` con cantidad pedida **conocida** pasa a `fulfilled` solo cuando las **compras confirmadas** alcanzan el objetivo. Cubrir con cotización es provisional y no cierra; una compra parcial mantiene el ciclo abierto con el saldo; con cantidad desconocida no se cierra automáticamente |
-| **Compras parciales** | **D-127:** 10 pedidas, 6 compradas → 6 cubiertas y 4 abiertas en el **mismo** faltante, sin solicitud duplicada; se cotizan y compran hasta cerrar. Campo derivado `pending_purchase_quantity`, sin tabla ni endpoint nuevos |
+| **Cierre del ciclo** | ~~La cobertura alcanza el objetivo~~ **Precisado por D-127:** un faltante `active` con cantidad pedida **conocida** pasa a `fulfilled` solo cuando las **compras confirmadas** alcanzan el objetivo. Cubrir con cotización es provisional y no cierra; con cantidad desconocida no se cierra automáticamente. **Enmienda 2026-11-02:** la compra se registra todo o nada y la cubre completa, así que no hay saldo por compra parcial en la demo |
+| **Compras parciales** | ~~**D-127:** 10 pedidas, 6 compradas → 6 cubiertas y 4 abiertas en el **mismo** faltante, sin solicitud duplicada~~ **Fuera de la demo (enmienda a D-127, 2026-11-02):** no se registran compras parciales por productos ni cantidades; la compra confirmada cubre completa y libera el faltante. Campo derivado `pending_purchase_quantity`, sin tabla ni endpoint nuevos |
 | **Compra confirmada** | Marca el término del proceso del MVP; **no certifica** la llegada física. El sistema ni la afirma ni la niega (V-33) |
 | **Telegram** | Sigue vigente D-123/D-124: un aviso repetido no duplica la necesidad y el bot informa «ya hay una compra registrada» sin afirmar recepción; `admin` informa si su cuenta está autorizada. **D-127:** la distinción aviso repetido / ciclo nuevo depende del ciclo, no de un plazo |
 | **Tablas** | **9** en total: se retiran `receipt` y `receipt_line`; C5-B/0017 vuelve a 3 tablas (`purchase`, `purchase_line`, `purchase_index`). Las columnas siguen siendo 7 |
@@ -1463,8 +1505,9 @@ retira la recepción del MVP (D-126) y sustituye a la revisión 4 sin reescribir
 16. **P-9/P-10/P-11 como bloqueos de D0** → resuelto por **D-126**: dejan de bloquear D0 y la demo; quedan como
     preguntas futuras de recepción.
 17. **Cierre provocado por cotizar** → resuelto por **D-127**: lo cotizado cubre provisionalmente y nunca cierra; solo
-    la compra confirmada que cubre toda la cantidad pedida cierra el ciclo. Las compras parciales mantienen el ciclo
-    abierto en el mismo faltante, sin duplicar la solicitud (`pending_purchase_quantity`).
+    la compra confirmada que cubre toda la cantidad pedida cierra el ciclo. ~~Las compras parciales mantienen el ciclo
+    abierto en el mismo faltante~~ **Fuera de la demo (enmienda a D-127, 2026-11-02):** la compra es todo o nada y
+    libera el faltante al registrarse.
 
 **Abiertas, no bloquean D0:**
 
@@ -1478,7 +1521,8 @@ retira la recepción del MVP (D-126) y sustituye a la revisión 4 sin reescribir
    operativo.
 5. **Archivo externo.** Proveedor, costos, credenciales y retención; C5-D bloqueado.
 6. **`pg_trgm`/`unaccent`.** Verificar disponibilidad en el PostgreSQL de destino y autorizar su instalación.
-7. **`farmacia`.** Sigue en **0008**; el código llega a **0011**. Ninguna migración nueva se aplica sin autorización.
+7. **`farmacia`.** Sigue en **0008**; el código llega a **0012** (G1). Ninguna migración nueva se aplica sin
+   autorización.
 8. **Documentos desactualizados.** `CLAUDE.md` y `docs/AUTH_SUPABASE.md` todavía describen C2 como no implementado y
     no incluyen G1/D-115 a D-127; se actualizarán en una fase documental posterior, fuera de D0. **Resuelto el
     2026-10-30 (D-128):** ambos documentos y `docs/ROADMAP.md` quedaron alineados con C2, G1, D-113 a D-128 y el
@@ -1498,7 +1542,13 @@ El diseño completo está en D-122 (retirada del MVP por D-126) y en el contrato
 
 ## G1 — aprobación web, rol operativo y alcance documental (2026-10-30)
 
-### D-128 — La aprobación web otorga el rol operativo `purchasing` (2026-10-30)
+### D-128 — La aprobación web otorga el rol operativo `purchasing` (2026-10-30) — **superada por D-130**
+
+> **Superada por D-130 (2026-11-02).** Se conserva el texto íntegro como historial. El usuario reemplazó el modelo de
+> dos perfiles web (`admin` y `purchasing`) por uno solo: **aprobar otorga `admin`**. Todo lo demás de D-128 que no
+> dependa de `purchasing` como perfil web —aprobar no enlaza ni sobrescribe, Telegram es un plano aparte, seguridad =
+> JWT validado + persona activa + organización del `Actor` + `StrongActor` (no MFA), `web_access_expires_at = NULL` sin
+> plazo por defecto y revisión de interpretaciones solo de `admin`— sigue vigente y D-130 lo confirma.
 
 **Decisión del usuario (prevalece sobre el texto anterior).** Aprobar una solicitud de acceso web crea el `app_user`
 con `roles = ['purchasing']`, `active = true` y `auth_subject`, **sin segunda autorización** y sin intervención de la
@@ -1586,3 +1636,103 @@ documento del Cotizador y no toca cantidades ni faltantes. Mantenerlas en la mis
 5. Nada de esta decisión se implementa en Fase 0: no hay endpoint, modelo, migración ni cambio de código.
 
 **Estado.** Aprobada por el usuario el 2026-11-02. **No implementada.** No modifica D-113 a D-128 ni el alcance del MVP.
+
+**Actualización 2026-11-02 (misma fecha).** La regla 4 quedó cumplida: el contrato `cotizador-v0.2.md` **revisión 7**
+nombra la ruta en §8.3 (`POST/GET /api/v1/commercial-observations`) y aclara que `/api/v1/observations` sigue siendo
+solo el registro y la bandeja de faltantes. Sigue **sin implementar**: no hay endpoint, modelo ni migración.
+
+## G1 implementado: un solo perfil funcional web (2026-11-02)
+
+### D-130 — El acceso web aprobado otorga `admin`; `admin` es el único perfil funcional (2026-11-02) — **reemplaza D-128**
+
+**Decisión del usuario (prevalece sobre D-128, que queda superada).**
+
+1. **Único perfil funcional web: `admin`.** No hay un segundo perfil web. `purchasing` y `auxiliary` siguen existiendo
+   como roles de Telegram (lo que decía D-124 sobre `admin` y `REPORT_SHORTAGE` no cambia); ninguno de los dos es un
+   perfil de acceso web.
+2. **Google/Supabase identifica, no concede.** Un JWT válido no habilita nada por sí solo: hace falta una persona
+   `app_user` activa, con `auth_subject` enlazado y acceso vigente.
+3. **El usuario solicita acceso.** Sin aprobación solo puede solicitar; la solicitud nace `pending` y **no otorga
+   nada**.
+4. **Todos los `admin` ven las pendientes en la campanita** y **cualquier `admin`** aprueba o rechaza.
+5. **Aprobar otorga acceso completo como `admin`**: crea el `app_user` con `roles = ['admin']`, `active`, `available`
+   y `auth_subject` **en un solo paso**, con `web_access_expires_at = NULL` (sin vencimiento automático).
+6. **La autorización de Telegram es independiente** del acceso web: aprobar no crea cuenta, vínculo ni solicitud del
+   bot, y no modifica el bot.
+7. **`superadmin` es control técnico de la propietaria**, no un perfil funcional diferenciado: ve las solicitudes de
+   todas las organizaciones y puede otorgar/revocar acceso y fijar vencimientos, pero **no aprueba en nombre de una
+   farmacia**.
+
+**Seguridad (vigente, sin cambios por D-130).** La autenticación es **JWT de Supabase validado + persona activa + rol
+`admin` + organización del `Actor` + `StrongActor` con su semántica vigente** (D-086/D-099). **No es MFA ni una segunda
+autenticación**; MFA real queda para H5 y no se implementa en G1. El acceso aprobado **no vence automáticamente**: se
+mantiene hasta revocación, desactivación o un vencimiento fijado explícitamente. La revisión de interpretaciones de
+observaciones sigue siendo de `admin` (P-7 resuelto).
+
+**Aprobar no enlaza ni sobrescribe.** Si la identidad ya está vinculada → `409 USER_ALREADY_EXISTS`; si hay una persona
+activa con el mismo nombre visible → `409 DUPLICATE_NAME` y la solicitud **sigue pendiente** para que una `admin`
+decida. Enlazar una fila existente sigue siendo `link-auth-subject` (CLI, auditado).
+
+**Consecuencias.** Se retiran del contrato las menciones a `purchasing` como perfil web: E10–E15 y la administración son
+`admin` + `StrongActor`. El contrato pasa a **revisión 7**. `CLAUDE.md`, `docs/AUTH_SUPABASE.md` y `docs/ROADMAP.md` se
+alinean en la misma fase.
+
+**Implementado en G1 (código, 2026-11-02; migración `0012` creada y probada).**
+
+| Pieza | Estado |
+|---|---|
+| `0012_acceso_web_solicitudes_y_superadministracion` | Creada: 5 columnas en `app_user` (`email`, `is_superadmin`, `web_access_expires_at`, `web_access_granted_by/at`), FK compuesta, índice único parcial de una sola superadministradora activa y tabla `web_access_request` con sus checks e índices |
+| Servicio `services/web_access.py` | `request_access`, `list_pending`, `approve` (`roles=['admin']`), `reject`, `grant_web_access`, `revoke_web_access`, `set_superadmin`; todo auditado con `events.emit` en la misma transacción |
+| API `/api/v1/web-access-requests` | `POST` público (202 constante, límite 5/min por `sub` y 20/min por IP → `429 RATE_LIMITED`, `503 ACCESS_NOT_CONFIGURED` sin organización), `GET` campanita, `POST /{id}/approve`, `POST /{id}/reject` |
+| API `/api/v1/admin/users/{id}/web-access` | Otorgar/ajustar y revocar; solo `is_superadmin` |
+| Permiso | `MANAGE_WEB_ACCESS` concedido **solo** a `admin` |
+| CLI | `set-superadmin <app_user_id>`: uso único, auditado con `actor_id = NULL` |
+| Autenticación | `verify_supabase_jwt_claims` (sub, correo verificado, nombre) y cabeceras demo `X-Demo-Subject`/`-Email`/`-Name`; `_actor_from_jwt` rechaza con `403 WEB_ACCESS_EXPIRED` el acceso vencido |
+| Configuración | `WEB_ACCESS_ORGANIZATION_ID` (obligatoria para el endpoint público) |
+
+**Alcance de la implementación.** La migración **no** se aplicó a `farmacia` (sigue en **0008**) ni a `farmacia_demo`
+(sigue en **0011**); no hay despliegue, cambio de Lovable ni integración real de Telegram. Las pruebas de la suite
+crean su propia base y la migran a `0012`.
+
+### D-131 — Reporte repetido de un producto que ya está en la lista activa (2026-11-02)
+
+**Decisión del usuario.** Cuando un auxiliar autorizado reporta por Telegram un producto que **ya está en la lista
+activa**:
+
+1. El bot identifica **quién reporta**, **qué producto** y **qué cantidad** (la cantidad desconocida sigue siendo
+   `NULL`, nunca 0 ni 1).
+2. Informa **quién lo reportó anteriormente** y pregunta si esa persona también quiere reportarlo.
+3. Si **confirma**, el nuevo aviso se registra **dentro del faltante existente**, como reporte de la nueva persona;
+   **no se duplica el producto** ni se crea un segundo faltante.
+4. Mientras el faltante siga activo **no se inicia otro ciclo** para el mismo producto.
+5. Cuando un administrador **registra la compra**, el producto se libera y puede volver a reportarse. Con la compra
+   **todo o nada** de la demo (enmienda a D-127), la compra confirmada cubre toda la cantidad pedida de los faltantes
+   incluidos: cada uno se cierra (`fulfilled`) y se libera en la misma transacción. Si la compra no se confirma, no se
+   registra ni se libera nada.
+6. Se conserva el **historial** de quién reportó, cuándo y con qué cantidad declarada.
+7. **No se usa OpenAI** para interpretar mensajes de Telegram: la detección de producto y cantidad es determinista
+   (alias, catálogo y reglas de D-015 a D-024) o queda como pregunta explícita, nunca como suposición.
+
+**Relación con lo ya decidido.** No cambia D-123 (Estado por Telegram sin duplicar necesidades) ni la regla de que un
+aviso repetido **no suma cantidad**: la confirmación agrega un **reporte**, no una cantidad. Tampoco cambia la regla de
+cierre (D-127, con su enmienda del 2026-11-02): `fulfilled` sigue sin significar recibido y no hay compras parciales en
+la demo.
+
+**Estado.** Aprobada el 2026-11-02. **Solo documental**: se implementa en **T1**, junto con el bot real. No hay código,
+modelo ni migración.
+
+### D-132 — Observaciones comerciales abiertas para cualquier `admin`, sin pasos adicionales (2026-11-02)
+
+**Decisión del usuario.** Cualquier `admin` puede usar el botón «Observación» y escribir **texto libre** («no volver a
+sugerir este laboratorio», «nos fue mal en ventas», «prefiero Laboratorio Chile»). Las observaciones **persisten** y
+**afectan las propuestas futuras de la IA**. No se exige **explicar cada recomendación**, ni imponer **formularios
+técnicos**, ni **pasos adicionales de confirmación** que el usuario no pidió.
+
+**Complementa D-116, no la reescribe.** La observación sigue siendo inmutable, acumulativa y separada de la
+interpretación de IA; la IA sigue **solo sugiriendo** (`stance`, `text`, `based_on[]`, `supersedes[]`) y sigue sin
+tocar precios, stock, cantidades, permisos ni el orden de las ofertas. Lo que cambia es el **alcance del autor** —no es
+una sola persona, es cualquier `admin`— y la **prohibición explícita de fricción**: nada de categorías, selectores,
+justificaciones obligatorias ni pantallas extra.
+
+**Estado.** Aprobada el 2026-11-02. **Solo documental**: se implementa en O1–O4 (C5-A, migración `0015`). El contrato
+en revisión 7 ya la recoge en §8.1 y §8.3.
