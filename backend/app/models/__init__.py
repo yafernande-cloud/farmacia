@@ -26,6 +26,13 @@ from app.models.channel import (
     InboundEvent,
     OutboundMessage,
 )
+from app.models.comparison import (
+    CommercialCriterion,
+    ComparisonCandidate,
+    ComparisonLine,
+    ComparisonRun,
+    ComparisonSupplierTotal,
+)
 from app.models.core import AppUser, AuxiliaryProfile, Organization
 from app.models.demand import (
     CommercialReference,
@@ -41,7 +48,9 @@ from app.models.search import SearchResult, SearchRun, SearchSourceResult
 
 __all__ = [
     "ActorSession", "AppUser", "Attachment", "AuditEvent", "AuxiliaryProfile", "ChainProduct",
-    "ChannelBinding", "ChannelMessage", "CommercialReference", "DemandItem", "DemandObservation",
+    "ChannelBinding", "ChannelMessage", "CommercialCriterion", "CommercialReference",
+    "ComparisonCandidate", "ComparisonLine", "ComparisonRun", "ComparisonSupplierTotal",
+    "DemandItem", "DemandObservation",
     "ImportProfile", "ImportRequest", "ImportRun", "InboundEvent", "OfferSnapshot", "Organization", "OutboundMessage", "OutboxEvent",
     "PharmaIdentity", "ProductAlias", "PurchaseCycle", "QuantityEvent", "ReferencePrice",
     "SearchResult", "SearchRun", "SearchSourceResult",

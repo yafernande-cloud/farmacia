@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1 import (
     catalog,
+    comparisons,
     demand,
     health,
     imports,
@@ -87,6 +88,7 @@ def create_app() -> FastAPI:
     app.include_router(telegram.router, prefix="/api/v1")
     app.include_router(web_access.router, prefix="/api/v1")
     app.include_router(search.router, prefix="/api/v1")
+    app.include_router(comparisons.router, prefix="/api/v1")
     return app
 
 
