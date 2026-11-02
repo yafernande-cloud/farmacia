@@ -12,6 +12,7 @@ from app.api.v1 import (
     demand,
     health,
     imports,
+    search,
     sources,
     staff,
     suppliers,
@@ -85,6 +86,7 @@ def create_app() -> FastAPI:
     app.include_router(telegram_accounts.router, prefix="/api/v1")
     app.include_router(telegram.router, prefix="/api/v1")
     app.include_router(web_access.router, prefix="/api/v1")
+    app.include_router(search.router, prefix="/api/v1")
     return app
 
 

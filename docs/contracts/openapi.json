@@ -6290,6 +6290,710 @@
      }
     }
    }
+  },
+  "/api/v1/searches": {
+   "post": {
+    "tags": [
+     "búsqueda"
+    ],
+    "summary": "Buscar productos y ofertas en el catálogo local (E1)",
+    "operationId": "create_search_api_v1_searches_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SearchIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SearchOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/searches/{search_id}": {
+   "get": {
+    "tags": [
+     "búsqueda"
+    ],
+    "summary": "Recuperar una búsqueda guardada, sin reejecutarla (E2)",
+    "operationId": "get_search_api_v1_searches__search_id__get",
+    "parameters": [
+     {
+      "name": "search_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Search Id"
+      }
+     },
+     {
+      "name": "cursor",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Cursor de la página anterior",
+       "title": "Cursor"
+      },
+      "description": "Cursor de la página anterior"
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 50,
+       "minimum": 1,
+       "default": 20,
+       "title": "Limit"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SearchOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/articles/{article_id}": {
+   "get": {
+    "tags": [
+     "búsqueda"
+    ],
+    "summary": "Detalle de un artículo y sus últimas ofertas por fuente (E3)",
+    "operationId": "get_article_api_v1_articles__article_id__get",
+    "parameters": [
+     {
+      "name": "article_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Article Id"
+      }
+     },
+     {
+      "name": "cursor",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Cursor de la página anterior",
+       "title": "Cursor"
+      },
+      "description": "Cursor de la página anterior"
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 50,
+       "minimum": 1,
+       "default": 50,
+       "title": "Limit"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ArticleDetailOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/chain-searches": {
+   "post": {
+    "tags": [
+     "búsqueda"
+    ],
+    "summary": "Iniciar la búsqueda de precios públicos de cadenas (E15; sin persistencia)",
+    "operationId": "start_chain_search_api_v1_chain_searches_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ChainSearchIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "202": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ChainSearchAcceptedOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/chain-searches/{search_id}": {
+   "get": {
+    "tags": [
+     "búsqueda"
+    ],
+    "summary": "Sondear el resultado de una búsqueda de cadenas (E15)",
+    "operationId": "get_chain_search_api_v1_chain_searches__search_id__get",
+    "parameters": [
+     {
+      "name": "search_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Search Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ChainSearchOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
   }
  },
  "components": {
@@ -6778,6 +7482,299 @@
     ],
     "title": "ApprovedOut"
    },
+   "ArticleDetailOut": {
+    "properties": {
+     "article": {
+      "$ref": "#/components/schemas/ArticleOut"
+     },
+     "offers": {
+      "items": {
+       "$ref": "#/components/schemas/OfferOut"
+      },
+      "type": "array",
+      "title": "Offers"
+     },
+     "offers_total": {
+      "type": "integer",
+      "title": "Offers Total"
+     },
+     "next_cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Next Cursor"
+     },
+     "reference_prices": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Reference Prices"
+     },
+     "annotations": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Annotations"
+     },
+     "notes": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Notes"
+     },
+     "sources": {
+      "items": {
+       "$ref": "#/components/schemas/SourceOut"
+      },
+      "type": "array",
+      "title": "Sources"
+     },
+     "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Generated At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "article",
+     "offers",
+     "offers_total",
+     "next_cursor",
+     "reference_prices",
+     "annotations",
+     "notes",
+     "sources",
+     "generated_at"
+    ],
+    "title": "ArticleDetailOut"
+   },
+   "ArticleIdentityOut": {
+    "properties": {
+     "ingredient": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ingredient"
+     },
+     "strengths": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Strengths"
+     },
+     "form": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Form"
+     },
+     "route": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Route"
+     },
+     "release": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Release"
+     },
+     "brand": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Brand"
+     },
+     "laboratory": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Laboratory"
+     },
+     "gtin": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Gtin"
+     },
+     "sanitary_registration": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sanitary Registration"
+     }
+    },
+    "type": "object",
+    "required": [
+     "ingredient",
+     "strengths",
+     "form",
+     "route",
+     "release",
+     "brand",
+     "laboratory",
+     "gtin",
+     "sanitary_registration"
+    ],
+    "title": "ArticleIdentityOut"
+   },
+   "ArticleOut": {
+    "properties": {
+     "article_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Article Id"
+     },
+     "display_name": {
+      "type": "string",
+      "title": "Display Name"
+     },
+     "identity": {
+      "$ref": "#/components/schemas/ArticleIdentityOut"
+     },
+     "presentation": {
+      "$ref": "#/components/schemas/ArticlePresentationOut"
+     },
+     "match": {
+      "$ref": "#/components/schemas/MatchOut"
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "data_origin": {
+      "type": "string",
+      "title": "Data Origin"
+     }
+    },
+    "type": "object",
+    "required": [
+     "article_id",
+     "display_name",
+     "identity",
+     "presentation",
+     "match",
+     "status",
+     "data_origin"
+    ],
+    "title": "ArticleOut"
+   },
+   "ArticlePresentationOut": {
+    "properties": {
+     "packaging": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Packaging"
+     },
+     "content": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Content"
+     },
+     "commercial_unit": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Commercial Unit"
+     },
+     "units_per_commercial_unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Units Per Commercial Unit"
+     }
+    },
+    "type": "object",
+    "required": [
+     "packaging",
+     "content",
+     "commercial_unit",
+     "units_per_commercial_unit"
+    ],
+    "title": "ArticlePresentationOut"
+   },
    "AttachmentOut": {
     "properties": {
      "id": {
@@ -7168,6 +8165,309 @@
      "relation"
     ],
     "title": "Candidate"
+   },
+   "ChainResultOut": {
+    "properties": {
+     "chain_item_id": {
+      "type": "string",
+      "title": "Chain Item Id"
+     },
+     "published_name": {
+      "type": "string",
+      "title": "Published Name"
+     },
+     "laboratory_as_published": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Laboratory As Published"
+     },
+     "presentation_as_published": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Presentation As Published"
+     },
+     "description": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Description"
+     },
+     "image_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Image Url"
+     },
+     "price": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Price"
+     },
+     "conditions": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Conditions"
+     },
+     "source_url": {
+      "type": "string",
+      "title": "Source Url"
+     },
+     "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Observed At"
+     },
+     "provenance": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Provenance"
+     },
+     "match": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Match"
+     }
+    },
+    "type": "object",
+    "required": [
+     "chain_item_id",
+     "published_name",
+     "laboratory_as_published",
+     "presentation_as_published",
+     "description",
+     "image_url",
+     "price",
+     "conditions",
+     "source_url",
+     "observed_at",
+     "provenance",
+     "match"
+    ],
+    "title": "ChainResultOut",
+    "description": "Ficha publicada por una cadena (§11.3). Hoy no hay conector: nunca llega una."
+   },
+   "ChainSearchAcceptedOut": {
+    "properties": {
+     "search_id": {
+      "type": "string",
+      "title": "Search Id"
+     },
+     "status": {
+      "type": "string",
+      "const": "pending",
+      "title": "Status"
+     },
+     "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Expires At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "search_id",
+     "status",
+     "expires_at"
+    ],
+    "title": "ChainSearchAcceptedOut"
+   },
+   "ChainSearchIn": {
+    "properties": {
+     "query": {
+      "type": "string",
+      "maxLength": 200,
+      "minLength": 3,
+      "title": "Query",
+      "examples": [
+       "losartán 50 mg"
+      ]
+     },
+     "chains": {
+      "items": {
+       "type": "string",
+       "enum": [
+        "cruz_verde",
+        "salcobrand",
+        "ahumada"
+       ]
+      },
+      "type": "array",
+      "title": "Chains"
+     },
+     "purpose": {
+      "type": "string",
+      "enum": [
+       "search",
+       "quote_verification"
+      ],
+      "title": "Purpose",
+      "default": "search"
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "required": [
+     "query"
+    ],
+    "title": "ChainSearchIn"
+   },
+   "ChainSearchOut": {
+    "properties": {
+     "search_id": {
+      "type": "string",
+      "title": "Search Id"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "completed",
+       "failed"
+      ],
+      "title": "Status"
+     },
+     "query": {
+      "type": "string",
+      "title": "Query"
+     },
+     "purpose": {
+      "type": "string",
+      "enum": [
+       "search",
+       "quote_verification"
+      ],
+      "title": "Purpose"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Expires At"
+     },
+     "sources": {
+      "items": {
+       "$ref": "#/components/schemas/ChainSourceOut"
+      },
+      "type": "array",
+      "title": "Sources"
+     }
+    },
+    "type": "object",
+    "required": [
+     "search_id",
+     "status",
+     "query",
+     "purpose",
+     "created_at",
+     "expires_at",
+     "sources"
+    ],
+    "title": "ChainSearchOut"
+   },
+   "ChainSourceOut": {
+    "properties": {
+     "chain": {
+      "type": "string",
+      "enum": [
+       "cruz_verde",
+       "salcobrand",
+       "ahumada"
+      ],
+      "title": "Chain"
+     },
+     "state": {
+      "type": "string",
+      "enum": [
+       "ok",
+       "stale",
+       "failed",
+       "not_configured"
+      ],
+      "title": "State"
+     },
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     },
+     "outcome": {
+      "anyOf": [
+       {
+        "type": "string",
+        "enum": [
+         "matches",
+         "no_matches"
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Outcome"
+     },
+     "observed_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Observed At"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/ChainResultOut"
+      },
+      "type": "array",
+      "title": "Results"
+     }
+    },
+    "type": "object",
+    "required": [
+     "chain",
+     "state"
+    ],
+    "title": "ChainSourceOut"
    },
    "CodeLookupRequest": {
     "properties": {
@@ -7911,6 +9211,39 @@
     ],
     "title": "ExpressionAliasIn"
    },
+   "FreshnessOut": {
+    "properties": {
+     "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Observed At"
+     },
+     "fresh_until": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Fresh Until"
+     },
+     "is_stale": {
+      "type": "boolean",
+      "title": "Is Stale"
+     },
+     "stale_fields": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Stale Fields"
+     }
+    },
+    "type": "object",
+    "required": [
+     "observed_at",
+     "fresh_until",
+     "is_stale",
+     "stale_fields"
+    ],
+    "title": "FreshnessOut"
+   },
    "GrantIn": {
     "properties": {
      "roles": {
@@ -8108,6 +9441,64 @@
     "title": "ImportRowError",
     "description": "Motivo de rechazo de una fila; el código pertenece al vocabulario cerrado de D-090."
    },
+   "InterpretationOut": {
+    "properties": {
+     "attributes": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Attributes"
+     },
+     "unresolved_terms": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Unresolved Terms"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Warnings"
+     }
+    },
+    "type": "object",
+    "required": [
+     "attributes",
+     "unresolved_terms",
+     "warnings"
+    ],
+    "title": "InterpretationOut"
+   },
+   "MatchOut": {
+    "properties": {
+     "level": {
+      "type": "string",
+      "enum": [
+       "exact",
+       "needs_review"
+      ],
+      "title": "Level"
+     },
+     "causes": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Causes"
+     }
+    },
+    "type": "object",
+    "required": [
+     "level",
+     "causes"
+    ],
+    "title": "MatchOut"
+   },
    "MeOut": {
     "properties": {
      "id": {
@@ -8241,6 +9632,25 @@
      "normalized"
     ],
     "title": "MeasureOut"
+   },
+   "MoneyOut": {
+    "properties": {
+     "amount": {
+      "type": "string",
+      "title": "Amount"
+     },
+     "currency": {
+      "type": "string",
+      "title": "Currency"
+     }
+    },
+    "type": "object",
+    "required": [
+     "amount",
+     "currency"
+    ],
+    "title": "MoneyOut",
+    "description": "Dinero como texto decimal + moneda: nunca float."
    },
    "NormalizedOut": {
     "properties": {
@@ -8471,6 +9881,280 @@
     ],
     "title": "ObservationResultOut"
    },
+   "OfferOut": {
+    "properties": {
+     "offer_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Offer Id"
+     },
+     "article_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Article Id"
+     },
+     "supplier": {
+      "$ref": "#/components/schemas/OfferSupplierOut"
+     },
+     "external_id": {
+      "type": "string",
+      "title": "External Id"
+     },
+     "external_id_kind": {
+      "type": "string",
+      "title": "External Id Kind"
+     },
+     "price": {
+      "$ref": "#/components/schemas/OfferPriceOut"
+     },
+     "price_per_base_unit": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/PricePerBaseUnitOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "sale_unit": {
+      "$ref": "#/components/schemas/SaleUnitOut"
+     },
+     "pack": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/PackOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "minimum": {
+      "$ref": "#/components/schemas/ThresholdOut"
+     },
+     "multiple": {
+      "$ref": "#/components/schemas/ThresholdOut"
+     },
+     "stock": {
+      "$ref": "#/components/schemas/StockOut"
+     },
+     "taxes": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Taxes"
+     },
+     "discounts": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Discounts"
+     },
+     "shipping_terms_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Shipping Terms Id"
+     },
+     "validity": {
+      "$ref": "#/components/schemas/ValidityOut"
+     },
+     "notes": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Notes"
+     },
+     "provenance": {
+      "$ref": "#/components/schemas/OfferProvenanceOut"
+     },
+     "freshness": {
+      "$ref": "#/components/schemas/FreshnessOut"
+     }
+    },
+    "type": "object",
+    "required": [
+     "offer_id",
+     "article_id",
+     "supplier",
+     "external_id",
+     "external_id_kind",
+     "price",
+     "price_per_base_unit",
+     "sale_unit",
+     "pack",
+     "minimum",
+     "multiple",
+     "stock",
+     "taxes",
+     "discounts",
+     "shipping_terms_id",
+     "validity",
+     "notes",
+     "provenance",
+     "freshness"
+    ],
+    "title": "OfferOut",
+    "description": "`OfferOut` de C0 §4.2. Un dato desconocido viaja como `null`."
+   },
+   "OfferPriceOut": {
+    "properties": {
+     "money": {
+      "$ref": "#/components/schemas/MoneyOut"
+     },
+     "basis": {
+      "type": "string",
+      "enum": [
+       "per_commercial_unit",
+       "per_base_unit"
+      ],
+      "title": "Basis"
+     },
+     "tax_included": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Tax Included"
+     },
+     "discount_included": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Discount Included"
+     }
+    },
+    "type": "object",
+    "required": [
+     "money",
+     "basis",
+     "tax_included",
+     "discount_included"
+    ],
+    "title": "OfferPriceOut"
+   },
+   "OfferProvenanceOut": {
+    "properties": {
+     "source": {
+      "$ref": "#/components/schemas/ProvenanceSourceOut"
+     },
+     "data_origin": {
+      "type": "string",
+      "title": "Data Origin"
+     },
+     "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Observed At"
+     },
+     "evidence": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Evidence"
+     }
+    },
+    "type": "object",
+    "required": [
+     "source",
+     "data_origin",
+     "observed_at",
+     "evidence"
+    ],
+    "title": "OfferProvenanceOut"
+   },
+   "OfferSupplierOut": {
+    "properties": {
+     "supplier_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Supplier Id"
+     },
+     "name": {
+      "type": "string",
+      "title": "Name"
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     }
+    },
+    "type": "object",
+    "required": [
+     "supplier_id",
+     "name",
+     "status"
+    ],
+    "title": "OfferSupplierOut"
+   },
+   "PackOut": {
+    "properties": {
+     "units_per_commercial_unit": {
+      "type": "string",
+      "title": "Units Per Commercial Unit"
+     },
+     "base_unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Base Unit"
+     },
+     "original_text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Original Text"
+     }
+    },
+    "type": "object",
+    "required": [
+     "units_per_commercial_unit",
+     "base_unit",
+     "original_text"
+    ],
+    "title": "PackOut"
+   },
    "PendingItemOut": {
     "properties": {
      "id": {
@@ -8530,6 +10214,106 @@
      "text"
     ],
     "title": "PharmaIdentityIn"
+   },
+   "PresentationOut": {
+    "properties": {
+     "commercial_unit": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Commercial Unit"
+     },
+     "units_per_commercial_unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Units Per Commercial Unit"
+     },
+     "content": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Content"
+     }
+    },
+    "type": "object",
+    "required": [
+     "commercial_unit",
+     "units_per_commercial_unit",
+     "content"
+    ],
+    "title": "PresentationOut"
+   },
+   "PricePerBaseUnitOut": {
+    "properties": {
+     "amount": {
+      "type": "string",
+      "title": "Amount"
+     },
+     "currency": {
+      "type": "string",
+      "title": "Currency"
+     },
+     "base_unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Base Unit"
+     }
+    },
+    "type": "object",
+    "required": [
+     "amount",
+     "currency",
+     "base_unit"
+    ],
+    "title": "PricePerBaseUnitOut"
+   },
+   "ProvenanceSourceOut": {
+    "properties": {
+     "source_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Source Id"
+     },
+     "name": {
+      "type": "string",
+      "title": "Name"
+     },
+     "mode": {
+      "type": "string",
+      "title": "Mode"
+     }
+    },
+    "type": "object",
+    "required": [
+     "source_id",
+     "name",
+     "mode"
+    ],
+    "title": "ProvenanceSourceOut"
    },
    "QuantityCommandIn": {
     "properties": {
@@ -8849,6 +10633,467 @@
     },
     "type": "object",
     "title": "ResolveIn"
+   },
+   "SaleUnitOut": {
+    "properties": {
+     "code": {
+      "type": "string",
+      "title": "Code"
+     },
+     "original_text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Original Text"
+     }
+    },
+    "type": "object",
+    "required": [
+     "code",
+     "original_text"
+    ],
+    "title": "SaleUnitOut"
+   },
+   "SearchErrorOut": {
+    "properties": {
+     "source_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Source Id"
+     },
+     "code": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Code"
+     },
+     "message": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Message"
+     },
+     "retryable": {
+      "type": "boolean",
+      "title": "Retryable"
+     }
+    },
+    "type": "object",
+    "required": [
+     "source_id",
+     "code",
+     "message",
+     "retryable"
+    ],
+    "title": "SearchErrorOut"
+   },
+   "SearchFiltersIn": {
+    "properties": {
+     "ingredient": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 200
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Ingredient"
+     },
+     "brand": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 200
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Brand"
+     },
+     "laboratory": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 200
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Laboratory"
+     },
+     "form": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 30
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Form"
+     },
+     "gtin": {
+      "anyOf": [
+       {
+        "type": "string",
+        "pattern": "^[0-9]{8,14}$"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Gtin"
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "title": "SearchFiltersIn",
+    "description": "Conjunto cerrado de filtros: solo restringen, nunca completan datos faltantes."
+   },
+   "SearchIn": {
+    "properties": {
+     "query": {
+      "type": "string",
+      "maxLength": 200,
+      "minLength": 3,
+      "title": "Query",
+      "examples": [
+       "ibuprofeno 400"
+      ]
+     },
+     "filters": {
+      "$ref": "#/components/schemas/SearchFiltersIn"
+     },
+     "limit": {
+      "type": "integer",
+      "maximum": 50.0,
+      "minimum": 1.0,
+      "title": "Limit",
+      "default": 20
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "required": [
+     "query"
+    ],
+    "title": "SearchIn"
+   },
+   "SearchOut": {
+    "properties": {
+     "search_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Search Id"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "completed",
+       "partial",
+       "failed"
+      ],
+      "title": "Status"
+     },
+     "query": {
+      "$ref": "#/components/schemas/SearchQueryOut"
+     },
+     "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Generated At"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/SearchResultOut"
+      },
+      "type": "array",
+      "title": "Results"
+     },
+     "sources": {
+      "items": {
+       "$ref": "#/components/schemas/SearchSourceOut"
+      },
+      "type": "array",
+      "title": "Sources"
+     },
+     "errors": {
+      "items": {
+       "$ref": "#/components/schemas/SearchErrorOut"
+      },
+      "type": "array",
+      "title": "Errors"
+     },
+     "next_cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Next Cursor"
+     }
+    },
+    "type": "object",
+    "required": [
+     "search_id",
+     "status",
+     "query",
+     "generated_at",
+     "results",
+     "sources",
+     "errors",
+     "next_cursor"
+    ],
+    "title": "SearchOut"
+   },
+   "SearchQueryOut": {
+    "properties": {
+     "original_text": {
+      "type": "string",
+      "title": "Original Text"
+     },
+     "filters": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Filters"
+     },
+     "interpretation": {
+      "$ref": "#/components/schemas/InterpretationOut"
+     }
+    },
+    "type": "object",
+    "required": [
+     "original_text",
+     "filters",
+     "interpretation"
+    ],
+    "title": "SearchQueryOut"
+   },
+   "SearchResultOut": {
+    "properties": {
+     "article_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Article Id"
+     },
+     "display_name": {
+      "type": "string",
+      "title": "Display Name"
+     },
+     "identity_summary": {
+      "type": "string",
+      "title": "Identity Summary"
+     },
+     "presentation": {
+      "$ref": "#/components/schemas/PresentationOut"
+     },
+     "match": {
+      "$ref": "#/components/schemas/MatchOut"
+     },
+     "relation": {
+      "type": "string",
+      "enum": [
+       "exact",
+       "other_presentation",
+       "combined",
+       "related",
+       "needs_review"
+      ],
+      "title": "Relation"
+     },
+     "offer_count": {
+      "type": "integer",
+      "title": "Offer Count"
+     },
+     "supplier_count": {
+      "type": "integer",
+      "title": "Supplier Count"
+     },
+     "lowest_verified_price": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/MoneyOut"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "sources": {
+      "items": {
+       "type": "string",
+       "format": "uuid"
+      },
+      "type": "array",
+      "title": "Sources"
+     }
+    },
+    "type": "object",
+    "required": [
+     "article_id",
+     "display_name",
+     "identity_summary",
+     "presentation",
+     "match",
+     "relation",
+     "offer_count",
+     "supplier_count",
+     "lowest_verified_price",
+     "sources"
+    ],
+    "title": "SearchResultOut"
+   },
+   "SearchSourceOut": {
+    "properties": {
+     "source_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Source Id"
+     },
+     "name": {
+      "type": "string",
+      "title": "Name"
+     },
+     "kind": {
+      "type": "string",
+      "title": "Kind"
+     },
+     "supplier_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Supplier Id"
+     },
+     "mode": {
+      "type": "string",
+      "title": "Mode"
+     },
+     "capabilities": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Capabilities"
+     },
+     "enabled": {
+      "type": "boolean",
+      "title": "Enabled"
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "has_secret": {
+      "type": "boolean",
+      "title": "Has Secret"
+     },
+     "last_success_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Last Success At"
+     },
+     "last_error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Last Error"
+     },
+     "version": {
+      "type": "integer",
+      "title": "Version"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Updated At"
+     },
+     "outcome": {
+      "anyOf": [
+       {
+        "type": "string",
+        "enum": [
+         "matches",
+         "no_matches"
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Outcome"
+     },
+     "matches_count": {
+      "type": "integer",
+      "title": "Matches Count"
+     }
+    },
+    "type": "object",
+    "required": [
+     "source_id",
+     "name",
+     "kind",
+     "supplier_id",
+     "mode",
+     "capabilities",
+     "enabled",
+     "status",
+     "has_secret",
+     "last_success_at",
+     "last_error",
+     "version",
+     "created_at",
+     "updated_at",
+     "outcome",
+     "matches_count"
+    ],
+    "title": "SearchSourceOut",
+    "description": "Estado de la fuente en ESTA corrida; `status` es el guardado, no el de hoy."
    },
    "SessionState": {
     "properties": {
@@ -9294,6 +11539,47 @@
     ],
     "title": "StaffRenameIn"
    },
+   "StockOut": {
+    "properties": {
+     "status": {
+      "type": "string",
+      "enum": [
+       "known",
+       "unknown"
+      ],
+      "title": "Status"
+     },
+     "quantity": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Quantity"
+     },
+     "unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Unit"
+     }
+    },
+    "type": "object",
+    "required": [
+     "status",
+     "quantity",
+     "unit"
+    ],
+    "title": "StockOut"
+   },
    "StrengthOut": {
     "properties": {
      "label": {
@@ -9590,6 +11876,44 @@
     ],
     "title": "TextAttrOut"
    },
+   "ThresholdOut": {
+    "properties": {
+     "known": {
+      "type": "boolean",
+      "title": "Known"
+     },
+     "quantity": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Quantity"
+     },
+     "unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Unit"
+     }
+    },
+    "type": "object",
+    "required": [
+     "known",
+     "quantity",
+     "unit"
+    ],
+    "title": "ThresholdOut",
+    "description": "`known=false` es desconocido: la cantidad va en `null`, nunca en 0 ni 1."
+   },
    "UserAccessOut": {
     "properties": {
      "user_id": {
@@ -9674,6 +11998,45 @@
      "type"
     ],
     "title": "ValidationError"
+   },
+   "ValidityOut": {
+    "properties": {
+     "valid_from": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Valid From"
+     },
+     "valid_to": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Valid To"
+     },
+     "is_current": {
+      "type": "boolean",
+      "title": "Is Current"
+     }
+    },
+    "type": "object",
+    "required": [
+     "valid_from",
+     "valid_to",
+     "is_current"
+    ],
+    "title": "ValidityOut"
    },
    "app__api__v1__schemas__PendingOut": {
     "properties": {

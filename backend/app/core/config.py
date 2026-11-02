@@ -68,12 +68,29 @@ class Settings(BaseSettings):
     currency: str = "CLP"
     # Una fuente sin observación exitosa en esta ventana se informa `stale` (E4). No inventa frescura.
     source_stale_after_hours: int = Field(default=24, ge=1, le=24 * 365)
+    # ---- Búsqueda de precios públicos de cadenas (E15)
+    # Habilita cadenas por nombre. Hoy NO existe conector autorizado para ninguna: aunque se listen
+    # aquí, la búsqueda las informa `not_configured` y no se inventan resultados (contrato §11.6/§11.7).
+    chain_search_enabled: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", "chain_search_enabled", mode="before")
     @classmethod
     def _split_origins(cls, v):
         if isinstance(v, str):
             return [o.strip() for o in v.split(",") if o.strip()]
+        return v
+
+    @field_validator("chain_search_enabled")
+    @classmethod
+    def _check_chains(cls, v: list[str]):
+        permitidas = {"cruz_verde", "salcobrand", "ahumada"}
+        desconocidas = sorted(set(v) - permitidas)
+        if desconocidas:
+            raise ValueError(
+                "CHAIN_SEARCH_ENABLED: cadenas desconocidas "
+                + ", ".join(desconocidas)
+                + " (válidas: cruz_verde, salcobrand, ahumada)"
+            )
         return v
 
     @field_validator("database_url", "test_database_url", mode="before")

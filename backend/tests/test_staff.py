@@ -601,10 +601,20 @@ async def test_los_cambios_de_personal_quedan_auditados_con_antes_y_despues(
 
 
 async def test_no_hay_pin_en_el_demo_ni_en_la_api_de_personal(admin_api, sessions, bot, tg_api):
-    props = str((await admin_api.get("/openapi.json")).json()["components"]["schemas"])
-    assert "pin" not in props.lower().replace(
-        "pending", ""
-    )  # ningún campo de PIN en los contratos de personal
+    schemas = (await admin_api.get("/openapi.json")).json()["components"]["schemas"]
+
+    def _tokens(node):
+        # Nombre por nombre y por partes: `shipping_terms_id` no es un campo de PIN.
+        if isinstance(node, dict):
+            for key, value in node.items():
+                yield key.lower()
+                yield from _tokens(value)
+        elif isinstance(node, list):
+            for value in node:
+                yield from _tokens(value)
+
+    partes = {p for t in _tokens(schemas) for p in t.split("_")}
+    assert "pin" not in partes  # ningún campo de PIN en los contratos expuestos
     await bot.pick("danny")
     async with sessions() as s:
         sess = (await s.execute(select(ActorSession))).scalar_one()
