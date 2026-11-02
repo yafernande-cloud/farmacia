@@ -13,6 +13,7 @@
   unlink-auth-subject <app_user_id> --org sim|real --by <app_user_id> --confirm
   create-admin "<nombre>" --org sim|real --confirm
                                   bootstrap: la PRIMERA administradora web (solo rol admin, sin enlace)
+  set-superadmin <app_user_id>    uso único: control técnico de la propietaria (no es un rol)
   catalog-load <archivo.jsonl> --org sim|real --by <app_user_id> [--dry-run]
                                   carga inicial técnica del catálogo propio: artículos y vínculos SKU
                                   desde un archivo de datos (D-101); no crea ofertas ni lee planillas
@@ -44,7 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import dispose_engine, get_engine
 from app.models import AppUser, ChannelBinding, Organization, PurchaseCycle, TelegramAccount
-from app.services import access, catalog_load, catalog_seed, identity, imports, staff
+from app.services import access, catalog_load, catalog_seed, identity, imports, staff, web_access
 from app.services.actors import Actor, load_actor
 from app.services.provenance import OrgKind, validate_account, validate_binding, vision_guard
 
@@ -388,6 +389,19 @@ async def create_admin(display_name: str, which: str, a: list[str]) -> None:
     await dispose_engine()
 
 
+async def set_superadmin(user_id: str) -> None:
+    """Uso único: marca a la superadministradora técnica. Auditado con actor nulo (D-119/D-130)."""
+    uid = _uuid(user_id, "app_user_id")
+    try:
+        async with AsyncSession(get_engine(), expire_on_commit=False) as s, s.begin():
+            u = await web_access.set_superadmin(s, uid)
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(getattr(e, "message", str(e))) from None
+    print(f"Superadministradora técnica: {u.display_name} ({u.id}).")
+    print("  Es control técnico, no un perfil funcional: no le otorga permisos de negocio nuevos.")
+    await dispose_engine()
+
+
 async def catalog_load_file(path: str, which: str, a: list[str]) -> None:
     """Carga inicial del catálogo propio (D-101). Es un mecanismo técnico, no la administración diaria (D-097)."""
     by = _arg(a, "--by")
@@ -583,6 +597,8 @@ def main() -> None:
         asyncio.run(unlink_auth_subject(a[1], _org_arg(a), a))
     elif len(a) >= 2 and a[0] == "create-admin":
         asyncio.run(create_admin(a[1], _org_arg(a), a))
+    elif len(a) == 2 and a[0] == "set-superadmin":
+        asyncio.run(set_superadmin(a[1]))
     elif len(a) >= 2 and a[0] == "catalog-load":
         asyncio.run(catalog_load_file(a[1], _org_arg(a), a))
     elif a[:1] == ["seed-catalog"]:
@@ -605,7 +621,7 @@ def main() -> None:
             "list-auth-subjects --org sim|real --by <id> | "
             "link-auth-subject <id> --org sim|real --by <id> [--subject <sub>] | "
             "unlink-auth-subject <id> --org sim|real --by <id> --confirm | "
-            "create-admin \"<nombre>\" --org sim|real --confirm | "
+            "create-admin \"<nombre>\" --org sim|real --confirm | set-superadmin <app_user_id> | "
             "catalog-load <archivo.jsonl> --org sim|real --by <id> [--dry-run] | "
             "seed-catalog --org sim --by <id> [--observed-at <ISO>] [--dry-run] | "
             "import-check <archivo.xlsx> --org sim|real --by <id> --source <source_id> | "

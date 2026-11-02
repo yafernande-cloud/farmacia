@@ -1,7 +1,7 @@
 # Autenticación web con Supabase Auth
 
-Estado (2026-10-30, tras el cierre de D0, commit `38adb6b`): **validador JWT, enlace de identidad y comando de
-bootstrap implementados y probados**. El
+Estado (2026-11-02, G1 implementado en código): **validador JWT, enlace de identidad, comando de bootstrap y acceso
+web con solicitudes/campanita/aprobación implementados y probados**. El
 proyecto Supabase `faltantes-farmacia` existe (creado por el usuario, con Google OAuth en modo de prueba) y su JWKS
 público se verificó compatible (clave ES256/P-256). El frontend no está construido. En desarrollo local sigue
 rigiendo `AUTH_MODE=demo_header`, restringido a la organización de simulación para las operaciones administrativas.
@@ -13,22 +13,22 @@ organización `real_test`; sin token y con token inválido, **401**. **Pao sigue
 `real_test`, `simulation` y `legacy_mixed` (archivo), todas con `auth_subject = NULL`; solo se enlazará la de
 `real_test` y con su propia identidad (D-067).
 
-**Actualización de D0 y de la fase documental (contrato del cotizador v0.2, revisión 6).** El acceso web con Google es
-un **plano propio** frente a Telegram y a la superadministración (D-117, D-119, D-128, contrato §1.5 y §9.10), pero
-**G1 no está implementado**: no existen la tabla `web_access_request`, las columnas `app_user.email`, `is_superadmin`,
-`web_access_expires_at`, `web_access_granted_by` y `web_access_granted_at`, ni los endpoints de solicitudes con
-campanita; su migración es **0012** y no está aplicada a `farmacia`. Lo que figura en «Qué está implementado» es lo
-único que corre hoy. Tampoco existe todavía ningún endpoint del cotizador: cotizar y registrar compras exigirán
-`admin` **o** `purchasing` + `StrongActor` solo cuando se implementen E10/E11/E12.
+**Actualización del 2026-11-02 (G1 implementado en código; contrato v0.2, revisión 7).** El acceso web con Google es
+un **plano propio** frente a Telegram y a la superadministración (D-117, D-119, D-130, contrato §1.5 y §9.10). **G1
+está implementado en código** con la migración **0012** creada y probada (`web_access_request`, las cinco columnas de
+`app_user`, solicitudes con campanita, aprobación/rechazo, otorgar/revocar y `set-superadmin`), **pero `0012` no está
+aplicada a `farmacia`** (sigue en 0008) ni a `farmacia_demo` (0011). **Único perfil funcional web: `admin`** (D-130):
+`purchasing` y `auxiliary` siguen siendo roles de Telegram, no perfiles web. Tampoco existe todavía ningún endpoint del
+cotizador: cotizar y registrar compras exigirán `admin` + `StrongActor` cuando se implementen E10/E11/E12.
 
 Decisiones relacionadas: D-064 (una identidad por persona), D-065 (enlace administrativo, nunca automático),
 D-066 (sin recuperación ni registro público), D-067 (Pao en `real_test`), D-068 (firma asimétrica),
 D-069 (`/staff` exige sesión fuerte), D-070 (limitación multi-organización), D-071 (identidad de prueba separada
 de Pao), D-072 (bootstrap de la primera administradora). Del contrato del cotizador: **D-117** (acceso web con
-Google y solicitudes), **D-119** (superadministradora), **D-124** (`admin` también informa faltantes por Telegram;
-permisos web y de Telegram independientes), **D-126/D-127** (recepción fuera del MVP y cierre solo por compra
-confirmada, sin estados de recepción) y **D-128** (aprobar asigna `purchasing`; Cotizador para `admin` o `purchasing`;
-Telegram no se otorga por la web).
+Google y solicitudes), **D-119** (superadministradora como control técnico), **D-124** (`admin` también informa
+faltantes por Telegram; permisos web y de Telegram independientes), **D-126/D-127** (recepción fuera del MVP y cierre
+solo por compra confirmada, sin estados de recepción) y **D-130** (aprobar otorga `admin`; `admin` es el único perfil
+funcional web; Telegram no se otorga por la web). **D-128 queda superada.**
 
 ## Flujo
 1. El frontend (Lovable) inicia sesión con Supabase Auth: **Google** o **correo + contraseña**. No hay registro
@@ -71,16 +71,34 @@ Telegram no se otorga por la web).
   restricciones del bootstrap (`backend/tests/test_bootstrap_admin.py`: solo `admin`, sin enlace, auditoría con
   `actor_id = NULL`, negativa en producción, una sola bootstrap activa y recuperación si se desactiva).
 
-**Aprobado y todavía sin código (D0 y D-128):**
-- **G1 — acceso web del cotizador:** `web_access_request` (`pending | approved | rejected`) y las cinco columnas de
-  `app_user`; **aprobar crea el `app_user` con `roles = ['purchasing']` y `auth_subject` en el mismo paso** (D-128),
-  sin `admin`, sin `MANAGE_*`, sin `is_superadmin` y sin ningún acceso a Telegram; **la aprobación no fija
-  vencimiento** (`web_access_expires_at = NULL`, sin plazo automático), y el vencimiento se evalúa en cada petición
-  cuando exista; campanita de solicitudes; superadministradora como bandera (`is_superadmin`), **no** como rol nuevo.
-  Migración **0012**, no creada.
-- **Cotizador E10/E11/E12:** cotizar, registrar compras y leer historial exigen `admin` o `purchasing` + `StrongActor`;
-  aún no hay endpoints. `purchasing` conserva sus permisos actuales de la matriz y no administra usuarios.
-- **Telegram no se toca (D-128):** aprobar una solicitud web no crea cuenta, vínculo ni chat autorizado. La
+**G1 implementado en código (migración `0012`; D-130):**
+- Migración `0012_acceso_web_solicitudes_y_superadministracion`: columnas `app_user.email`, `is_superadmin`,
+  `web_access_expires_at`, `web_access_granted_by` y `web_access_granted_at`, FK compuesta de quien otorga, índice
+  único parcial que admite **una sola superadministradora activa** y tabla `web_access_request`
+  (`pending | approved | rejected`) con checks e índices de organización/estado y unicidad por solicitud pendiente.
+- `GET /api/v1/me` devuelve `is_superadmin` y `web_access_expires_at`.
+- `POST /api/v1/web-access-requests` (público): exige identidad con **correo verificado**, cuerpo `{}` y organización
+  desde `WEB_ACCESS_ORGANIZATION_ID`; **202** con `{"received": true}` siempre igual; **503 `ACCESS_NOT_CONFIGURED`**
+  sin organización y **429 `RATE_LIMITED`** por encima de 5/min por `sub` o 20/min por IP.
+- `GET /api/v1/web-access-requests`: campanita de las `admin` de la organización; la superadministradora ve todas con
+  el nombre de la organización. `POST …/{id}/approve` y `…/{id}/reject` (motivo opcional ≤ 500 caracteres).
+- Aprobar crea el `app_user` con `roles = ['admin']`, `active`, `available`, `auth_subject` y
+  `web_access_expires_at = NULL`; **no enlaza ni sobrescribe**: identidad ya vinculada → `409 USER_ALREADY_EXISTS`;
+  nombre activo duplicado → `409 DUPLICATE_NAME` (la solicitud queda pendiente).
+- `POST /api/v1/admin/users/{user_id}/web-access` y `…/web-access/revoke`: **solo `is_superadmin`**; no tocan
+  Telegram ni `active`; `SUPERADMIN_PROTECTED` impide modificar a la superadministradora.
+- `set-superadmin <app_user_id>` (CLI): uso único, auditado con `actor_id = NULL`.
+- Acceso vencido → **403 `WEB_ACCESS_EXPIRED`** al autenticar (`_actor_from_jwt`), evaluado en cada petición.
+- Con `AUTH_MODE=demo_header` la identidad se envía en `X-Demo-Subject`, `X-Demo-Email` y `X-Demo-Name`; solicitar
+  acceso a una organización real sigue exigiendo una sesión de Supabase Auth.
+- Pruebas: `backend/tests/test_web_access_api.py` (16 pruebas: solicitud, idempotencia, campanita por organización,
+  aprobación que otorga `admin`, entrada al Cotizador, rechazo, duplicados, superadministración, vencimiento, límite
+  de tasa y falta de organización).
+
+**Aprobado y todavía sin código (cotizador):**
+- **Cotizador E10/E11/E12:** cotizar, registrar compras y leer historial exigirán `admin` + `StrongActor` (D-130);
+  aún no hay endpoints.
+- **Telegram no se toca (D-130):** aprobar una solicitud web no crea cuenta, vínculo ni chat autorizado. La
   autorización del bot es por cuenta (D-118); el selector del teléfono compartido es identificación declarada dentro
   de un chat ya autorizado, no una lista de autorizados. No se agrega bandera por persona.
 - **D-124:** `admin` **todavía no** puede reportar faltantes: la matriz no le da `REPORT_SHORTAGE` y
@@ -142,10 +160,10 @@ Reglas del enlace:
    `sub` y el mismo 200 en la prueba aislada; con la sesión de correo/contraseña también responde 200.
 4. Alta manual de la identidad de Pao cuando corresponda (correo + contraseña, correo confirmado) y enlace a su fila
    de `real_test` (D-067), sin modificar sus roles.
-5. **Implementar G1** (migración `0012`, con autorización explícita): `web_access_request`, columnas de `app_user`,
-   solicitudes con campanita, aprobación/rechazo por `admin` —la aprobación asigna `purchasing`, D-128—, vencimiento
-   del acceso web y superadministradora limitada a metadatos. Hasta entonces el acceso web es solo el validador +
-   enlace + `/staff`.
+5. ~~Implementar G1~~ **Hecho en código el 2026-11-02**: migración `0012` creada y probada, solicitudes con campanita,
+   aprobación/rechazo por `admin` —la aprobación otorga `admin`, D-130—, otorgar/revocar y `set-superadmin`.
+   **Falta aplicarla con autorización explícita:** `0012` no está aplicada a `farmacia` (0008) ni a `farmacia_demo`
+   (0011). Antes de activar el frontend hay que definir `WEB_ACCESS_ORGANIZATION_ID` en el entorno desplegado.
 6. Configurar `SUPABASE_JWKS_URL`, `SUPABASE_JWT_ISSUER` y `AUTH_MODE=supabase_jwt` en el entorno desplegado;
    añadir el origen del frontend a `CORS_ORIGINS`.
 7. Frontend Lovable: ingreso con Google y correo/contraseña, sin registro ni recuperación; enviar el bearer y
@@ -158,9 +176,9 @@ Reglas del enlace:
 - **Multi-organización (D-070):** `auth_subject` es único en toda la base. Hoy solo se enlaza `real_test`; al
   habilitar `production` habrá que decidir cómo una persona accede a más de una organización.
 - La autenticación fuerte real (MFA o re-autenticación) queda para H5, como decisión futura. Mientras tanto, el
-  contrato v0.2 (revisión 6) exige `admin` **o** `purchasing` + `StrongActor` para cotizar y registrar compras (sin
-  implementar), con la semántica vigente de D-086/D-099: **no es MFA ni una segunda autenticación** y con
-  `AUTH_MODE=supabase_jwt` no bloquea a una persona aprobada. G1 no implementa MFA ni modifica los controles actuales.
+  contrato v0.2 (revisión 7) exige `admin` + `StrongActor` para cotizar y registrar compras (sin implementar), con la
+  semántica vigente de D-086/D-099: **no es MFA ni una segunda autenticación** y con `AUTH_MODE=supabase_jwt` no
+  bloquea a una persona aprobada. G1 no implementa MFA ni modifica los controles actuales.
   La recepción física no forma parte del MVP (D-126) y no habrá permisos de recepción que autenticar.
 - Si Supabase deja de usarse, basta otro emisor OIDC: solo cambia el validador de JWT.
 - Telegram **no** usa Supabase Auth: se identifica por cuenta autorizada + sesión de canal (H1-B).

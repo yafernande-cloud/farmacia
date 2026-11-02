@@ -249,6 +249,12 @@ class MeOut(BaseModel):
     organization_id: uuid.UUID
     identity_level: Literal["declared"] = "declared"
     organization_kind: str = Field(description="simulation | real_test | production | legacy_mixed")
+    is_superadmin: bool = Field(
+        default=False, description="Control técnico de la propietaria; no es un rol"
+    )
+    web_access_expires_at: datetime | None = Field(
+        default=None, description="NULL = acceso sin vencimiento"
+    )
 
 
 class ImportRowError(BaseModel):

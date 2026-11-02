@@ -97,8 +97,54 @@ def _invalid_token() -> DomainError:
     )
 
 
+@dataclass(frozen=True)
+class JwtClaims:
+    """Claims mínimos para gestionar una solicitud de acceso. No son permisos.
+
+    El `sub` es la identidad; `email` y `display_name` solo se guardan como datos informativos de la
+    solicitud y del `app_user`. Ningún rol ni organización sale del token.
+    """
+
+    subject: str
+    email: str | None
+    email_verified: bool
+    display_name: str | None
+
+
+async def verify_supabase_jwt_claims(token: str, settings: Settings) -> JwtClaims:
+    """Valida el JWT y devuelve los claims mínimos; lanza `DomainError` 401/503 si no es válido."""
+    claims = await _decode(token, settings)
+    subject = claims.get("sub")
+    if not isinstance(subject, str) or not subject.strip():
+        raise _invalid_token()
+    email = claims.get("email")
+    email = email.strip() if isinstance(email, str) and email.strip() else None
+    metadata = claims.get("user_metadata")
+    name = None
+    if isinstance(metadata, dict):
+        for key in ("full_name", "name"):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                name = value.strip()
+                break
+    if name is None:
+        raw_name = claims.get("name")
+        if isinstance(raw_name, str) and raw_name.strip():
+            name = raw_name.strip()
+    # Supabase puede entregar `email_verified` o `email_confirmed_at`; ambos son verificaciones.
+    verified = claims.get("email_verified") is True or bool(claims.get("email_confirmed_at"))
+    return JwtClaims(
+        subject=subject.strip(), email=email, email_verified=verified, display_name=name
+    )
+
+
 async def verify_supabase_jwt(token: str, settings: Settings) -> str:
     """Devuelve el `sub` verificado o lanza un `DomainError` 401/503. Nunca devuelve claims crudos."""
+    return (await verify_supabase_jwt_claims(token, settings)).subject
+
+
+async def _decode(token: str, settings: Settings) -> dict[str, Any]:
+    """Verifica firma, emisor, audiencia, expiración y rol; devuelve los claims ya validados."""
     if not settings.supabase_jwks_url or not settings.supabase_jwt_issuer:
         raise DomainError(
             "AUTH_NOT_CONFIGURED", "La autenticación no está configurada.", status_code=503
@@ -134,7 +180,4 @@ async def verify_supabase_jwt(token: str, settings: Settings) -> str:
 
     if claims.get("role") != REQUIRED_ROLE:
         raise _invalid_token()
-    subject = claims.get("sub")
-    if not isinstance(subject, str) or not subject.strip():
-        raise _invalid_token()
-    return subject.strip()
+    return claims

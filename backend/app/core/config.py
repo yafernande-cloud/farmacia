@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # Organización que recibe las solicitudes de acceso del bot. Se configura EXPLÍCITAMENTE por
     # entorno (`real_test` ahora, `production` después); no hay valor por defecto.
     telegram_access_organization_id: uuid.UUID | None = None
+    # Organización que recibe las solicitudes de acceso WEB. Igual que la de Telegram, se configura
+    # EXPLÍCITAMENTE por entorno: nunca sale del cuerpo ni de los claims. Sin valor → 503.
+    web_access_organization_id: uuid.UUID | None = None
     # ---- Telegram (opcional: sin token/secreto el canal queda apagado; nada se inventa)
     telegram_bot_token: SecretStr | None = None
     telegram_webhook_secret: SecretStr | None = None

@@ -285,6 +285,13 @@ async def set_active(
     u = await _load(session, actor, user_id)
     if u.active == active:
         return u, 0
+    if not active and u.is_superadmin:
+        raise DomainError(
+            "SUPERADMIN_PROTECTED",
+            "La superadministradora técnica no puede desactivarse desde la administración de la "
+            "farmacia.",
+            status_code=403,
+        )
     if active:
         await _assert_unique_name(session, org, u.display_name, exclude=u.id)
     else:

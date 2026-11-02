@@ -137,7 +137,9 @@ async def _result(session, actor, r: demand_svc.ObservationResult) -> s.Observat
 async def me(actor: CurrentActor, session: Session):
     return s.MeOut(id=actor.id, display_name=actor.display_name, roles=actor.roles,
                    organization_id=actor.organization_id,
-                   organization_kind=await org_kind(session, actor.organization_id))  # fmt: skip
+                   organization_kind=await org_kind(session, actor.organization_id),
+                   is_superadmin=actor.is_superadmin,
+                   web_access_expires_at=actor.web_access_expires_at)  # fmt: skip
 
 
 @router.get("/demand-items", response_model=s.DemandItemList, responses=ERRORS,

@@ -4939,7 +4939,7 @@
      "content": {
       "application/json": {
        "schema": {
-        "$ref": "#/components/schemas/RejectIn"
+        "$ref": "#/components/schemas/app__api__v1__telegram_accounts__RejectIn"
        }
       }
      }
@@ -5475,6 +5475,821 @@
      }
     }
    }
+  },
+  "/api/v1/web-access-requests": {
+   "post": {
+    "tags": [
+     "acceso web"
+    ],
+    "summary": "Solicitar acceso al Cotizador (no otorga nada)",
+    "operationId": "request_access_api_v1_web_access_requests_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-subject",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header: `sub` ficticio",
+       "title": "X-Demo-Subject"
+      },
+      "description": "Solo AUTH_MODE=demo_header: `sub` ficticio"
+     },
+     {
+      "name": "x-demo-email",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header: correo ficticio",
+       "title": "X-Demo-Email"
+      },
+      "description": "Solo AUTH_MODE=demo_header: correo ficticio"
+     },
+     {
+      "name": "x-demo-name",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header: nombre visible ficticio",
+       "title": "X-Demo-Name"
+      },
+      "description": "Solo AUTH_MODE=demo_header: nombre visible ficticio"
+     }
+    ],
+    "responses": {
+     "202": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ReceivedOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   },
+   "get": {
+    "tags": [
+     "acceso web"
+    ],
+    "summary": "Campanita: solicitudes pendientes",
+    "operationId": "pending_requests_api_v1_web_access_requests_get",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/app__api__v1__web_access__PendingOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/web-access-requests/{request_id}/approve": {
+   "post": {
+    "tags": [
+     "acceso web"
+    ],
+    "summary": "Aprobar: crea la persona con rol `admin`",
+    "operationId": "approve_request_api_v1_web_access_requests__request_id__approve_post",
+    "parameters": [
+     {
+      "name": "request_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Request Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ApprovedOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/web-access-requests/{request_id}/reject": {
+   "post": {
+    "tags": [
+     "acceso web"
+    ],
+    "summary": "Rechazar una solicitud (no crea persona)",
+    "operationId": "reject_request_api_v1_web_access_requests__request_id__reject_post",
+    "parameters": [
+     {
+      "name": "request_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Request Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/app__api__v1__web_access__RejectIn"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Body"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RejectedOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/admin/users/{user_id}/web-access": {
+   "post": {
+    "tags": [
+     "acceso web"
+    ],
+    "summary": "Otorgar o ajustar acceso web (solo superadministración técnica)",
+    "operationId": "grant_access_api_v1_admin_users__user_id__web_access_post",
+    "parameters": [
+     {
+      "name": "user_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "User Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/GrantIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UserAccessOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/admin/users/{user_id}/web-access/revoke": {
+   "post": {
+    "tags": [
+     "acceso web"
+    ],
+    "summary": "Revocar solo el acceso web (solo superadministración técnica)",
+    "operationId": "revoke_access_api_v1_admin_users__user_id__web_access_revoke_post",
+    "parameters": [
+     {
+      "name": "user_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "User Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UserAccessOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
   }
  },
  "components": {
@@ -5912,6 +6727,57 @@
     ],
     "title": "ApproveIn"
    },
+   "ApprovedOut": {
+    "properties": {
+     "request_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Request Id"
+     },
+     "status": {
+      "type": "string",
+      "const": "approved",
+      "title": "Status",
+      "default": "approved"
+     },
+     "user_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "User Id"
+     },
+     "display_name": {
+      "type": "string",
+      "title": "Display Name"
+     },
+     "roles": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Roles"
+     },
+     "web_access_expires_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Web Access Expires At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "request_id",
+     "user_id",
+     "display_name",
+     "roles"
+    ],
+    "title": "ApprovedOut"
+   },
    "AttachmentOut": {
     "properties": {
      "id": {
@@ -6080,7 +6946,7 @@
      },
      "pending_validation": {
       "items": {
-       "$ref": "#/components/schemas/PendingOut"
+       "$ref": "#/components/schemas/app__api__v1__schemas__PendingOut"
       },
       "type": "array",
       "title": "Pending Validation"
@@ -6615,7 +7481,7 @@
      },
      "pending_validation": {
       "items": {
-       "$ref": "#/components/schemas/PendingOut"
+       "$ref": "#/components/schemas/app__api__v1__schemas__PendingOut"
       },
       "type": "array",
       "title": "Pending Validation"
@@ -6802,7 +7668,7 @@
      },
      "pending_validation": {
       "items": {
-       "$ref": "#/components/schemas/PendingOut"
+       "$ref": "#/components/schemas/app__api__v1__schemas__PendingOut"
       },
       "type": "array",
       "title": "Pending Validation"
@@ -7045,6 +7911,41 @@
     ],
     "title": "ExpressionAliasIn"
    },
+   "GrantIn": {
+    "properties": {
+     "roles": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Roles",
+      "description": "Solo roles existentes; nunca agrega `superadmin`"
+     },
+     "expires_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expires At",
+      "description": "NULL = sin vencimiento automático"
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "title": "GrantIn"
+   },
    "HTTPValidationError": {
     "properties": {
      "detail": {
@@ -7240,6 +8141,25 @@
       "type": "string",
       "title": "Organization Kind",
       "description": "simulation | real_test | production | legacy_mixed"
+     },
+     "is_superadmin": {
+      "type": "boolean",
+      "title": "Is Superadmin",
+      "description": "Control técnico de la propietaria; no es un rol",
+      "default": false
+     },
+     "web_access_expires_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Web Access Expires At",
+      "description": "NULL = acceso sin vencimiento"
      }
     },
     "type": "object",
@@ -7515,7 +8435,7 @@
      },
      "pending_validation": {
       "items": {
-       "$ref": "#/components/schemas/PendingOut"
+       "$ref": "#/components/schemas/app__api__v1__schemas__PendingOut"
       },
       "type": "array",
       "title": "Pending Validation",
@@ -7551,23 +8471,27 @@
     ],
     "title": "ObservationResultOut"
    },
-   "PendingOut": {
+   "PendingItemOut": {
     "properties": {
-     "attribute": {
+     "id": {
       "type": "string",
-      "title": "Attribute"
+      "format": "uuid",
+      "title": "Id"
      },
-     "reason": {
+     "email": {
       "type": "string",
-      "enum": [
-       "not_stated",
-       "unit_not_stated",
-       "role_not_stated",
-       "inferred_needs_confirmation"
-      ],
-      "title": "Reason"
+      "title": "Email"
      },
-     "value": {
+     "display_name": {
+      "type": "string",
+      "title": "Display Name"
+     },
+     "requested_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Requested At"
+     },
+     "organization": {
       "anyOf": [
        {
         "type": "string"
@@ -7576,15 +8500,18 @@
         "type": "null"
        }
       ],
-      "title": "Value"
+      "title": "Organization",
+      "description": "Solo la superadministradora recibe este campo"
      }
     },
     "type": "object",
     "required": [
-     "attribute",
-     "reason"
+     "id",
+     "email",
+     "display_name",
+     "requested_at"
     ],
-    "title": "PendingOut"
+    "title": "PendingItemOut"
    },
    "PharmaIdentityIn": {
     "properties": {
@@ -7856,23 +8783,37 @@
     "type": "object",
     "title": "ReactivateIn"
    },
-   "RejectIn": {
+   "ReceivedOut": {
     "properties": {
-     "reason": {
-      "anyOf": [
-       {
-        "type": "string",
-        "maxLength": 200
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Reason"
+     "received": {
+      "type": "boolean",
+      "const": true,
+      "title": "Received",
+      "default": true
      }
     },
     "type": "object",
-    "title": "RejectIn"
+    "title": "ReceivedOut"
+   },
+   "RejectedOut": {
+    "properties": {
+     "request_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Request Id"
+     },
+     "status": {
+      "type": "string",
+      "const": "rejected",
+      "title": "Status",
+      "default": "rejected"
+     }
+    },
+    "type": "object",
+    "required": [
+     "request_id"
+    ],
+    "title": "RejectedOut"
    },
    "ResolveIn": {
     "properties": {
@@ -8649,6 +9590,51 @@
     ],
     "title": "TextAttrOut"
    },
+   "UserAccessOut": {
+    "properties": {
+     "user_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "User Id"
+     },
+     "display_name": {
+      "type": "string",
+      "title": "Display Name"
+     },
+     "roles": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Roles"
+     },
+     "active": {
+      "type": "boolean",
+      "title": "Active"
+     },
+     "web_access_expires_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Web Access Expires At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "user_id",
+     "display_name",
+     "roles",
+     "active",
+     "web_access_expires_at"
+    ],
+    "title": "UserAccessOut"
+   },
    "ValidationError": {
     "properties": {
      "loc": {
@@ -8688,6 +9674,100 @@
      "type"
     ],
     "title": "ValidationError"
+   },
+   "app__api__v1__schemas__PendingOut": {
+    "properties": {
+     "attribute": {
+      "type": "string",
+      "title": "Attribute"
+     },
+     "reason": {
+      "type": "string",
+      "enum": [
+       "not_stated",
+       "unit_not_stated",
+       "role_not_stated",
+       "inferred_needs_confirmation"
+      ],
+      "title": "Reason"
+     },
+     "value": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Value"
+     }
+    },
+    "type": "object",
+    "required": [
+     "attribute",
+     "reason"
+    ],
+    "title": "PendingOut"
+   },
+   "app__api__v1__telegram_accounts__RejectIn": {
+    "properties": {
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 200
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     }
+    },
+    "type": "object",
+    "title": "RejectIn"
+   },
+   "app__api__v1__web_access__PendingOut": {
+    "properties": {
+     "pending_count": {
+      "type": "integer",
+      "title": "Pending Count"
+     },
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/PendingItemOut"
+      },
+      "type": "array",
+      "title": "Items"
+     }
+    },
+    "type": "object",
+    "required": [
+     "pending_count",
+     "items"
+    ],
+    "title": "PendingOut"
+   },
+   "app__api__v1__web_access__RejectIn": {
+    "properties": {
+     "note": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 500
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Note",
+      "description": "Motivo opcional"
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "title": "RejectIn"
    }
   }
  }

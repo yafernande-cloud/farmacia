@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends, Header
@@ -7,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.errors import DomainError
-from app.core.supabase_auth import verify_supabase_jwt
+from app.core.supabase_auth import JwtClaims, verify_supabase_jwt, verify_supabase_jwt_claims
 from app.db.session import get_session
 from app.models import AppUser
 from app.services.actors import Actor, load_actor
@@ -48,6 +49,12 @@ async def _actor_from_jwt(session: AsyncSession, authorization: str | None) -> A
             "La cuenta autenticada no está habilitada en esta farmacia.",
             status_code=403,
         )
+    if user.web_access_expires_at is not None and user.web_access_expires_at <= datetime.now(UTC):
+        raise DomainError(
+            "WEB_ACCESS_EXPIRED",
+            "Tu acceso web venció. Pide a una administradora que lo renueve.",
+            status_code=403,
+        )
     actor = await load_actor(session, user.id)
     if actor is None:  # cambió entre las dos consultas
         raise DomainError("UNAUTHENTICATED", "Usuario desconocido o inactivo.", status_code=401)
@@ -78,6 +85,59 @@ async def get_actor(
     if actor is None:
         raise DomainError("UNAUTHENTICATED", "Usuario desconocido o inactivo.", status_code=401)
     return actor
+
+
+async def get_identity_claims(
+    _auth: Annotated[None, Depends(auth_enabled)],
+    authorization: Annotated[
+        str | None, Header(description="Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)")
+    ] = None,
+    x_demo_subject: Annotated[
+        str | None, Header(description="Solo AUTH_MODE=demo_header: `sub` ficticio")
+    ] = None,
+    x_demo_email: Annotated[
+        str | None, Header(description="Solo AUTH_MODE=demo_header: correo ficticio")
+    ] = None,
+    x_demo_name: Annotated[
+        str | None, Header(description="Solo AUTH_MODE=demo_header: nombre visible ficticio")
+    ] = None,
+) -> JwtClaims:
+    """Identidad verificada SIN exigir `app_user`: la usa quien pide acceso por primera vez.
+
+    Con JWT real se exige correo verificado; el cuerpo de la petición nunca aporta identidad ni
+    organización. En modo de demostración se aceptan cabeceras `X-Demo-*` (solo local/demo).
+    """
+    settings = get_settings()
+    if settings.auth_mode == "supabase_jwt":
+        token = _bearer(authorization)
+        if token is None:
+            raise DomainError("UNAUTHENTICATED", "Falta la sesión del usuario.", status_code=401)
+        claims = await verify_supabase_jwt_claims(token, settings)
+        if claims.email is None:
+            raise DomainError(
+                "EMAIL_REQUIRED",
+                "La cuenta no informa un correo. Inicia sesión con Google.",
+                status_code=403,
+            )
+        if not claims.email_verified:
+            raise DomainError(
+                "EMAIL_NOT_VERIFIED", "El correo de la cuenta no está verificado.", status_code=403
+            )
+        return claims
+
+    subject = (x_demo_subject or "").strip()
+    email = (x_demo_email or "").strip()
+    if not subject or "@" not in email:
+        raise DomainError(
+            "UNAUTHENTICATED",
+            "Falta identificar a la cuenta que solicita acceso.",
+            status_code=401,
+        )
+    name = (x_demo_name or "").strip() or email.split("@", 1)[0]
+    return JwtClaims(subject=subject, email=email, email_verified=True, display_name=name)
+
+
+IdentityClaims = Annotated[JwtClaims, Depends(get_identity_claims)]
 
 
 async def require_strong_admin_authentication(session: AsyncSession, actor: Actor) -> None:

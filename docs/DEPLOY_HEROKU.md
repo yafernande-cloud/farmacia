@@ -56,6 +56,7 @@ el código esté en `backend/`. **Al cambiar `backend/pyproject.toml` hay que ac
 | `TELEGRAM_BOT_TOKEN` | Token del bot; solo cuando se habilite el canal | **Sí** |
 | `TELEGRAM_WEBHOOK_SECRET` | Secreto del webhook | **Sí** |
 | `TELEGRAM_ACCESS_ORGANIZATION_ID` | Organización que recibe solicitudes del bot | No |
+| `WEB_ACCESS_ORGANIZATION_ID` | Organización que recibe las solicitudes de acceso web (G1); sin ella el endpoint público responde `503 ACCESS_NOT_CONFIGURED` | No |
 | `LOG_LEVEL` | `INFO` por defecto | No |
 
 `DATABASE_URL` puede venir como `postgres://` (formato de Heroku): la aplicación lo normaliza a
@@ -68,7 +69,8 @@ chat, en logs ni en Git.
 2. Cargar las variables con `heroku config:set` (los secretos, desde el gestor de secretos del
    usuario, no desde el chat).
 3. Desplegar `master` con el buildpack de Python — **requiere autorización**.
-4. Verificar `GET /api/v1/health`, que `alembic current` coincida con el head y que una sesión de
+4. Verificar `GET /api/v1/health`, que `alembic current` coincida con el head —incluida `0012` si se habilita el
+   flujo de acceso web de G1, que hoy no está aplicada a ninguna base operativa— y que una sesión de
    Supabase obtenga `200` en `/api/v1/me`.
 5. Recién entonces, apuntar el frontend Lovable a la URL del backend.
 

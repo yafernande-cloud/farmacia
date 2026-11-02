@@ -17,6 +17,7 @@ from app.api.v1 import (
     suppliers,
     telegram,
     telegram_accounts,
+    web_access,
 )
 from app.core.config import get_settings
 from app.core.errors import DomainError, correlation_id_var
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
     app.include_router(staff.router, prefix="/api/v1")
     app.include_router(telegram_accounts.router, prefix="/api/v1")
     app.include_router(telegram.router, prefix="/api/v1")
+    app.include_router(web_access.router, prefix="/api/v1")
     return app
 
 

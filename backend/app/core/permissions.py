@@ -27,6 +27,7 @@ class Permission(StrEnum):
         "manage_identities"  # vincular/desvincular la identidad web (sub de Supabase) de una persona
     )
     CONFIRM_ATTRIBUTES = "confirm_attributes"  # confirmar unidad/forma/contenido; gestionar alias
+    MANAGE_WEB_ACCESS = "manage_web_access"  # campanita: listar, aprobar y rechazar accesos web
 
 
 # Por defecto el auxiliar propone (observación con cantidad declarada), la encargada aplica.
@@ -45,6 +46,7 @@ _GRANTS: dict[Role, set[Permission]] = {
         Permission.MANAGE_STAFF,
         Permission.MANAGE_ACCOUNTS,
         Permission.MANAGE_IDENTITIES,
+        Permission.MANAGE_WEB_ACCESS,
     },  # no implica permisos de compras
 }
 
@@ -70,7 +72,7 @@ def can_report(roles: list[str]) -> bool:
 
 
 def require_admin(roles: list[str]) -> None:
-    """Chequeo de rol del cotizador (C0 §6): `admin`, sin crear permisos nuevos."""
+    """Chequeo de rol del Cotizador (C0 §6): el único perfil funcional web es `admin`."""
     if Role.ADMIN.value not in (roles or []):
         raise DomainError(
             "FORBIDDEN", "Esta operación es solo para la administración.", status_code=403

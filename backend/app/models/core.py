@@ -72,6 +72,19 @@ class AppUser(Base):
             unique=True,
             postgresql_where=text("active"),
         ),
+        # La superadministración es un control técnico: a lo más UNA activa en todo el sistema (D-130).
+        Index(
+            "uq_app_user_one_superadmin",
+            "is_superadmin",
+            unique=True,
+            postgresql_where=text("is_superadmin AND active"),
+        ),
+        # Trazabilidad del último otorgamiento de acceso web (quién lo dio).
+        ForeignKeyConstraint(
+            ["web_access_granted_by", "organization_id"],
+            ["app_user.id", "app_user.organization_id"],
+            name="fk_app_user_web_access_granted_by_app_user",
+        ),
     )
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True, default=uuid.uuid4, server_default=func.gen_random_uuid()
@@ -81,6 +94,8 @@ class AppUser(Base):
     roles: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default=text("ARRAY[]::text[]"))
     # Sujeto (`sub`) del JWT de Supabase Auth; se enlaza cuando se active la autenticación web.
     auth_subject: Mapped[str | None] = mapped_column(String(100), unique=True)
+    # Correo del proveedor de identidad (informativo; la identidad es `auth_subject`, nunca el correo).
+    email: Mapped[str | None] = mapped_column(String(320))
     # PERTENENCIA a la farmacia (sigue en el historial aunque se desactive; nunca se elimina).
     active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
     # DISPONIBILIDAD para reportar (vacaciones, licencia, día libre…). Distinta de pertenecer y de tener
@@ -89,6 +104,12 @@ class AppUser(Base):
     absence_reason: Mapped[str | None] = mapped_column(String(20))
     absence_note: Mapped[str | None] = mapped_column(String(200))
     unavailable_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Control técnico de la propietaria; NO es un rol ni un perfil funcional (D-130).
+    is_superadmin: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    # Acceso web: NULL = sin vencimiento; se evalúa en cada petición.
+    web_access_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    web_access_granted_by: Mapped[uuid.UUID | None] = mapped_column()
+    web_access_granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

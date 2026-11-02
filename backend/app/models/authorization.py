@@ -181,3 +181,62 @@ class TelegramAccessAttempt(Base):
     code_hash: Mapped[str] = mapped_column(String(64))
     success: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
+
+
+class WebAccessRequest(Base):
+    """Solicitud de acceso web (G1/D-130). Distinta de `telegram_access_request`: aquí la identidad
+    ya está verificada por Supabase Auth y lo que falta es la habilitación de la persona.
+
+    Una solicitud NO otorga nada. Solo la aprobación de un `admin` de la organización crea el
+    `app_user` con `roles = ['admin']`; nunca enlaza ni sobrescribe una fila existente. El correo
+    solo es informativo: la identidad es `auth_subject`.
+    """
+
+    __tablename__ = "web_access_request"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id"),
+        ForeignKeyConstraint(["organization_id"], ["organization.id"]),
+        ForeignKeyConstraint(
+            ["decided_by", "organization_id"],
+            ["app_user.id", "app_user.organization_id"],
+        ),
+        CheckConstraint("status IN ('pending','approved','rejected')", name="estado_valido"),
+        CheckConstraint("length(btrim(auth_subject)) > 0", name="sujeto_valido"),
+        CheckConstraint("length(btrim(email)) > 0", name="email_valido"),
+        CheckConstraint(
+            "decision_note IS NULL OR length(decision_note) <= 500", name="nota_valida"
+        ),
+        CheckConstraint(
+            "data_origin IN ('simulated','captured','ai_derived','unclassified')",
+            name="origen_dato_valido",
+        ),
+        # La decisión y su autor van juntos; `pending` no tiene decisión.
+        CheckConstraint(
+            "(decided_at IS NULL) = (decided_by IS NULL)", name="decision_coherente"
+        ),
+        CheckConstraint(
+            "(status = 'pending') = (decided_at IS NULL)", name="estado_coherente"
+        ),
+        # Una sola solicitud PENDIENTE por persona y organización; las rechazadas se conservan.
+        Index(
+            "uq_web_access_request_pending_subject",
+            "organization_id",
+            "auth_subject",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index("ix_web_access_request_org_status", "organization_id", "status", "requested_at"),
+    )  # fmt: skip
+    id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
+    organization_id: Mapped[uuid.UUID] = mapped_column()
+    auth_subject: Mapped[str] = mapped_column(String(100))
+    email: Mapped[str] = mapped_column(String(320))
+    display_name: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(10), server_default="pending")
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decided_by: Mapped[uuid.UUID | None] = mapped_column()
+    decision_note: Mapped[str | None] = mapped_column(String(500))
+    data_origin: Mapped[str] = mapped_column(String(12), server_default="unclassified")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
