@@ -16,7 +16,9 @@ registrarse libera el faltante—; **no hay compras parciales por productos ni c
 **G1 está implementado en código y la migración 0012 se aplicó únicamente a `farmacia_demo` el 2026-11-02** (con
 respaldo `pg_dump` verificado); `farmacia` sigue en 0008 y no hay despliegue. **C4 está implementado en código**
 (migración **0013** aplicada **solo a `farmacia_demo`**): E1/E2/E3 sobre el catálogo local y E15 de
-cadenas sin persistencia; la suite con `REQUIRE_DB=1` queda en **486 pruebas**.
+cadenas sin persistencia. **C3 está implementado en código** con la migración **0014** (comparación E5 y criterios
+E9), creada y probada solo en `farmacia_test`: **no aplicada a `farmacia` ni a `farmacia_demo`** (D-133); la suite
+completa con `REQUIRE_DB=1` queda en **501 pruebas**.
 
 ## Estado real de migraciones
 
@@ -24,8 +26,8 @@ cadenas sin persistencia; la suite con `REQUIRE_DB=1` queda en **486 pruebas**.
 |---|---|---|
 | Base `farmacia` | **0008** | 32 tablas; la 0008 se aplicó el 2026-10-29 con respaldo `pg_dump` verificado, ensayo de subida y reversión y verificación por catálogo (D-098) |
 | Base `farmacia_demo` | **0013** | 38 tablas; 0012 y 0013 se aplicaron el 2026-11-02 solo aquí, cada una con respaldo `pg_dump` verificado. El catálogo ficticio (30 artículos, 3 proveedores, 3 fuentes, 90 ofertas) se conservó intacto |
-| Código (`backend/migrations/versions`) | **0013** | 0009–0011 de C2, **0012** de G1 y **0013** de C4 (tres tablas de búsqueda). **No aplicadas a `farmacia`** |
-| Head propuesto | **0019** | G1 0012 y C4 0013 (**aplicadas solo a `farmacia_demo`**), C3 0014, C5-A 0015, O 0016, C5-B 0017 (3 tablas), C5-C 0018, C5-D 0019. Desde 0014, no creadas |
+| Código (`backend/migrations/versions`) | **0014** | 0009–0011 de C2, **0012** de G1, **0013** de C4 (tres tablas de búsqueda) y **0014** de C3 (cinco tablas de comparación y criterios). **No aplicadas a `farmacia`** |
+| Head propuesto | **0019** | G1 0012 y C4 0013 (**aplicadas solo a `farmacia_demo`**), C3 **0014 creada** (sin aplicar a ninguna base operativa), C5-A 0015, O 0016, C5-B 0017 (3 tablas), C5-C 0018, C5-D 0019. Desde 0015, no creadas |
 
 **No se aplica ninguna migración nueva a `farmacia` sin autorización explícita.** Las 0012 y 0013 se aplicaron solo a
 `farmacia_demo` con autorización expresa; ninguna otra base se tocó.
@@ -49,7 +51,7 @@ cadenas sin persistencia; la suite con `REQUIRE_DB=1` queda en **486 pruebas**.
 | **D0** | Consolidación documental: contrato v0.2 rev6, D-113 y D-115 a D-128, este roadmap | — | **Cerrada** (2026-10-30); sin código ni migraciones. Revisión 7 del 2026-11-02 (D-130 a D-132) la supera en el modelo de acceso |
 | **G1** | Acceso web con Google: solicitudes, campanita con aprobación que **otorga `admin`** (D-130) y sin vencimiento automático, superadministradora como control técnico, revocación y vencimiento explícito; seguridad JWT + `StrongActor` vigente (sin MFA); Telegram sin cambios | AC09 (web), D-117/D-119/D-130 | **Implementada en código** (2026-11-02); migración **0012** creada y probada, **no aplicada a `farmacia`** |
 | **C4** | E1 con `relation` y `attributes.ingredients[]` (E3 conserva su forma); búsqueda de cadenas E15 (sin persistencia) | AC16–AC20, AC29–AC31 | **Implementada en código** (2026-11-02); migración **0013** aplicada **solo a `farmacia_demo`**. 14 pruebas nuevas |
-| **C3** | Comparador determinista E5: elegibilidad, cantidades, impuestos/descuentos/despacho, total parcial, cota inferior (LB-1…LB-8), explicabilidad y anotación de criterios | AC18–AC20, AC31 | Pendiente; migración **0014** (5 tablas) |
+| **C3** | Comparador determinista E5: elegibilidad, cantidades, impuestos/descuentos/despacho, total parcial, cota inferior (LB-1…LB-8), explicabilidad y anotación de criterios (E9) | AC18–AC20, AC31 | **Implementada en código** (2026-11-02); migración **0014** (5 tablas) creada y probada solo en `farmacia_test`; **no aplicada a `farmacia` ni a `farmacia_demo`**. 15 pruebas nuevas (D-133) |
 | **C5-A + F1** | Cotizaciones, carritos por proveedor, líneas, vínculo a faltante, grilla «Productos faltantes» y «Buscar»; observaciones O1 | AC20, AC31, AC37 | Pendiente; migración **0015** |
 | **O1–O4** | Interpretación de observaciones con OpenAI: O2 interpretación, O3 precedencia, O4 consejo explicado | AC37, AC39 | Pendiente; migración **0016** |
 | **C5-B** | Compras registradas **todo o nada** (enmienda a D-127, 2026-11-02), inmutabilidad, correcciones, anulación y `purchase_index`; **cierre y liberación del faltante por compra confirmada**. **La recepción física queda fuera del MVP (D-126)**; las compras parciales también quedan fuera de la demo | AC21–AC24, AC39 | Pendiente; migración **0017** (**3 tablas**) |

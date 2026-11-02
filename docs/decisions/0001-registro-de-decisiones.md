@@ -1736,3 +1736,46 @@ justificaciones obligatorias ni pantallas extra.
 
 **Estado.** Aprobada el 2026-11-02. **Solo documental**: se implementa en O1–O4 (C5-A, migración `0015`). El contrato
 en revisión 7 ya la recoge en §8.1 y §8.3.
+
+### D-133 — Implementación de C3 (comparación E5 y criterios E9) y desviaciones declaradas (2026-11-02)
+
+**Contexto.** El usuario ordenó implementar C3 con los resultados de búsqueda y las ofertas ya registradas, sin inventar
+proveedores ni agregar funcionalidad fuera del contrato v0.2 rev7. Se implementó `POST /api/v1/comparisons` (E5) y el
+recurso `/api/v1/commercial-criteria` (E9) con las fórmulas de C0 §2.4, §3.4 y §E5, y la migración `0014` (cinco
+tablas: `comparison_run`, `comparison_line`, `comparison_candidate`, `comparison_supplier_total`,
+`commercial_criterion`). Las cuatro tablas de comparación son de solo agregar (`forbid_mutation()`).
+
+**Reglas que quedan fijadas por la implementación:**
+
+1. **Elegibilidad por candidato, total por proveedor.** Causas duras → `ineligible`; causas blandas → `needs_review`;
+   sin causas → `eligible`. Solo un proveedor con todas las líneas cubiertas por candidatos `eligible` y todos los
+   costos determinados tiene `completeness=complete` y `total`. Un proveedor parcial **nunca** tiene `total`.
+2. **Un desconocido es `NULL` y una causa tipada**, jamás 0 ni 1: mínimo/múltiplo, impuestos, inclusión de descuentos,
+   base del precio y stock desconocidos se informan como tales y bloquean el total.
+3. **La cota inferior no es un total.** Se calcula solo si ninguna línea falta, hay una sola moneda y ningún descuento
+   es desconocido; impuestos y cargos desconocidos suman 0, los descuentos desconocidos **no** se asumen 0.
+4. **La comparación se escribe una sola vez.** Nada se calcula "en dos pasos" actualizando filas: el estado, la
+   completitud de cada línea y los totales se determinan antes de insertar. Las tablas lo imponen con un gatillo.
+5. **Ningún criterio comercial altera un número.** `annotations[]` y `notes[]` se adjuntan y se prueban comparando
+   totales antes y después de crear un criterio `do_not_recommend`.
+
+**Desviaciones declaradas (pendientes de aprobación explícita):**
+
+- **Monedas mixtas:** el contrato pide 422 `CURRENCY_MISMATCH` en §E5 y, a la vez, que el proveedor quede parcial. Se
+  implementó lo segundo: la comparación responde 200, el proveedor queda `partial` con `currency_mismatch` en
+  `blockers`, su `total` es `null` y `lowest_verified_total` es `null` si los totales completos no comparten moneda. Un
+  fallo de una sola oferta no invalida la comparación completa.
+- **`discarded_suppliers` con `quantity_unit_mismatch`:** el contrato enumera tres causas duras
+  (`identity_mismatch`, `presentation_mismatch`, `supplier_inactive`); se agregó `quantity_unit_mismatch` porque un
+  candidato en otra unidad no se puede comparar ni convertir sin un pack confirmado.
+- **`source_search_id`** se valida como búsqueda de la organización pero **no** reutiliza ofertas: la comparación
+  siempre relee la última observación por fuente y verifica frescura.
+- **Sin `GET /comparisons/{id}`:** el contrato no lo define; no se implementó.
+
+**Datos de la demo.** Con el catálogo ficticio actual (`multiple_known=false` en las 90 ofertas) ninguna línea puede
+llegar a `complete`: el resultado honesto es `no_complete_total` con cotas inferiores. Para una demo con total completo
+hacen falta mínimos y múltiplos explícitos en los datos simulados; es un cambio de **datos**, no de código, y no se
+aplicó.
+
+**Estado.** Implementada en código el 2026-11-02; migración `0014` **solo en `farmacia_test`** (la suite la recrea).
+No se aplicó a `farmacia` ni a `farmacia_demo` sin autorización.
