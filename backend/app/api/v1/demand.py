@@ -1,10 +1,10 @@
-import re
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Header, Query, Response
 
 from app.api.deps import CurrentActor, Session
+from app.api.headers import parse_if_match
 from app.api.v1 import schemas as s
 from app.core.errors import DomainError
 from app.core.permissions import Permission, require
@@ -218,12 +218,7 @@ async def resolve_observation(
 
 
 def _parse_if_match(v: str | None) -> int:
-    m = re.fullmatch(r'\s*(?:W/)?"?(\d+)"?\s*', v or "")
-    if not m:
-        raise DomainError(
-            "VERSION_REQUIRED", "Falta If-Match con la versión de la necesidad.", status_code=428
-        )
-    return int(m.group(1))
+    return parse_if_match(v, what="la necesidad")
 
 
 @router.post("/demand-items/{item_id}/quantity-commands", response_model=s.QuantityResultOut, responses=ERRORS,

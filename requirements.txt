@@ -1,0 +1,13 @@
+# Dependencias directas del backend, fijadas a las versiones probadas en local (2026-11-02).
+# Heroku instala desde este archivo porque el código vive en backend/ pero el buildpack lee la raíz.
+# Al cambiar backend/pyproject.toml hay que actualizar este archivo en el mismo cambio.
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+pydantic-settings==2.16.2
+sqlalchemy[asyncio]==2.1.6
+psycopg[binary]==3.3.6
+alembic==1.20.1
+PyJWT[crypto]==2.15.1
+openpyxl==3.1.5
+defusedxml==0.7.1
+python-multipart==0.0.32

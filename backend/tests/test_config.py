@@ -4,9 +4,19 @@ from pydantic import ValidationError
 from app.core.config import Settings
 
 
-def test_database_url_exige_driver_psycopg():
+@pytest.mark.parametrize("esquema", ["postgres://", "postgresql://"])
+def test_database_url_de_proveedor_se_normaliza_a_psycopg(esquema):
+    # Heroku entrega `postgres://` y otros entornos `postgresql://`: ambos se aceptan y solo se
+    # reescribe el esquema; host, credenciales, base y parámetros se conservan.
+    s = Settings(database_url=f"{esquema}u:p@h:5432/db?sslmode=require", _env_file=None)
+    assert s.database_url.get_secret_value() == (
+        "postgresql+psycopg://u:p@h:5432/db?sslmode=require"
+    )
+
+
+def test_database_url_rechaza_otro_driver():
     with pytest.raises(ValidationError):
-        Settings(database_url="postgres://u:p@h/db", _env_file=None)
+        Settings(database_url="postgresql+asyncpg://u:p@h/db", _env_file=None)
 
 
 def test_cors_origins_desde_texto():

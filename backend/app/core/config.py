@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     max_image_bytes: int = Field(default=10_000_000, ge=1_000)
     timezone: str = "America/Santiago"
     currency: str = "CLP"
+    # Una fuente sin observación exitosa en esta ventana se informa `stale` (E4). No inventa frescura.
+    source_stale_after_hours: int = Field(default=24, ge=1, le=24 * 365)
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -71,7 +73,29 @@ class Settings(BaseSettings):
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
 
-    @field_validator("database_url")
+    @field_validator("database_url", "test_database_url", mode="before")
+    @classmethod
+    def _normalize_postgres_url(cls, v):
+        """Acepta las URL que entregan los proveedores y normaliza el driver.
+
+        Heroku entrega `postgres://`; otros entornos `postgresql://`. SQLAlchemy necesita el
+        driver explícito, así que solo se reescribe el esquema: host, credenciales, base y
+        parámetros de consulta se conservan tal cual.
+        """
+        if isinstance(v, SecretStr):
+            raw = v.get_secret_value()
+        else:
+            raw = v
+        if not isinstance(raw, str):
+            return v
+        raw = raw.strip()
+        for prefix in ("postgres://", "postgresql://"):
+            if raw.startswith(prefix):
+                raw = "postgresql+psycopg://" + raw[len(prefix) :]
+                break
+        return SecretStr(raw) if isinstance(v, SecretStr) else raw
+
+    @field_validator("database_url", "test_database_url")
     @classmethod
     def _check_driver(cls, v: SecretStr | None):
         if v is not None and not v.get_secret_value().startswith("postgresql+psycopg://"):

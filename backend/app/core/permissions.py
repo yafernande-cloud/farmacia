@@ -67,3 +67,11 @@ def can_report(roles: list[str]) -> bool:
         return True
     except DomainError:
         return False
+
+
+def require_admin(roles: list[str]) -> None:
+    """Chequeo de rol del cotizador (C0 §6): `admin`, sin crear permisos nuevos."""
+    if Role.ADMIN.value not in (roles or []):
+        raise DomainError(
+            "FORBIDDEN", "Esta operación es solo para la administración.", status_code=403
+        )

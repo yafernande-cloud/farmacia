@@ -1563,3 +1563,26 @@ duplicado obliga a enlazar la fila existente por la vía que ya existe.
 V-27 y V-38 ajustadas y «7 columnas / 9 tablas» sin cambios. `CLAUDE.md`, `docs/AUTH_SUPABASE.md` y `docs/ROADMAP.md`
 se alinean en la misma fase. **No se modificó código, modelo, pruebas, migración ni base de datos**; la migración
 **0012** sigue sin crear y `farmacia` sigue en **0008**.
+
+### D-129 — Observaciones comerciales separadas de los avisos de faltante (2026-11-02)
+
+**Decisión.** Las observaciones **comerciales** del Cotizador (E13: notas sobre una cotización, una línea o una compra
+registrada) se exponen en **`/api/v1/commercial-observations`**. Las rutas de faltantes **no cambian**:
+`POST /api/v1/observations` y `GET /api/v1/observations` siguen siendo, exclusivamente, el registro y la bandeja de
+avisos de faltante de H1-A/H1-B.
+
+**Motivo.** Ambos conceptos comparten nombre pero no dominio, ni autor, ni ciclo de vida: un aviso de faltante nace de
+un mensaje de Telegram o de la web y alimenta la lista compartida; una observación comercial es texto libre ligado a un
+documento del Cotizador y no toca cantidades ni faltantes. Mantenerlas en la misma ruta haría ambiguo el permiso, el
+`Idempotency-Key` y la auditoría, y obligaría a cambiar el contrato ya implementado de faltantes.
+
+**Reglas.**
+
+1. La ruta de faltantes queda **intacta**: mismo contrato, mismos permisos, misma deduplicación y misma auditoría.
+2. `commercial-observations` se implementa en **C5-A**, junto con E13, con su propio permiso y su propio contrato.
+3. No se crea un alias, redirección ni parámetro de tipo en `/observations`: una ruta, un dominio.
+4. El contrato `docs/contracts/cotizador-v0.2.md` (E13) se actualizará **antes** de implementar C5-A para nombrar la
+   ruta nueva; hasta entonces E13 sigue siendo solo documental.
+5. Nada de esta decisión se implementa en Fase 0: no hay endpoint, modelo, migración ni cambio de código.
+
+**Estado.** Aprobada por el usuario el 2026-11-02. **No implementada.** No modifica D-113 a D-128 ni el alcance del MVP.

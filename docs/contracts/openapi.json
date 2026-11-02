@@ -1,7 +1,7 @@
 {
  "openapi": "3.1.0",
  "info": {
-  "title": "Farmacia Parque Lantaño — Asistente de Compras",
+  "title": "Faltantes Farmacia — Asistente de Compras",
   "version": "0.1.0"
  },
  "paths": {
@@ -61,6 +61,24 @@
     "summary": "Identidad activa",
     "operationId": "me_api_v1_me_get",
     "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
      {
       "name": "x-demo-user-id",
       "in": "header",
@@ -150,6 +168,24 @@
        ],
        "title": "Cursor"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
      },
      {
       "name": "x-demo-user-id",
@@ -261,6 +297,24 @@
        "format": "uuid",
        "title": "Item Id"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
      },
      {
       "name": "x-demo-user-id",
@@ -375,6 +429,24 @@
        "title": "Idempotency-Key"
       },
       "description": "Repetir la misma clave y contenido devuelve el resultado original."
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
      },
      {
       "name": "x-demo-user-id",
@@ -498,6 +570,24 @@
       }
      },
      {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
       "name": "x-demo-user-id",
       "in": "header",
       "required": false,
@@ -611,6 +701,24 @@
        "format": "uuid",
        "title": "Observation Id"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
      },
      {
       "name": "x-demo-user-id",
@@ -765,6 +873,24 @@
       "description": "Versión actual, p. ej. \"7\""
      },
      {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
       "name": "x-demo-user-id",
       "in": "header",
       "required": false,
@@ -904,6 +1030,24 @@
       "description": "Versión actual, p. ej. \"7\""
      },
      {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
       "name": "x-demo-user-id",
       "in": "header",
       "required": false,
@@ -1016,6 +1160,24 @@
     "operationId": "product_aliases_api_v1_product_aliases_get",
     "parameters": [
      {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
       "name": "x-demo-user-id",
       "in": "header",
       "required": false,
@@ -1118,6 +1280,24 @@
     "summary": "Crear un alias de expresión («la D» = «vitamina d»)",
     "operationId": "create_alias_api_v1_product_aliases_post",
     "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
      {
       "name": "x-demo-user-id",
       "in": "header",
@@ -1239,6 +1419,24 @@
       }
      },
      {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
       "name": "x-demo-user-id",
       "in": "header",
       "required": false,
@@ -1339,6 +1537,24 @@
     "summary": "Registrar una identidad farmacéutica verificada",
     "operationId": "create_pharma_identity_api_v1_pharma_identities_post",
     "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
      {
       "name": "x-demo-user-id",
       "in": "header",
@@ -1449,6 +1665,24 @@
     "operationId": "create_commercial_reference_api_v1_commercial_references_post",
     "parameters": [
      {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
       "name": "x-demo-user-id",
       "in": "header",
       "required": false,
@@ -1557,6 +1791,24 @@
     "summary": "Catálogo verificado de la farmacia",
     "operationId": "get_catalog_api_v1_catalog_get",
     "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
      {
       "name": "x-demo-user-id",
       "in": "header",
@@ -1673,6 +1925,24 @@
       }
      },
      {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
       "name": "x-demo-user-id",
       "in": "header",
       "required": false,
@@ -1778,6 +2048,24 @@
     "operationId": "channel_status_api_v1_channel_status_get",
     "parameters": [
      {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
       "name": "x-demo-user-id",
       "in": "header",
       "required": false,
@@ -1868,6 +2156,1268 @@
     }
    }
   },
+  "/api/v1/suppliers": {
+   "get": {
+    "tags": [
+     "proveedores"
+    ],
+    "summary": "Proveedores de la organización",
+    "operationId": "list_suppliers_api_v1_suppliers_get",
+    "parameters": [
+     {
+      "name": "status",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "pattern": "^(active|inactive)$"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Status"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SupplierListOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "proveedores"
+    ],
+    "summary": "Crear un proveedor",
+    "operationId": "create_supplier_api_v1_suppliers_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SupplierIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SupplierOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/suppliers/{supplier_id}": {
+   "get": {
+    "tags": [
+     "proveedores"
+    ],
+    "summary": "Detalle de un proveedor",
+    "operationId": "get_supplier_api_v1_suppliers__supplier_id__get",
+    "parameters": [
+     {
+      "name": "supplier_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Supplier Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SupplierOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   },
+   "patch": {
+    "tags": [
+     "proveedores"
+    ],
+    "summary": "Renombrar o activar/desactivar un proveedor (If-Match)",
+    "operationId": "update_supplier_api_v1_suppliers__supplier_id__patch",
+    "parameters": [
+     {
+      "name": "supplier_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Supplier Id"
+      }
+     },
+     {
+      "name": "If-Match",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Versión actual, p. ej. \"1\"",
+       "title": "If-Match"
+      },
+      "description": "Versión actual, p. ej. \"1\""
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SupplierPatchIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SupplierOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/sources": {
+   "get": {
+    "tags": [
+     "fuentes"
+    ],
+    "summary": "Fuentes de la organización y su estado derivado",
+    "operationId": "list_sources_api_v1_sources_get",
+    "parameters": [
+     {
+      "name": "kind",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "pattern": "^(supplier|chain_reference)$"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Kind"
+      }
+     },
+     {
+      "name": "enabled",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Enabled"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SourceListOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "fuentes"
+    ],
+    "summary": "Crear una fuente",
+    "operationId": "create_source_api_v1_sources_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SourceIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SourceOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/sources/{source_id}": {
+   "get": {
+    "tags": [
+     "fuentes"
+    ],
+    "summary": "Detalle de una fuente",
+    "operationId": "get_source_api_v1_sources__source_id__get",
+    "parameters": [
+     {
+      "name": "source_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Source Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SourceOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   },
+   "patch": {
+    "tags": [
+     "fuentes"
+    ],
+    "summary": "Actualizar una fuente (If-Match)",
+    "operationId": "update_source_api_v1_sources__source_id__patch",
+    "parameters": [
+     {
+      "name": "source_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Source Id"
+      }
+     },
+     {
+      "name": "If-Match",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Versión actual, p. ej. \"1\"",
+       "title": "If-Match"
+      },
+      "description": "Versión actual, p. ej. \"1\""
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SourcePatchIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SourceOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/imports": {
+   "post": {
+    "tags": [
+     "importación de listas de precios"
+    ],
+    "summary": "Importar una lista de precios (XLSX) de un proveedor",
+    "operationId": "import_file_api_v1_imports_post",
+    "parameters": [
+     {
+      "name": "Idempotency-Key",
+      "in": "header",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "minLength": 8,
+       "maxLength": 128,
+       "description": "Obligatoria. Reutilizarla con el mismo archivo devuelve el resultado original; con otro archivo, 409 IDEMPOTENCY_KEY_REUSED.",
+       "title": "Idempotency-Key"
+      },
+      "description": "Obligatoria. Reutilizarla con el mismo archivo devuelve el resultado original; con otro archivo, 409 IDEMPOTENCY_KEY_REUSED."
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "multipart/form-data": {
+       "schema": {
+        "$ref": "#/components/schemas/Body_import_file_api_v1_imports_post"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ImportResult"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "413": {
+      "description": "Archivo demasiado grande",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
   "/api/v1/staff": {
    "get": {
     "tags": [
@@ -1885,6 +3435,24 @@
        "default": true,
        "title": "Include Inactive"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
      },
      {
       "name": "x-demo-user-id",
@@ -1989,6 +3557,24 @@
     "summary": "Crear una persona",
     "operationId": "create_staff_api_v1_staff_post",
     "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
      {
       "name": "x-demo-user-id",
       "in": "header",
@@ -2109,6 +3695,24 @@
        "format": "uuid",
        "title": "User Id"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
      },
      {
       "name": "x-demo-user-id",
@@ -2232,6 +3836,24 @@
       }
      },
      {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
       "name": "x-demo-user-id",
       "in": "header",
       "required": false,
@@ -2341,6 +3963,24 @@
        "format": "uuid",
        "title": "User Id"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
      },
      {
       "name": "x-demo-user-id",
@@ -2454,6 +4094,24 @@
       }
      },
      {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
       "name": "x-demo-user-id",
       "in": "header",
       "required": false,
@@ -2489,6 +4147,1221 @@
        "application/json": {
         "schema": {
          "$ref": "#/components/schemas/StaffChangeOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/telegram-accounts": {
+   "get": {
+    "tags": [
+     "accesos de Telegram"
+    ],
+    "summary": "Cuentas de Telegram autorizadas y bloqueadas (historial conservado)",
+    "operationId": "list_accounts_api_v1_telegram_accounts_get",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/AccountOut"
+         },
+         "title": "Response List Accounts Api V1 Telegram Accounts Get"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/telegram-access-requests": {
+   "get": {
+    "tags": [
+     "accesos de Telegram"
+    ],
+    "summary": "Solicitudes de acceso (pendientes, aprobadas, rechazadas o vencidas)",
+    "operationId": "list_requests_api_v1_telegram_access_requests_get",
+    "parameters": [
+     {
+      "name": "status",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "enum": [
+          "pending",
+          "approved",
+          "rejected",
+          "expired"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Status"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/AccessRequestOut"
+         },
+         "title": "Response List Requests Api V1 Telegram Access Requests Get"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/telegram-access-requests/lookup": {
+   "post": {
+    "tags": [
+     "accesos de Telegram"
+    ],
+    "summary": "Buscar la solicitud pendiente por el código que compartió la persona",
+    "operationId": "lookup_request_api_v1_telegram_access_requests_lookup_post",
+    "parameters": [
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CodeLookupRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CodeLookupResponse"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/telegram-access-requests/{request_id}": {
+   "get": {
+    "tags": [
+     "accesos de Telegram"
+    ],
+    "summary": "Detalle de una solicitud",
+    "operationId": "get_request_api_v1_telegram_access_requests__request_id__get",
+    "parameters": [
+     {
+      "name": "request_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Request Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AccessRequestOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/telegram-access-requests/{request_id}/approve": {
+   "post": {
+    "tags": [
+     "accesos de Telegram"
+    ],
+    "summary": "Aprobar: vincula y habilita la cuenta; notifica por Telegram (sin código)",
+    "operationId": "approve_request_api_v1_telegram_access_requests__request_id__approve_post",
+    "parameters": [
+     {
+      "name": "request_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Request Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ApproveIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AccountOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/telegram-access-requests/{request_id}/reject": {
+   "post": {
+    "tags": [
+     "accesos de Telegram"
+    ],
+    "summary": "Rechazar una solicitud pendiente (conserva la solicitud)",
+    "operationId": "reject_request_api_v1_telegram_access_requests__request_id__reject_post",
+    "parameters": [
+     {
+      "name": "request_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Request Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RejectIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AccessRequestOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/telegram-accounts/{account_id}/block": {
+   "post": {
+    "tags": [
+     "accesos de Telegram"
+    ],
+    "summary": "Bloquear: desactiva chats, cierra sesiones y conserva todo el historial",
+    "operationId": "block_account_api_v1_telegram_accounts__account_id__block_post",
+    "parameters": [
+     {
+      "name": "account_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Account Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/BlockIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BlockedOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/telegram-accounts/{account_id}/reactivate": {
+   "post": {
+    "tags": [
+     "accesos de Telegram"
+    ],
+    "summary": "Rehabilitar una cuenta bloqueada (recrea sus chats privados)",
+    "operationId": "reactivate_account_api_v1_telegram_accounts__account_id__reactivate_post",
+    "parameters": [
+     {
+      "name": "account_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Account Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ReactivateIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AccountOut"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Entrada inválida",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "401": {
+      "description": "Sin identidad",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "Sin permiso",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "No existe o no accesible",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Conflicto de versión o idempotencia",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Regla de negocio",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/telegram-accounts/{account_id}/history": {
+   "get": {
+    "tags": [
+     "accesos de Telegram"
+    ],
+    "summary": "Historial de la cuenta y de la solicitud que la aprobó (sin códigos)",
+    "operationId": "account_history_api_v1_telegram_accounts__account_id__history_get",
+    "parameters": [
+     {
+      "name": "account_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Account Id"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)",
+       "title": "Authorization"
+      },
+      "description": "Bearer <JWT de Supabase> (AUTH_MODE=supabase_jwt)"
+     },
+     {
+      "name": "x-demo-user-id",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Solo AUTH_MODE=demo_header",
+       "title": "X-Demo-User-Id"
+      },
+      "description": "Solo AUTH_MODE=demo_header"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/HistoryEntryOut"
+         },
+         "title": "Response Account History Api V1 Telegram Accounts  Account Id  History Get"
         }
        }
       }
@@ -2616,6 +5489,341 @@
     ],
     "title": "AbsenceReason"
    },
+   "AccessRequestOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "external_user_id": {
+      "type": "string",
+      "title": "External User Id"
+     },
+     "external_chat_id": {
+      "type": "string",
+      "title": "External Chat Id"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "pending",
+       "approved",
+       "rejected",
+       "expired"
+      ],
+      "title": "Status"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Expires At"
+     },
+     "approved_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Approved At"
+     },
+     "approved_account_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Approved Account Id"
+     },
+     "approved_by_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Approved By Name"
+     },
+     "rejected_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Rejected At"
+     },
+     "reject_reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reject Reason"
+     },
+     "rejected_by_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Rejected By Name"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "external_user_id",
+     "external_chat_id",
+     "status",
+     "created_at",
+     "expires_at",
+     "approved_at",
+     "approved_account_id",
+     "approved_by_name",
+     "rejected_at",
+     "reject_reason",
+     "rejected_by_name"
+    ],
+    "title": "AccessRequestOut"
+   },
+   "AccountOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "external_user_id": {
+      "type": "string",
+      "title": "External User Id",
+      "description": "ID de usuario de Telegram (no un teléfono)"
+     },
+     "display_label": {
+      "type": "string",
+      "title": "Display Label"
+     },
+     "mode": {
+      "type": "string",
+      "enum": [
+       "personal",
+       "shared_device"
+      ],
+      "title": "Mode"
+     },
+     "access_role": {
+      "type": "string",
+      "enum": [
+       "admin",
+       "operator"
+      ],
+      "title": "Access Role",
+      "description": "Tipo de cuenta para administración; NO otorga permisos de negocio"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "active",
+       "blocked"
+      ],
+      "title": "Status"
+     },
+     "origin": {
+      "type": "string",
+      "enum": [
+       "backfill",
+       "access_request",
+       "manual"
+      ],
+      "title": "Origin"
+     },
+     "created_from_request_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created From Request Id"
+     },
+     "app_user_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "App User Id"
+     },
+     "app_user_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "App User Name"
+     },
+     "person_active": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Person Active"
+     },
+     "person_available": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Person Available"
+     },
+     "bindings": {
+      "items": {
+       "$ref": "#/components/schemas/BindingOut"
+      },
+      "type": "array",
+      "title": "Bindings"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "created_by_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Created By Name"
+     },
+     "blocked_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Blocked At"
+     },
+     "blocked_by_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Blocked By Name"
+     },
+     "block_reason": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Block Reason"
+     },
+     "reactivated_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reactivated At"
+     },
+     "reactivated_by_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reactivated By Name"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "external_user_id",
+     "display_label",
+     "mode",
+     "access_role",
+     "status",
+     "origin",
+     "created_from_request_id",
+     "app_user_id",
+     "app_user_name",
+     "person_active",
+     "person_available",
+     "bindings",
+     "created_at",
+     "created_by_name",
+     "blocked_at",
+     "blocked_by_name",
+     "block_reason",
+     "reactivated_at",
+     "reactivated_by_name"
+    ],
+    "title": "AccountOut"
+   },
    "AliasOut": {
     "properties": {
      "id": {
@@ -2656,6 +5864,53 @@
      "created_at"
     ],
     "title": "AliasOut"
+   },
+   "ApproveIn": {
+    "properties": {
+     "display_label": {
+      "type": "string",
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Display Label"
+     },
+     "mode": {
+      "type": "string",
+      "enum": [
+       "personal",
+       "shared_device"
+      ],
+      "title": "Mode"
+     },
+     "app_user_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "App User Id",
+      "description": "Obligatorio en modo personal; prohibido en compartido"
+     },
+     "access_role": {
+      "type": "string",
+      "enum": [
+       "admin",
+       "operator"
+      ],
+      "title": "Access Role",
+      "description": "Tipo de cuenta; no otorga permisos de negocio (salen de app_user.roles)",
+      "default": "operator"
+     }
+    },
+    "type": "object",
+    "required": [
+     "display_label",
+     "mode"
+    ],
+    "title": "ApproveIn"
    },
    "AttachmentOut": {
     "properties": {
@@ -2892,6 +6147,129 @@
     ],
     "title": "AvailabilityIn"
    },
+   "BindingOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "external_chat_id": {
+      "type": "string",
+      "title": "External Chat Id"
+     },
+     "mode": {
+      "type": "string",
+      "enum": [
+       "personal",
+       "shared_device"
+      ],
+      "title": "Mode"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "active",
+       "inactive"
+      ],
+      "title": "Status"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "external_chat_id",
+     "mode",
+     "status",
+     "created_at"
+    ],
+    "title": "BindingOut"
+   },
+   "BlockIn": {
+    "properties": {
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 200
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     }
+    },
+    "type": "object",
+    "title": "BlockIn"
+   },
+   "BlockedOut": {
+    "properties": {
+     "account_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Account Id"
+     },
+     "status": {
+      "type": "string",
+      "const": "blocked",
+      "title": "Status"
+     },
+     "bindings_deactivated": {
+      "type": "integer",
+      "title": "Bindings Deactivated"
+     },
+     "sessions_revoked": {
+      "type": "integer",
+      "title": "Sessions Revoked"
+     },
+     "history_preserved": {
+      "type": "boolean",
+      "title": "History Preserved",
+      "default": true
+     }
+    },
+    "type": "object",
+    "required": [
+     "account_id",
+     "status",
+     "bindings_deactivated",
+     "sessions_revoked"
+    ],
+    "title": "BlockedOut"
+   },
+   "Body_import_file_api_v1_imports_post": {
+    "properties": {
+     "file": {
+      "type": "string",
+      "contentMediaType": "application/octet-stream",
+      "title": "File",
+      "description": "Planilla .xlsx original del proveedor"
+     },
+     "supplier_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Supplier Id"
+     },
+     "source_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Source Id"
+     }
+    },
+    "type": "object",
+    "required": [
+     "file",
+     "supplier_id",
+     "source_id"
+    ],
+    "title": "Body_import_file_api_v1_imports_post"
+   },
    "Candidate": {
     "properties": {
      "demand_item_id": {
@@ -2924,6 +6302,51 @@
      "relation"
     ],
     "title": "Candidate"
+   },
+   "CodeLookupRequest": {
+    "properties": {
+     "code": {
+      "type": "string",
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Code",
+      "description": "Código que compartió la persona"
+     }
+    },
+    "type": "object",
+    "required": [
+     "code"
+    ],
+    "title": "CodeLookupRequest"
+   },
+   "CodeLookupResponse": {
+    "properties": {
+     "request": {
+      "$ref": "#/components/schemas/AccessRequestOut"
+     },
+     "existing_account": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ExistingAccountOut"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Si la cuenta ya existía (p. ej. bloqueada), la aprobación reutiliza su historial."
+     },
+     "can_approve": {
+      "type": "boolean",
+      "title": "Can Approve",
+      "description": "La solicitud está pendiente y vigente."
+     }
+    },
+    "type": "object",
+    "required": [
+     "request",
+     "can_approve"
+    ],
+    "title": "CodeLookupResponse"
    },
    "CommercialReferenceIn": {
     "properties": {
@@ -3534,6 +6957,66 @@
     ],
     "title": "ErrorResponse"
    },
+   "ExistingAccountOut": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "display_label": {
+      "type": "string",
+      "title": "Display Label"
+     },
+     "mode": {
+      "type": "string",
+      "enum": [
+       "personal",
+       "shared_device"
+      ],
+      "title": "Mode"
+     },
+     "access_role": {
+      "type": "string",
+      "enum": [
+       "admin",
+       "operator"
+      ],
+      "title": "Access Role"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "active",
+       "blocked"
+      ],
+      "title": "Status"
+     },
+     "app_user_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "App User Id"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "display_label",
+     "mode",
+     "access_role",
+     "status",
+     "app_user_id"
+    ],
+    "title": "ExistingAccountOut",
+    "description": "Cuenta ya existente (normalmente bloqueada) que se reutilizaría al aprobar."
+   },
    "ExpressionAliasIn": {
     "properties": {
      "phrase": {
@@ -3574,6 +7057,155 @@
     },
     "type": "object",
     "title": "HTTPValidationError"
+   },
+   "HistoryEntryOut": {
+    "properties": {
+     "action": {
+      "type": "string",
+      "title": "Action"
+     },
+     "actor_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Actor Name"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "before": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Before"
+     },
+     "after": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "After"
+     }
+    },
+    "type": "object",
+    "required": [
+     "action",
+     "actor_name",
+     "created_at",
+     "before",
+     "after"
+    ],
+    "title": "HistoryEntryOut"
+   },
+   "ImportResult": {
+    "properties": {
+     "import_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Import Id"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "completed",
+       "completed_with_errors",
+       "failed"
+      ],
+      "title": "Status"
+     },
+     "rows_total": {
+      "type": "integer",
+      "title": "Rows Total"
+     },
+     "rows_accepted": {
+      "type": "integer",
+      "title": "Rows Accepted"
+     },
+     "rows_rejected": {
+      "type": "integer",
+      "title": "Rows Rejected"
+     },
+     "errors": {
+      "items": {
+       "$ref": "#/components/schemas/ImportRowError"
+      },
+      "type": "array",
+      "title": "Errors"
+     },
+     "observed_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Observed At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "import_id",
+     "status",
+     "rows_total",
+     "rows_accepted",
+     "rows_rejected",
+     "errors",
+     "observed_at"
+    ],
+    "title": "ImportResult",
+    "description": "Sobre congelado de E8 (contrato C0): estos campos y ninguno más."
+   },
+   "ImportRowError": {
+    "properties": {
+     "row": {
+      "type": "integer",
+      "title": "Row",
+      "description": "Número de fila de la planilla original"
+     },
+     "code": {
+      "type": "string",
+      "title": "Code"
+     },
+     "message": {
+      "type": "string",
+      "title": "Message"
+     }
+    },
+    "type": "object",
+    "required": [
+     "row",
+     "code",
+     "message"
+    ],
+    "title": "ImportRowError",
+    "description": "Motivo de rechazo de una fila; el código pertenece al vocabulario cerrado de D-090."
    },
    "MeOut": {
     "properties": {
@@ -4206,6 +7838,42 @@
     ],
     "title": "QuantityUnit"
    },
+   "ReactivateIn": {
+    "properties": {
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 200
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     }
+    },
+    "type": "object",
+    "title": "ReactivateIn"
+   },
+   "RejectIn": {
+    "properties": {
+     "reason": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 200
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Reason"
+     }
+    },
+    "type": "object",
+    "title": "RejectIn"
+   },
    "ResolveIn": {
     "properties": {
      "demand_item_id": {
@@ -4267,6 +7935,241 @@
      "expires_at"
     ],
     "title": "SessionState"
+   },
+   "SourceIn": {
+    "properties": {
+     "name": {
+      "type": "string",
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Name",
+      "examples": [
+       "Lista Ficticia Norte"
+      ]
+     },
+     "kind": {
+      "type": "string",
+      "pattern": "^(supplier|chain_reference)$",
+      "title": "Kind"
+     },
+     "supplier_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Supplier Id"
+     },
+     "mode": {
+      "type": "string",
+      "pattern": "^(api|manual_import|fixture|none)$",
+      "title": "Mode",
+      "default": "none"
+     },
+     "capabilities": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Capabilities"
+     },
+     "enabled": {
+      "type": "boolean",
+      "title": "Enabled",
+      "default": true
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "required": [
+     "name",
+     "kind"
+    ],
+    "title": "SourceIn"
+   },
+   "SourceListOut": {
+    "properties": {
+     "sources": {
+      "items": {
+       "$ref": "#/components/schemas/SourceOut"
+      },
+      "type": "array",
+      "title": "Sources"
+     }
+    },
+    "type": "object",
+    "required": [
+     "sources"
+    ],
+    "title": "SourceListOut"
+   },
+   "SourceOut": {
+    "properties": {
+     "source_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Source Id"
+     },
+     "name": {
+      "type": "string",
+      "title": "Name"
+     },
+     "kind": {
+      "type": "string",
+      "title": "Kind"
+     },
+     "supplier_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Supplier Id"
+     },
+     "mode": {
+      "type": "string",
+      "title": "Mode"
+     },
+     "capabilities": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Capabilities"
+     },
+     "enabled": {
+      "type": "boolean",
+      "title": "Enabled"
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "has_secret": {
+      "type": "boolean",
+      "title": "Has Secret"
+     },
+     "last_success_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Last Success At"
+     },
+     "last_error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Last Error"
+     },
+     "version": {
+      "type": "integer",
+      "title": "Version"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Updated At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "source_id",
+     "name",
+     "kind",
+     "supplier_id",
+     "mode",
+     "capabilities",
+     "enabled",
+     "status",
+     "has_secret",
+     "last_success_at",
+     "last_error",
+     "version",
+     "created_at",
+     "updated_at"
+    ],
+    "title": "SourceOut"
+   },
+   "SourcePatchIn": {
+    "properties": {
+     "name": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 200,
+        "minLength": 1
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     },
+     "mode": {
+      "anyOf": [
+       {
+        "type": "string",
+        "pattern": "^(api|manual_import|fixture|none)$"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mode"
+     },
+     "capabilities": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Capabilities"
+     },
+     "enabled": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Enabled"
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "title": "SourcePatchIn"
    },
    "StaffChangeOut": {
     "properties": {
@@ -4506,6 +8409,222 @@
      "role_rule"
     ],
     "title": "StrengthOut"
+   },
+   "SupplierIn": {
+    "properties": {
+     "name": {
+      "type": "string",
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Name",
+      "examples": [
+       "Proveedor Ficticio Norte"
+      ]
+     },
+     "supplier_code": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 60
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Supplier Code"
+     },
+     "notes": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 2000
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Notes"
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "required": [
+     "name"
+    ],
+    "title": "SupplierIn"
+   },
+   "SupplierListOut": {
+    "properties": {
+     "suppliers": {
+      "items": {
+       "$ref": "#/components/schemas/SupplierOut"
+      },
+      "type": "array",
+      "title": "Suppliers"
+     }
+    },
+    "type": "object",
+    "required": [
+     "suppliers"
+    ],
+    "title": "SupplierListOut"
+   },
+   "SupplierOut": {
+    "properties": {
+     "supplier_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Supplier Id"
+     },
+     "name": {
+      "type": "string",
+      "title": "Name"
+     },
+     "supplier_code": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Supplier Code"
+     },
+     "status": {
+      "type": "string",
+      "title": "Status"
+     },
+     "version": {
+      "type": "integer",
+      "title": "Version"
+     },
+     "sources": {
+      "items": {
+       "type": "string",
+       "format": "uuid"
+      },
+      "type": "array",
+      "title": "Sources"
+     },
+     "known_conditions": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Known Conditions"
+     },
+     "annotations": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Annotations"
+     },
+     "notes": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Notes"
+     },
+     "internal_notes": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Internal Notes"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Updated At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "supplier_id",
+     "name",
+     "supplier_code",
+     "status",
+     "version",
+     "sources",
+     "known_conditions",
+     "annotations",
+     "notes",
+     "internal_notes",
+     "created_at",
+     "updated_at"
+    ],
+    "title": "SupplierOut"
+   },
+   "SupplierPatchIn": {
+    "properties": {
+     "name": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 200,
+        "minLength": 1
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     },
+     "supplier_code": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 60
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Supplier Code"
+     },
+     "notes": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 2000
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Notes"
+     },
+     "status": {
+      "anyOf": [
+       {
+        "type": "string",
+        "pattern": "^(active|inactive)$"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Status"
+     }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "title": "SupplierPatchIn"
    },
    "TextAttrOut": {
     "properties": {

@@ -16,6 +16,9 @@
   catalog-load <archivo.jsonl> --org sim|real --by <app_user_id> [--dry-run]
                                   carga inicial técnica del catálogo propio: artículos y vínculos SKU
                                   desde un archivo de datos (D-101); no crea ofertas ni lee planillas
+  seed-catalog --org sim --by <app_user_id> [--observed-at <ISO 8601>] [--dry-run]
+                                  catálogo FICTICIO de demostración (30 artículos, 3 proveedores,
+                                  3 fuentes, 90 ofertas); solo simulación, idempotente
   import-check <archivo.xlsx> --org sim|real --by <app_user_id> --source <source_id>
                                   vista previa de una planilla de proveedor: valida y cuenta, no escribe
   import-run <archivo.xlsx> --org sim|real --by <app_user_id> --source <source_id>
@@ -33,6 +36,7 @@ import asyncio
 import json
 import sys
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import select
@@ -40,7 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import dispose_engine, get_engine
 from app.models import AppUser, ChannelBinding, Organization, PurchaseCycle, TelegramAccount
-from app.services import access, catalog_load, identity, imports, staff
+from app.services import access, catalog_load, catalog_seed, identity, imports, staff
 from app.services.actors import Actor, load_actor
 from app.services.provenance import OrgKind, validate_account, validate_binding, vision_guard
 
@@ -459,6 +463,56 @@ async def import_file(path: str, which: str, a: list[str], *, dry_run: bool) -> 
     await dispose_engine()
 
 
+async def seed_catalog_demo(which: str, a: list[str]) -> None:
+    """Catálogo FICTICIO de demostración. Solo simulación; nunca la organización real."""
+    if which != "sim":
+        raise SystemExit(
+            "seed-catalog solo se ejecuta en simulación: --org sim. Los proveedores, precios y "
+            "stock del fixture son inventados y no pueden entrar a una organización real."
+        )
+    by = _arg(a, "--by")
+    if not by:
+        raise SystemExit("Indica quién carga el catálogo con --by <app_user_id>.")
+    actor, name = await _admin(which, by)
+    dry = "--dry-run" in a
+    observed_at = None
+    raw_observed = _arg(a, "--observed-at")
+    if raw_observed:
+        try:
+            observed_at = datetime.fromisoformat(raw_observed.replace("Z", "+00:00"))
+        except ValueError:
+            raise SystemExit(
+                "--observed-at debe ser una fecha ISO 8601 con zona horaria, "
+                "p. ej. 2026-11-13T12:00:00Z."
+            ) from None
+    try:
+        async with AsyncSession(get_engine(), expire_on_commit=False) as s, s.begin():
+            report = await catalog_seed.seed_catalog(
+                s, actor, observed_at=observed_at, dry_run=dry
+            )
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(getattr(e, "message", str(e))) from None
+    print(f"Catálogo FICTICIO de demostración en «{name}»:")
+    print(f"  proveedores: {report.suppliers_created} creado(s), {report.suppliers_unchanged} ya existente(s)")
+    print(f"  fuentes:     {report.sources_created} creada(s), {report.sources_unchanged} ya existente(s)")
+    print(f"  artículos:   {report.articles_created} creado(s), {report.articles_unchanged} sin cambios, "
+          f"{report.articles_conflicting} en conflicto")  # fmt: skip
+    print(f"  vínculos:    {report.mappings_created} creado(s), {report.mappings_unchanged} sin cambios, "
+          f"{report.mappings_conflicting} en conflicto")  # fmt: skip
+    print(f"  despacho:    {report.shipping_created} observación(es), {report.shipping_unchanged} ya existente(s)")
+    print(f"  ofertas:     {report.offers_created} creada(s), {report.offers_unchanged} ya existente(s)")
+    print(f"  rechazos:    {len(report.errors)}")
+    for e in report.errors[:MAX_ERRORS]:
+        print(f"    {e['where']} [{e['code']}] {e['message']}")
+    if len(report.errors) > MAX_ERRORS:
+        print(f"    … y {len(report.errors) - MAX_ERRORS} rechazo(s) más.")
+    if dry:
+        print("  Vista previa (--dry-run): no se escribió nada.")
+    else:
+        print("  Todo quedó como datos SIMULADOS (data_origin=simulated, fixture=true).")
+    await dispose_engine()
+
+
 async def telegram_check() -> None:
     """getMe: comprueba que el token funciona SIN mostrarlo."""
     from app.core.config import get_settings
@@ -531,6 +585,8 @@ def main() -> None:
         asyncio.run(create_admin(a[1], _org_arg(a), a))
     elif len(a) >= 2 and a[0] == "catalog-load":
         asyncio.run(catalog_load_file(a[1], _org_arg(a), a))
+    elif a[:1] == ["seed-catalog"]:
+        asyncio.run(seed_catalog_demo(_org_arg(a), a))
     elif len(a) >= 2 and a[0] == "import-check":
         asyncio.run(import_file(a[1], _org_arg(a), a, dry_run=True))
     elif len(a) >= 2 and a[0] == "import-run":
@@ -551,6 +607,7 @@ def main() -> None:
             "unlink-auth-subject <id> --org sim|real --by <id> --confirm | "
             "create-admin \"<nombre>\" --org sim|real --confirm | "
             "catalog-load <archivo.jsonl> --org sim|real --by <id> [--dry-run] | "
+            "seed-catalog --org sim --by <id> [--observed-at <ISO>] [--dry-run] | "
             "import-check <archivo.xlsx> --org sim|real --by <id> --source <source_id> | "
             "import-run <archivo.xlsx> --org sim|real --by <id> --source <source_id> | "
             "telegram-check | telegram-poll"
