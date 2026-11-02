@@ -182,6 +182,24 @@ class DemandItemOut(BaseModel):
     reporters: list[str]
     last_observed_at: datetime | None
     created_at: datetime
+    # Cobertura derivada (C5-A §12.9): nunca se almacena. Sin compras todavía, `purchased_quantity`
+    # es 0 porque la tabla no existe; C5-B la completa sin cambiar la forma.
+    last_raw_text: str | None = Field(
+        default=None, description="Último texto del aviso, tal como se escribió."
+    )
+    coverage_quantity: Qty | None = None
+    quoted_quantity: Qty | None = None
+    purchased_quantity: Qty | None = None
+    pending_quantity: Qty | None = Field(
+        default=None, description="Falta **cotizar**. null = cantidad pedida desconocida."
+    )
+    pending_purchase_quantity: Qty | None = Field(
+        default=None, description="Falta **comprar**. null = cantidad pedida desconocida."
+    )
+    is_pending: bool = True
+    replenishment_state: Literal[
+        "pending", "in_quote", "purchased", "fulfilled", "cancelled"
+    ] = "pending"
 
 
 class DemandItemList(BaseModel):

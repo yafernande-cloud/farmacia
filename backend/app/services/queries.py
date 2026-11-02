@@ -5,11 +5,13 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import DomainError, not_found
 from app.models import AppUser, DemandItem, DemandObservation, QuantityEvent
 from app.services.actors import Actor
+from app.services.coverage import quoted_totals_subquery
 
 
 def encode_cursor(created_at: datetime, id_: uuid.UUID) -> str:
@@ -42,11 +44,53 @@ async def aggregates(session: AsyncSession, org, item_ids: list[uuid.UUID]) -> d
     return {r[0]: (r[1], r[2], sorted(r[3])) for r in rows}
 
 
+async def last_texts(
+    session: AsyncSession, org, item_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """Último texto recibido por faltante, tal como se escribió (`last_raw_text`)."""
+    if not item_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(DemandObservation.demand_item_id, DemandObservation.raw_text)
+            .where(
+                DemandObservation.organization_id == org,
+                DemandObservation.demand_item_id.in_(item_ids),
+            )
+            .ext(distinct_on(DemandObservation.demand_item_id))
+            .order_by(
+                DemandObservation.demand_item_id,
+                DemandObservation.created_at.desc(),
+                DemandObservation.id.desc(),
+            )
+        )
+    ).all()
+    return {item_id: raw for item_id, raw in rows if item_id is not None}
+
+
 async def list_items(
-    session: AsyncSession, actor: Actor, *, status: str, limit: int, cursor: str | None
+    session: AsyncSession,
+    actor: Actor,
+    *,
+    status: str,
+    limit: int,
+    cursor: str | None,
+    pending_only: bool = False,
 ):
     org = actor.organization_id
     q = select(DemandItem).where(DemandItem.organization_id == org, DemandItem.status == status)
+    if pending_only:
+        # `pending_only` = activo con saldo sin cubrir por cotización ni compra. C5-A suma lo
+        # cotizado; C5-B incorpora las compras vigentes a esta misma resta (§12.3).
+        covered = quoted_totals_subquery(org)
+        q = (
+            q.outerjoin(covered, covered.c.demand_item_id == DemandItem.id)
+            .where(
+                DemandItem.status == "active",
+                DemandItem.target_quantity.is_not(None),
+                DemandItem.target_quantity - func.coalesce(covered.c.quantity, 0) > 0,
+            )
+        )
     if cursor:
         ts, id_ = decode_cursor(cursor)
         q = q.where(

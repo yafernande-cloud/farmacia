@@ -12,6 +12,7 @@ from app.db.session import transaction
 from app.domain.products import ConfirmPatch, ParsedProduct
 from app.domain.units import Measure, build_measure
 from app.models import DemandItem, DemandObservation, ProductAlias, QuantityEvent
+from app.services import coverage as coverage_svc
 from app.services import demand as demand_svc
 from app.services import queries
 from app.services.interpretation import suggestions_for_items
@@ -58,9 +59,29 @@ def attributes_out(p: ParsedProduct) -> s.AttributesOut:
     )  # fmt: skip
 
 
-def item_out(i: DemandItem, agg: dict, suggestions: list | None = None) -> s.DemandItemOut:
+def item_out(
+    i: DemandItem,
+    agg: dict,
+    suggestions: list | None = None,
+    *,
+    coverage: dict | None = None,
+    last_raw_text: str | None = None,
+) -> s.DemandItemOut:
     count, last, reporters = agg.get(i.id, (0, None, []))
     attrs = attributes_out(demand_svc.parsed_of_item(i))
+    # Sin el cálculo de cobertura (detalle, comandos) se declara lo mínimo verificable: lo pedido
+    # sigue pendiente de compra y no se inventa lo cotizado.
+    cov = coverage or {
+        "coverage_quantity": "0",
+        "quoted_quantity": "0",
+        "purchased_quantity": "0",
+        "pending_quantity": i.target_quantity,
+        "pending_purchase_quantity": i.target_quantity,
+        "is_pending": i.status == "active",
+        "replenishment_state": {"cancelled": "cancelled", "fulfilled": "fulfilled"}.get(
+            i.status, "pending"
+        ),
+    }
     return s.DemandItemOut(
         id=i.id, display_name=i.display_name, ingredient=i.ingredient, attributes=attrs,
         identity_complete=attrs.identity_complete, pending_validation=attrs.pending_validation,
@@ -69,6 +90,14 @@ def item_out(i: DemandItem, agg: dict, suggestions: list | None = None) -> s.Dem
         needs_quantity=i.target_quantity is None, data_origin=i.data_origin, suggestions=suggestions or [],
         status=i.status, version=i.version,
         observation_count=count, reporters=reporters, last_observed_at=last, created_at=i.created_at,
+        last_raw_text=last_raw_text,
+        coverage_quantity=cov["coverage_quantity"],
+        quoted_quantity=cov["quoted_quantity"],
+        purchased_quantity=cov["purchased_quantity"],
+        pending_quantity=cov["pending_quantity"],
+        pending_purchase_quantity=cov["pending_purchase_quantity"],
+        is_pending=cov["is_pending"],
+        replenishment_state=cov["replenishment_state"],
     )  # fmt: skip
 
 
@@ -149,14 +178,24 @@ async def list_demand_items(
     status: Annotated[str, Query(pattern="^(active|cancelled|fulfilled)$")] = "active",
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     cursor: str | None = None,
+    pending_only: Annotated[
+        bool,
+        Query(description="Solo faltantes activos con saldo sin cubrir (`pending_quantity > 0`)."),
+    ] = False,
 ):  # fmt: skip
     require(actor.roles, Permission.VIEW_LIST)
     items, agg, nxt, pending = await queries.list_items(
-        session, actor, status=status, limit=limit, cursor=cursor
+        session, actor, status=status, limit=limit, cursor=cursor, pending_only=pending_only
     )
     sug = await suggestions_for_items(session, actor.organization_id, items)
+    ids = [i.id for i in items]
+    cov = await coverage_svc.coverage_for_items(session, actor.organization_id, items)
+    texts = await queries.last_texts(session, actor.organization_id, ids)
     return s.DemandItemList(
-        items=[item_out(i, agg, sug.get(i.id)) for i in items],
+        items=[
+            item_out(i, agg, sug.get(i.id), coverage=cov.get(i.id), last_raw_text=texts.get(i.id))
+            for i in items
+        ],
         next_cursor=nxt,
         pending_review_count=pending,
     )

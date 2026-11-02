@@ -13,6 +13,7 @@ from app.api.v1 import (
     demand,
     health,
     imports,
+    quotes,
     search,
     sources,
     staff,
@@ -89,6 +90,7 @@ def create_app() -> FastAPI:
     app.include_router(web_access.router, prefix="/api/v1")
     app.include_router(search.router, prefix="/api/v1")
     app.include_router(comparisons.router, prefix="/api/v1")
+    app.include_router(quotes.router, prefix="/api/v1")
     return app
 
 

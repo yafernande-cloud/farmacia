@@ -768,8 +768,16 @@ async def run_comparison(
     lines: list[LineInput],
     source_search_id: uuid.UUID | None = None,
     now: datetime | None = None,
+    offer_overrides: dict[int, uuid.UUID] | None = None,
+    persist: bool = True,
 ) -> tuple[ComparisonRun, dict[str, Any]]:
-    """Ejecuta E5 y guarda la corrida completa en una sola escritura por fila."""
+    """Ejecuta E5 y, por omisión, guarda la corrida completa.
+
+    `offer_overrides` fija la oferta de una línea por su posición. Lo usa la evaluación de un
+    carrito para respetar el snapshot elegido: el precio de la línea no se reapunta solo (§3, V-04).
+    `persist=False` calcula la misma respuesta sin escribir la corrida; una lectura de cotización no
+    debe llenar las tablas de comparaciones.
+    """
     require_admin(actor.roles)
     now = now or datetime.now(UTC)
     settings = get_settings()
@@ -822,7 +830,35 @@ async def run_comparison(
             raise not_found("La búsqueda")
 
     offers_by_item = await _latest_offers(session, org, article_ids, now=now)
-    all_offers = [o for group in offers_by_item.values() for o in group]
+    effective: dict[int, list[OfferSnapshot]] = {}
+    if offer_overrides:
+        wanted: dict[uuid.UUID, OfferSnapshot] = {}
+        missing = set(offer_overrides.values())
+        if missing:
+            wanted = {
+                o.id: o
+                for o in (
+                    await session.execute(
+                        select(OfferSnapshot).where(
+                            OfferSnapshot.organization_id == org,
+                            OfferSnapshot.id.in_(missing),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            }
+        for index, offer_id in offer_overrides.items():
+            offer = wanted.get(offer_id)
+            if offer is None:
+                raise not_found("La oferta")
+            effective[index] = [offer]
+    else:
+        effective = {
+            index: offers_by_item.get(line.article_id, [])
+            for index, line in enumerate(lines)
+        }
+    all_offers = [o for group in effective.values() for o in group]
     supplier_ids = {o.supplier_id for o in all_offers}
     suppliers = {
         s.id: s
@@ -865,7 +901,7 @@ async def run_comparison(
     calcs: list[CandidateCalc] = []
     for index, line in enumerate(lines):
         item = items[line.article_id]
-        for offer in offers_by_item.get(line.article_id, []):
+        for offer in effective.get(index, []):
             supplier = suppliers.get(offer.supplier_id)
             if supplier is None:
                 continue
@@ -934,6 +970,7 @@ async def run_comparison(
 
     # --- persistencia: cada fila se escribe UNA vez (las tablas son de solo agregar)
     run = ComparisonRun(
+        id=uuid.uuid4(),
         organization_id=org,
         source_search_id=source_search_id,
         status=status,
@@ -945,13 +982,16 @@ async def run_comparison(
         sources_consulted=len(source_rows),
         sources_failed=failed,
         created_by=actor.id,
+        created_at=now,
         generated_at=now,
     )
-    session.add(run)
-    await session.flush()
+    if persist:
+        session.add(run)
+        await session.flush()
 
     line_rows = [
         ComparisonLine(
+            id=uuid.uuid4(),
             organization_id=org,
             comparison_run_id=run.id,
             position=index,
@@ -963,28 +1003,33 @@ async def run_comparison(
         )
         for index, line in enumerate(lines)
     ]
-    session.add_all(line_rows)
-    await session.flush()
+    if persist:
+        session.add_all(line_rows)
+        await session.flush()
 
     cand_rows = [
         ComparisonCandidate(
+            id=uuid.uuid4(),
             organization_id=org,
             comparison_run_id=run.id,
             comparison_line_id=line_rows[c.line_index].id,
             offer_id=c.offer.id,
             supplier_id=c.supplier.id,
             source_id=c.offer.source_id,
+            computed_at=now,
             **c.values,
         )
         for c in calcs
     ]
-    session.add_all(cand_rows)
-    await session.flush()
+    if persist:
+        session.add_all(cand_rows)
+        await session.flush()
 
     total_rows: list[ComparisonSupplierTotal] = []
     for t in totals:
         total_rows.append(
             ComparisonSupplierTotal(
+                id=uuid.uuid4(),
                 organization_id=org,
                 comparison_run_id=run.id,
                 supplier_id=t["supplier"].id,
@@ -1008,10 +1053,12 @@ async def run_comparison(
                 blockers=t["blockers"],
                 causes=t["causes"],
                 freshness=t["freshness"],
+                computed_at=now,
             )
         )
-    session.add_all(total_rows)
-    await session.flush()
+    if persist:
+        session.add_all(total_rows)
+        await session.flush()
 
     # --- armado de la respuesta: las anotaciones solo leen, nunca cambian un número
     payload_lines = []
