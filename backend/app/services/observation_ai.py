@@ -16,7 +16,10 @@ Flujo (contrato §8.4 y §8.5):
 
 Reintentos: si la observación ya tiene una interpretación aplicable (`suggested`/`confirmed`) no
 se crea otra. Un intento fallido **sí** se puede reintentar y crea una fila nueva, sin duplicar la
-observación ni sus preferencias (contrato §8.3 y §8.5.7).
+observación ni sus preferencias (contrato §8.3 y §8.5.7). Un resultado ya procesado que no aplica
+—`needs_review`, `no_preference` o `rejected`— se devuelve tal cual: repetir la interpretación no
+duplica filas ni vuelve a consumir el proveedor. `retry_failed=False` también devuelve el fallo
+anterior sin llamar al modelo.
 """
 
 from __future__ import annotations
@@ -67,6 +70,9 @@ logger = logging.getLogger(__name__)
 
 APPLIED_STATUSES = frozenset({"suggested", "confirmed"})
 CONTEXT_OFFER_LIMIT = 200
+# Cota de sujetos conocidos que se muestran al modelo. Evita prompts sin límite en catálogos
+# grandes; el orden es determinista.
+CONTEXT_SUBJECT_LIMIT = 200
 UNCONFIGURED_MODEL = "not_configured"
 
 
@@ -89,6 +95,7 @@ async def interpret_observation(
     *,
     model: ObservationModel | None = None,
     settings: Settings | None = None,
+    retry_failed: bool = True,
 ) -> InterpretationOutcome:
     """Interpreta una observación existente. La observación debe estar guardada antes.
 
@@ -113,14 +120,16 @@ async def interpret_observation(
     # Serializa dos interpretaciones simultáneas de la misma observación en esta transacción.
     await advisory_lock(session, f"obsai:{org}:{observation.id}")
 
-    existing = (
+    # Se devuelve el último intento ya procesado sin volver a llamar al proveedor. Solo un fallo
+    # puede reintentarse (y solo si el llamador lo permite): así un reintento del cliente no
+    # duplica interpretaciones ni vuelve a consumir cuota.
+    latest = (
         (
             await session.execute(
                 select(ObservationInterpretation)
                 .where(
                     ObservationInterpretation.organization_id == org,
                     ObservationInterpretation.observation_id == observation.id,
-                    ObservationInterpretation.status.in_(APPLIED_STATUSES),
                 )
                 .order_by(
                     ObservationInterpretation.created_at.desc(),
@@ -132,8 +141,12 @@ async def interpret_observation(
         .scalars()
         .first()
     )
-    if existing is not None:
-        return await _replayed(session, existing)
+    if latest is not None and (
+        latest.status in APPLIED_STATUSES
+        or not retry_failed
+        or latest.status != "failed"
+    ):
+        return await _replayed(session, latest)
 
     provider = model
     owns_provider = False
@@ -396,7 +409,13 @@ async def _build_context(
     settings: Settings,
     observation: CommercialObservation,
 ) -> CommercialContext:
-    """Contexto verificado: solo este artículo, sus ofertas y sus proveedores."""
+    """Contexto verificado: el artículo, sus ofertas, el catálogo de sujetos de la organización
+    y sus proveedores activos.
+
+    El catálogo aporta únicamente nombres de laboratorio y marca (nunca ofertas, precios ni
+    stock de otros artículos). Los proveedores activos se incluyen aunque todavía no tengan una
+    oferta para este artículo. Todo queda acotado a la organización del `Actor`.
+    """
     org = observation.organization_id
     item = (
         await session.execute(
@@ -420,24 +439,36 @@ async def _build_context(
         .scalars()
         .all()
     )
-    supplier_ids = {offer.supplier_id for offer in offers}
-    if observation.supplier_id is not None:
-        supplier_ids.add(observation.supplier_id)
     suppliers = tuple(
         ContextSupplier(id=row.id, name=row.name)
         for row in (
             (
                 await session.execute(
-                    select(Supplier).where(
-                        Supplier.organization_id == org, Supplier.id.in_(supplier_ids)
-                    )
+                    select(Supplier)
+                    .where(Supplier.organization_id == org, Supplier.status == "active")
+                    .order_by(Supplier.name, Supplier.id)
+                    .limit(CONTEXT_SUBJECT_LIMIT)
                 )
             )
             .scalars()
             .all()
         )
-        if row.status == "active"
     )
+    catalog_subjects = (
+        await session.execute(
+            select(TradeItem.laboratory, TradeItem.brand)
+            .where(TradeItem.organization_id == org, TradeItem.status == "active")
+            .order_by(TradeItem.display_name, TradeItem.id)
+            .limit(CONTEXT_SUBJECT_LIMIT)
+        )
+    ).all()
+    # El propio artículo va primero, aunque estuviera fuera del límite o inactivo.
+    known_laboratories = _unique(
+        [item.laboratory, *(row[0] for row in catalog_subjects)]
+    )[:CONTEXT_SUBJECT_LIMIT]
+    known_brands = _unique([item.brand, *(row[1] for row in catalog_subjects)])[
+        :CONTEXT_SUBJECT_LIMIT
+    ]
     return CommercialContext(
         trade_item_id=item.id,
         display_name=item.display_name,
@@ -448,7 +479,77 @@ async def _build_context(
         laboratories=_unique(offer.laboratory_as_published for offer in offers),
         brands=_unique(offer.brand_as_published for offer in offers),
         currencies=tuple(sorted({settings.currency} | {offer.currency for offer in offers})),
+        known_laboratories=known_laboratories,
+        known_brands=known_brands,
     )
+
+
+async def load_interpretations(
+    session: AsyncSession,
+    organization_id: uuid.UUID,
+    observation_ids: Iterable[uuid.UUID],
+) -> dict[uuid.UUID, tuple[ObservationInterpretation, ...]]:
+    """Todos los intentos de esas observaciones, del más reciente al más antiguo.
+
+    Solo lectura: no interpreta, no llama al proveedor y no crea filas.
+    """
+    ids = list(dict.fromkeys(observation_ids))
+    if not ids:
+        return {}
+    rows = (
+        (
+            await session.execute(
+                select(ObservationInterpretation)
+                .where(
+                    ObservationInterpretation.organization_id == organization_id,
+                    ObservationInterpretation.observation_id.in_(ids),
+                )
+                .order_by(
+                    ObservationInterpretation.observation_id,
+                    ObservationInterpretation.created_at.desc(),
+                    ObservationInterpretation.id.desc(),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    grouped: dict[uuid.UUID, list[ObservationInterpretation]] = {}
+    for row in rows:
+        grouped.setdefault(row.observation_id, []).append(row)
+    return {key: tuple(value) for key, value in grouped.items()}
+
+
+async def load_preferences(
+    session: AsyncSession,
+    organization_id: uuid.UUID,
+    interpretation_ids: Iterable[uuid.UUID],
+) -> dict[uuid.UUID, tuple[CommercialPreference, ...]]:
+    """Preferencias de esas interpretaciones, agrupadas y en orden estable. Solo lectura."""
+    ids = list(dict.fromkeys(interpretation_ids))
+    if not ids:
+        return {}
+    rows = (
+        (
+            await session.execute(
+                select(CommercialPreference)
+                .where(
+                    CommercialPreference.organization_id == organization_id,
+                    CommercialPreference.interpretation_id.in_(ids),
+                )
+                .order_by(
+                    CommercialPreference.created_at,
+                    CommercialPreference.id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    grouped: dict[uuid.UUID, list[CommercialPreference]] = {}
+    for row in rows:
+        grouped.setdefault(row.interpretation_id, []).append(row)
+    return {key: tuple(value) for key, value in grouped.items()}
 
 
 def _unique(values: Iterable[str | None]) -> tuple[str, ...]:

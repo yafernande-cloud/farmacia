@@ -7,6 +7,7 @@ vigentes (contrato §8.4–§8.7).
 """
 
 import json
+import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -14,9 +15,13 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 
-from app.core.config import Settings
+from app.core.config import ENV_FILE, Settings
 from app.core.errors import DomainError
-from app.interpretation.openai_observations import ModelError, RawCompletion
+from app.interpretation.openai_observations import (
+    ModelError,
+    OpenAIResponsesModel,
+    RawCompletion,
+)
 from app.models import (
     AppUser,
     CommercialObservation,
@@ -479,14 +484,140 @@ async def test_lenguaje_coloquial_chileno_llega_completo_al_modelo(sessions, ai_
     assert text in fake.calls[0][1]
 
 
-async def test_el_contexto_no_incluye_otros_articulos(sessions, ai_farm):
+async def test_el_contexto_no_incluye_ofertas_ni_precios_de_otros_articulos(sessions, ai_farm):
     obs = await _observation(sessions, ai_farm, "Prefiero Laboratorio Chile.")
     fake = FakeModel(_response([_op()]))
     await _run(sessions, ai_farm, obs, fake)
     user = fake.calls[0][1]
     assert "Losartán 50 mg x 20 comprimidos" in user
+    # Los otros artículos no aportan nombre, id, oferta ni precio; solo sujetos de catálogo.
     assert "Losartán 100 mg x 20 comprimidos" not in user
     assert str(ai_farm["items"]["b"]) not in user
+    assert "3000" not in user and "B-N" not in user
+
+
+async def _catalog_subject(
+    sessions, farm, *, laboratory: str, brand: str | None = None, supplier: str | None = None
+) -> tuple[uuid.UUID, uuid.UUID | None]:
+    """Artículo del catálogo sin ofertas y, opcionalmente, proveedor activo sin ofertas."""
+    async with sessions() as s, s.begin():
+        item = TradeItem(
+            organization_id=farm["org"],
+            display_name=f"Artículo de catálogo {laboratory}",
+            identity_key=f"fixture-catalogo-{laboratory}",
+            laboratory=laboratory,
+            brand=brand,
+            attributes=_attrs("catálogo", "1"),
+            data_origin="simulated",
+        )
+        s.add(item)
+        await s.flush()
+        supplier_id = None
+        if supplier:
+            row = Supplier(
+                organization_id=farm["org"], name=supplier, data_origin="simulated"
+            )
+            s.add(row)
+            await s.flush()
+            supplier_id = row.id
+        return item.id, supplier_id
+
+
+async def test_preferencia_por_laboratorio_del_catalogo_sin_oferta_se_guarda_sin_ordenar(
+    sessions, ai_farm
+):
+    catalog_item, _ = await _catalog_subject(
+        sessions, ai_farm, laboratory="Laboratorio Ficticio Zenit", brand="Marca Ficticia Omega"
+    )
+    obs = await _observation(sessions, ai_farm, "Prefiero el Laboratorio Ficticio Zenit.")
+    fake = FakeModel(_response([_op(label="Laboratorio Ficticio Zenit")]))
+    outcome = await _run(sessions, ai_farm, obs, fake)
+
+    assert outcome.status == "suggested"
+    assert "Laboratorio Ficticio Zenit" in fake.calls[0][1]
+    prefs = await _prefs(sessions, ai_farm)
+    assert [p.subject_kind for p in prefs.applicable] == ["laboratory"]
+    pref = prefs.applicable[0]
+    assert pref.subject_key == "laboratorio ficticio zenit"
+    assert pref.subject_label == "Laboratorio Ficticio Zenit"
+
+    # El sujeto no tiene ofertas: el componente de laboratorio queda empatado y el orden
+    # determinista no cambia; todas las ofertas siguen visibles.
+    ranks = await _ranks(sessions, ai_farm)
+    assert set(ranks) == {"A-N", "A-S", "A-C"}
+    assert len({rank[3] for rank in ranks.values()}) == 1
+
+    # La preferencia no se propaga al artículo que aportó el nombre al catálogo.
+    async with sessions() as s:
+        assert (
+            await s.execute(
+                select(CommercialPreference).where(
+                    CommercialPreference.trade_item_id == catalog_item
+                )
+            )
+        ).scalars().all() == []
+
+
+async def test_preferencia_por_proveedor_activo_sin_oferta_se_guarda_sin_ordenar(
+    sessions, ai_farm
+):
+    _, supplier_id = await _catalog_subject(
+        sessions,
+        ai_farm,
+        laboratory="Laboratorio Ficticio Zenit",
+        supplier="Proveedor Ficticio Nuevo",
+    )
+    obs = await _observation(sessions, ai_farm, "Prefiero al Proveedor Ficticio Nuevo.")
+    outcome = await _run(
+        sessions,
+        ai_farm,
+        obs,
+        FakeModel(_response([_op("supplier", "Proveedor Ficticio Nuevo")])),
+    )
+
+    assert outcome.status == "suggested"
+    prefs = await _prefs(sessions, ai_farm)
+    assert prefs.applicable[0].subject_supplier_id == supplier_id
+    ranks = await _ranks(sessions, ai_farm)
+    assert len({rank[2] for rank in ranks.values()}) == 1
+
+
+async def test_sujetos_conocidos_no_cruzan_la_organizacion(sessions, ai_farm):
+    async with sessions() as s, s.begin():
+        s.add(
+            TradeItem(
+                organization_id=ai_farm["other_org"],
+                display_name="Artículo ajeno",
+                identity_key="fixture-ajeno-catalogo",
+                laboratory="Laboratorio Ajeno",
+                attributes=_attrs("ajeno", "1"),
+                data_origin="simulated",
+            )
+        )
+        s.add(
+            Supplier(
+                organization_id=ai_farm["other_org"],
+                name="Proveedor Ajeno",
+                data_origin="simulated",
+            )
+        )
+
+    lab = await _observation(sessions, ai_farm, "Prefiero Laboratorio Ajeno.")
+    outcome = await _run(
+        sessions, ai_farm, lab, FakeModel(_response([_op(label="Laboratorio Ajeno")]))
+    )
+    assert outcome.status == "needs_review"
+    assert outcome.error_code == "validation_error"
+
+    supplier = await _observation(sessions, ai_farm, "Prefiero Proveedor Ajeno.")
+    outcome = await _run(
+        sessions,
+        ai_farm,
+        supplier,
+        FakeModel(_response([_op("supplier", "Proveedor Ajeno")])),
+    )
+    assert outcome.status == "needs_review"
+    assert outcome.error_code == "validation_error"
 
 
 # --------------------------------------------------------------------------- no inventar
@@ -667,6 +798,30 @@ async def test_error_del_proveedor_queda_registrado_y_no_toca_nada(sessions, ai_
     assert observations[0].text_original == text
 
 
+async def test_respuesta_truncada_no_altera_una_preferencia_vigente(sessions, ai_farm):
+    first = await _observation(sessions, ai_farm, "Prefiero Laboratorio Chile.")
+    established = await _run(
+        sessions, ai_farm, first, FakeModel(_response([_op()]))
+    )
+    assert established.status == "suggested"
+    before = await _ranks(sessions, ai_farm)
+
+    second = await _observation(sessions, ai_farm, "Ahora prefiero Laboratorio Andino.")
+    truncated = await _run(
+        sessions, ai_farm, second, FakeModel(ModelError("output_truncated"))
+    )
+
+    assert truncated.status == "failed"
+    assert truncated.error_code == "output_truncated"
+    prefs = await _prefs(sessions, ai_farm)
+    # Sigue vigente la preferencia anterior y no se creó ninguna parcial.
+    assert [p.subject_key for p in prefs.applicable] == ["laboratorio chile"]
+    assert await _ranks(sessions, ai_farm) == before
+    interps, rows, observations = await _rows(sessions, ai_farm)
+    assert [i.status for i in interps].count("failed") == 1
+    assert len(rows) == 1 and len(observations) == 2
+
+
 async def test_respuesta_no_json_es_invalida(sessions, ai_farm):
     obs = await _observation(sessions, ai_farm, "Prefiero Laboratorio Chile.")
     outcome = await _run(sessions, ai_farm, obs, FakeModel("esto no es JSON"))
@@ -794,3 +949,196 @@ async def test_preferencia_solo_afecta_su_articulo(sessions, ai_farm):
     assert other.retired_subject_kinds == ()
     ranks_b = await _ranks(sessions, ai_farm, "b")
     assert all(key == (0, 0, 0, 0, 0, 0) for key in ranks_b.values())
+
+
+# --------------------------------------------------------------------------- prueba real (manual)
+# Seis casos definidos para la primera validación con el proveedor real. NO se ejecutan por
+# defecto: requieren OPENAI_LIVE=1, OPENAI_MODEL y OPENAI_API_KEY, y consumen cuota. Toda la
+# suite normal sigue usando el doble y no hace llamadas reales (contrato §8.5.9).
+#
+# Ejecución autorizada:
+#   OPENAI_LIVE=1 REQUIRE_DB=1 .venv/bin/pytest tests/test_observation_ai.py -k live -s
+#
+# Tope duro de esta corrida: 8 llamadas lógicas y USD 0,25 estimados. Si el proveedor reintenta
+# una vez por un fallo transitorio, el tope de gasto sigue cubriendo el peor caso previsto.
+
+LIVE_ENABLED = os.getenv("OPENAI_LIVE") == "1"
+LIVE_MODEL_ESPERADO = "gpt-5.4-mini"
+LIVE_MAX_CALLS = 8
+LIVE_MAX_SPEND_USD = Decimal("0.25")
+_LIVE_INPUT_USD_PER_MILLION = Decimal("0.75")
+_LIVE_OUTPUT_USD_PER_MILLION = Decimal("4.50")
+_LIVE = {"calls": 0, "input": 0, "output": 0, "usd": Decimal("0")}
+
+requires_live = pytest.mark.skipif(
+    not LIVE_ENABLED,
+    reason="Prueba real desactivada: exportar OPENAI_LIVE=1 (consume cuota).",
+)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _live_budget_reset():
+    _LIVE.update(calls=0, input=0, output=0, usd=Decimal("0"))
+    yield
+    if _LIVE["calls"]:
+        print(
+            "\nOpenAI real: "
+            f"{_LIVE['calls']} llamadas, {_LIVE['input']} tokens de entrada, "
+            f"{_LIVE['output']} de salida, USD {_LIVE['usd']:.6f} estimados."
+        )
+
+
+class _BudgetedProvider:
+    """Envuelve el adaptador real para no exceder el tope autorizado de llamadas ni de gasto."""
+
+    def __init__(self, inner: OpenAIResponsesModel):
+        self.inner = inner
+
+    async def complete(self, *, system: str, user: str, json_schema: dict) -> RawCompletion:
+        if _LIVE["calls"] >= LIVE_MAX_CALLS:
+            raise AssertionError(f"Tope de {LIVE_MAX_CALLS} llamadas reales alcanzado.")
+        # Se cuenta el intento antes de la llamada: un fallo también consume el tope.
+        _LIVE["calls"] += 1
+        completion = await self.inner.complete(
+            system=system, user=user, json_schema=json_schema
+        )
+        _LIVE["input"] += completion.input_tokens or 0
+        _LIVE["output"] += completion.output_tokens or 0
+        _LIVE["usd"] += (
+            Decimal(completion.input_tokens or 0) * _LIVE_INPUT_USD_PER_MILLION
+            + Decimal(completion.output_tokens or 0) * _LIVE_OUTPUT_USD_PER_MILLION
+        ) / Decimal(1_000_000)
+        if _LIVE["usd"] > LIVE_MAX_SPEND_USD:
+            raise AssertionError(
+                f"Tope de gasto USD {LIVE_MAX_SPEND_USD} superado: {_LIVE['usd']:.6f}."
+            )
+        return completion
+
+
+@pytest.fixture
+async def live_provider():
+    if not LIVE_ENABLED:
+        pytest.skip("OPENAI_LIVE no está activo.")
+    cfg = Settings(_env_file=ENV_FILE)
+    if cfg.openai_api_key is None or not cfg.openai_model:
+        pytest.fail("OPENAI_LIVE=1 exige OPENAI_MODEL y OPENAI_API_KEY.")
+    if cfg.openai_model != LIVE_MODEL_ESPERADO:
+        pytest.fail(
+            f"El modelo configurado es «{cfg.openai_model}»; esta corrida presupuesta "
+            f"«{LIVE_MODEL_ESPERADO}»."
+        )
+    inner = OpenAIResponsesModel.from_settings(cfg)
+    try:
+        yield _BudgetedProvider(inner), cfg
+    finally:
+        await inner.aclose()
+
+
+@requires_live
+async def test_live_1_preferencia_por_laboratorio_del_catalogo_sin_oferta(
+    sessions, ai_farm, live_provider
+):
+    provider, cfg = live_provider
+    await _catalog_subject(
+        sessions,
+        ai_farm,
+        laboratory="Laboratorio Ficticio Zenit",
+        brand="Marca Ficticia Omega",
+    )
+    obs = await _observation(sessions, ai_farm, "Prefiero el Laboratorio Ficticio Zenit.")
+    outcome = await _run(sessions, ai_farm, obs, provider, settings=cfg)
+
+    assert outcome.status == "suggested"
+    prefs = await _prefs(sessions, ai_farm)
+    assert [p.subject_kind for p in prefs.applicable] == ["laboratory"]
+    assert prefs.applicable[0].subject_key == "laboratorio ficticio zenit"
+    ranks = await _ranks(sessions, ai_farm)
+    assert set(ranks) == {"A-N", "A-S", "A-C"}
+    assert len({rank[3] for rank in ranks.values()}) == 1
+
+
+@requires_live
+async def test_live_2_reemplazo_de_la_misma_clase(sessions, ai_farm, live_provider):
+    provider, cfg = live_provider
+    first = await _observation(sessions, ai_farm, "Prefiero Laboratorio Chile.")
+    one = await _run(sessions, ai_farm, first, provider, settings=cfg)
+    second = await _observation(sessions, ai_farm, "Ahora prefiero Laboratorio Andino.")
+    two = await _run(sessions, ai_farm, second, provider, settings=cfg)
+
+    assert (one.status, two.status) == ("suggested", "suggested")
+    prefs = await _prefs(sessions, ai_farm)
+    labs = [p for p in prefs.applicable if p.subject_kind == "laboratory"]
+    assert len(labs) == 1
+    assert labs[0].subject_key == "laboratorio andino"
+
+
+@requires_live
+async def test_live_3_retiro_explicito(sessions, ai_farm, live_provider):
+    provider, cfg = live_provider
+    first = await _observation(sessions, ai_farm, "Prefiero Laboratorio Chile.")
+    await _run(sessions, ai_farm, first, provider, settings=cfg)
+    second = await _observation(
+        sessions, ai_farm, "Olvida lo del laboratorio; da lo mismo cuál sea."
+    )
+    outcome = await _run(sessions, ai_farm, second, provider, settings=cfg)
+
+    assert outcome.status == "suggested"
+    assert outcome.retired_subject_kinds == ("laboratory",)
+    prefs = await _prefs(sessions, ai_farm)
+    assert [p for p in prefs.applicable if p.subject_kind == "laboratory"] == []
+
+
+@requires_live
+async def test_live_4_tolerancia_explicita_por_monto(sessions, ai_farm, live_provider):
+    provider, cfg = live_provider
+    obs = await _observation(
+        sessions,
+        ai_farm,
+        "Prefiero al Proveedor Norte aunque tenga que pagar hasta $300 más.",
+    )
+    outcome = await _run(sessions, ai_farm, obs, provider, settings=cfg)
+
+    assert outcome.status == "suggested"
+    prefs = await _prefs(sessions, ai_farm)
+    assert [p.subject_kind for p in prefs.applicable] == ["supplier"]
+    pref = prefs.applicable[0]
+    assert pref.subject_label == "Proveedor Norte"
+    assert pref.tolerance_kind == "absolute_amount"
+    assert pref.tolerance_amount == Decimal("300.0000")
+    assert pref.tolerance_currency == "CLP"
+    assert pref.tolerance_origin == "explicit"
+
+
+@requires_live
+async def test_live_5_ambiguedad_no_aplica_nada(sessions, ai_farm, live_provider):
+    provider, cfg = live_provider
+    obs = await _observation(
+        sessions, ai_farm, "Prefiero ese laboratorio que te dije el otro día."
+    )
+    outcome = await _run(sessions, ai_farm, obs, provider, settings=cfg)
+
+    assert outcome.status == "needs_review"
+    assert outcome.error_code == "ambiguous"
+    prefs = await _prefs(sessions, ai_farm)
+    assert prefs.applicable == ()
+    ranks = await _ranks(sessions, ai_farm)
+    assert all(rank == (0, 0, 0, 0, 0, 0) for rank in ranks.values())
+
+
+@requires_live
+async def test_live_6_varias_categorias_en_una_observacion(sessions, ai_farm, live_provider):
+    provider, cfg = live_provider
+    obs = await _observation(
+        sessions,
+        ai_farm,
+        "Prefiero Laboratorio Chile, no quiero pagar más de $2.100 y que esté disponible.",
+    )
+    outcome = await _run(sessions, ai_farm, obs, provider, settings=cfg)
+
+    assert outcome.status == "suggested"
+    prefs = await _prefs(sessions, ai_farm)
+    kinds = {p.subject_kind for p in prefs.applicable}
+    assert {"laboratory", "price", "availability"} <= kinds
+    price = next(p for p in prefs.applicable if p.subject_kind == "price")
+    assert price.price_reference_kind == "maximum"
+    assert price.price_reference_amount == Decimal("2100.0000")

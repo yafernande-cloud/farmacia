@@ -137,6 +137,15 @@ def test_version_del_prompt_configurable_coincide_con_el_codigo():
     assert Settings(_env_file=None).openai_prompt_version == PROMPT_VERSION
 
 
+def test_configuracion_de_razonamiento_y_limite_de_tokens_para_el_modelo():
+    settings = Settings(_env_file=None)
+    assert settings.openai_reasoning_effort == "low"
+    assert settings.openai_max_output_tokens == 2500
+    # Vaciar la variable desactiva el razonamiento sin inventar un valor.
+    vacio = Settings(_env_file=None, openai_reasoning_effort="")
+    assert vacio.openai_reasoning_effort is None
+
+
 def test_prompt_declara_el_texto_como_dato_y_solo_los_sujetos_del_articulo():
     context = _context()
     system, user = build_prompt(context, "Prefiero Laboratorio Chile")
@@ -269,7 +278,7 @@ def test_total_de_linea_exige_cantidad_y_unidad_verificadas():
     assert pref.price_reference_quantity_unit == "box"
 
 
-def test_no_se_inventa_un_laboratorio_que_no_esta_en_las_ofertas():
+def test_no_se_inventa_un_laboratorio_que_no_esta_verificado():
     with pytest.raises(ProposalRejected) as exc:
         validate_proposal(
             _proposal([_op(label="Laboratorio Inventado")]),
@@ -277,6 +286,54 @@ def test_no_se_inventa_un_laboratorio_que_no_esta_en_las_ofertas():
             "Prefiero Laboratorio Inventado",
         )
     assert exc.value.code == "validation_error"
+
+
+def test_laboratorio_conocido_del_catalogo_sin_oferta_se_acepta():
+    # El sujeto existe en el catálogo de la organización, pero no en las ofertas actuales.
+    context = _context(known_laboratories=("Laboratorio Ficticio Zenit",))
+    result = validate_proposal(
+        _proposal([_op(label="Laboratorio Ficticio Zenit")]),
+        context,
+        "Prefiero Laboratorio Ficticio Zenit",
+    )
+    pref = result.preferences[0]
+    assert pref.subject_kind == "laboratory"
+    assert pref.subject_key == "laboratorio ficticio zenit"
+    assert pref.subject_label == "Laboratorio Ficticio Zenit"
+
+
+def test_marca_conocida_del_catalogo_sin_oferta_se_acepta():
+    context = _context(known_brands=("Marca Ficticia Omega",))
+    result = validate_proposal(
+        _proposal([_op("brand", "Marca Ficticia Omega")]),
+        context,
+        "Prefiero Marca Ficticia Omega",
+    )
+    assert result.preferences[0].subject_key == "marca ficticia omega"
+
+
+def test_proveedor_activo_sin_oferta_se_acepta():
+    # El proveedor ya no se limita a los que tienen ofertas del artículo.
+    context = _context(
+        suppliers=(ContextSupplier(id=uuid.uuid4(), name="Proveedor Ficticio Nuevo"),)
+    )
+    result = validate_proposal(
+        _proposal([_op("supplier", "Proveedor Ficticio Nuevo")]),
+        context,
+        "Prefiero Proveedor Ficticio Nuevo",
+    )
+    assert result.preferences[0].subject_supplier_id == context.suppliers[0].id
+
+
+def test_el_valor_del_catalogo_se_prioriza_sobre_el_del_modelo():
+    context = _context(known_laboratories=("Laboratorio Ficticio Zenit",))
+    result = validate_proposal(
+        _proposal([_op(label="laboratorio ficticio zenit")]),
+        context,
+        "Prefiero laboratorio ficticio zenit",
+    )
+    # Se persiste el valor verificado, no la transcripción del modelo.
+    assert result.preferences[0].subject_label == "Laboratorio Ficticio Zenit"
 
 
 def test_no_se_inventa_un_precio_que_el_texto_no_trae():
@@ -447,6 +504,9 @@ async def test_adaptador_envia_salida_estructurada_y_lee_la_respuesta():
     assert captured["body"]["text"]["format"]["type"] == "json_schema"
     assert captured["body"]["text"]["format"]["strict"] is True
     assert captured["body"]["input"][0]["role"] == "system"
+    # Razonamiento acotado y holgura para que el JSON no se trunque.
+    assert captured["body"]["reasoning"] == {"effort": "low"}
+    assert captured["body"]["max_output_tokens"] == 2500
     assert result == RawCompletion(
         text='{"operations": [], "retire_subject_kinds": [], "ambiguity": null}',
         model="modelo-de-prueba",
@@ -455,6 +515,64 @@ async def test_adaptador_envia_salida_estructurada_y_lee_la_respuesta():
         latency_ms=result.latency_ms,
     )
     assert result.latency_ms >= 0
+
+
+async def test_adaptador_omite_razonamiento_cuando_no_esta_configurado():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_completion_body())
+
+    async with _model(handler, reasoning_effort=None) as model:
+        await model.complete(system="s", user="u", json_schema={})
+
+    assert "reasoning" not in captured["body"]
+
+
+async def test_adaptador_respuesta_truncada_por_tokens_no_se_parsea_ni_se_reintenta():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        body = _completion_body('{"operations": [{"subject_kind": "labor')
+        body["status"] = "incomplete"
+        body["incomplete_details"] = {"reason": "max_output_tokens"}
+        return httpx.Response(200, json=body)
+
+    async with _model(handler) as model:
+        with pytest.raises(ModelError) as exc:
+            await model.complete(system="s", user="u", json_schema={})
+
+    assert exc.value.code == "output_truncated"
+    assert len(calls) == 1
+
+
+async def test_adaptador_respuesta_incompleta_por_otro_motivo_es_invalida():
+    def handler(request):
+        body = _completion_body()
+        body["status"] = "incomplete"
+        body["incomplete_details"] = {"reason": "content_filter"}
+        return httpx.Response(200, json=body)
+
+    async with _model(handler) as model:
+        with pytest.raises(ModelError) as exc:
+            await model.complete(system="s", user="u", json_schema={})
+
+    assert exc.value.code == "invalid_response"
+
+
+async def test_adaptador_respuesta_fallida_es_un_proveedor_no_disponible():
+    def handler(request):
+        return httpx.Response(
+            200, json={"status": "failed", "error": {"code": "server_error"}, "output": []}
+        )
+
+    async with _model(handler) as model:
+        with pytest.raises(ModelError) as exc:
+            await model.complete(system="s", user="u", json_schema={})
+
+    assert exc.value.code == "unavailable"
 
 
 async def test_adaptador_reintenta_una_vez_un_500():

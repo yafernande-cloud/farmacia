@@ -147,6 +147,11 @@ def _class_of(pref: CommercialPreference) -> str:
     return pref.subject_kind
 
 
+def preference_class(pref: CommercialPreference) -> str:
+    """Clase de precedencia de una preferencia (`laboratory`, `price:maximum`, …)."""
+    return _class_of(pref)
+
+
 def _winner_rows(
     rows: Sequence[CommercialPreference],
     interpretations: dict[uuid.UUID, ObservationInterpretation],
@@ -264,6 +269,35 @@ async def load_item_preferences(
             retired_subject_kinds=tuple(retired),
         )
     return out
+
+
+async def load_preference_history(
+    session: AsyncSession,
+    organization_id: uuid.UUID,
+    item_id: uuid.UUID,
+) -> tuple[CommercialPreference, ...]:
+    """Todas las preferencias guardadas del artículo, más recientes primero.
+
+    Incluye las reemplazadas: el historial no se borra. Qué fila está vigente lo decide
+    `load_item_preferences`; esta lectura solo informa.
+    """
+    return tuple(
+        (
+            await session.execute(
+                select(CommercialPreference)
+                .where(
+                    CommercialPreference.organization_id == organization_id,
+                    CommercialPreference.trade_item_id == item_id,
+                )
+                .order_by(
+                    CommercialPreference.created_at.desc(),
+                    CommercialPreference.id.desc(),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
 
 
 # --------------------------------------------------------------------------- orden

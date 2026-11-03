@@ -82,9 +82,14 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     # Base de la API (permite un proxy propio). La clave nunca sale del backend.
     openai_base_url: str = "https://api.openai.com/v1"
-    openai_max_output_tokens: int = Field(default=800, ge=64, le=4000)
+    # El límite incluye los tokens de razonamiento. La extracción es breve, pero un modelo con
+    # razonamiento necesita holgura para no truncar el JSON (ver `openai_reasoning_effort`).
+    openai_max_output_tokens: int = Field(default=2500, ge=64, le=8000)
     openai_timeout_seconds: int = Field(default=20, ge=1, le=120)
-    openai_prompt_version: str = "a6-observations-v1"
+    # Esfuerzo de razonamiento de los modelos GPT-5.x. `low` basta para extraer una propuesta
+    # breve y acotada; `none` lo desactiva. Se envía solo cuando tiene valor.
+    openai_reasoning_effort: Literal["none", "low", "medium", "high", "xhigh"] | None = "low"
+    openai_prompt_version: str = "a6-observations-v2"
     # Protección básica contra llamadas excesivas; no sustituye un presupuesto (D-142 §8.5).
     openai_max_calls_per_minute: int = Field(default=30, ge=1, le=600)
     # Tolerancia implícita cuando la persona dice «aunque sea un poco más caro», sin porcentaje
@@ -112,6 +117,12 @@ class Settings(BaseSettings):
                 + " (válidas: cruz_verde, salcobrand, ahumada)"
             )
         return v
+
+    @field_validator("openai_reasoning_effort", mode="before")
+    @classmethod
+    def _esfuerzo_vacio_es_nulo(cls, v):
+        """Permite desactivar el campo con una variable vacía, sin inventar un valor."""
+        return None if isinstance(v, str) and not v.strip() else v
 
     @field_validator("openai_model", "openai_prompt_version", "openai_base_url")
     @classmethod

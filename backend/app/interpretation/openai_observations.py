@@ -6,7 +6,9 @@ cambia la validación, la persistencia ni el motor de orden. El adaptador:
 * usa la **Responses API** con salida estructurada estricta (`json_schema`, `strict=true`);
 * no guarda la conversación en el proveedor (`store=false`) y nunca registra la clave;
 * traduce cada fallo a un código **interno** (`timeout`, `rate_limit`, `quota_exceeded`,
-  `unavailable`, `invalid_response`) sin exponer cuerpos del proveedor;
+  `unavailable`, `invalid_response`, `output_truncated`) sin exponer cuerpos del proveedor;
+* una respuesta `incomplete` por `max_output_tokens` **no se parsea ni se reintenta**: el mismo
+  límite volvería a truncarla y una preferencia nunca se aplica desde una salida parcial;
 * reintenta **una sola vez** los fallos transitorios; cuota, credenciales y errores de solicitud
   no se reintentan;
 * limita las llamadas por minuto en el proceso. No hay colas ni workers (contrato §8.5).
@@ -62,12 +64,14 @@ class OpenAIResponsesModel:
         model: str,
         base_url: str = "https://api.openai.com/v1",
         timeout_seconds: float = 20.0,
-        max_output_tokens: int = 800,
+        max_output_tokens: int = 2500,
+        reasoning_effort: str | None = "low",
         max_calls_per_minute: int = 30,
         transport: httpx.AsyncBaseTransport | None = None,
     ):
         self.model = model
         self.max_output_tokens = max_output_tokens
+        self.reasoning_effort = reasoning_effort
         self._max_calls = max_calls_per_minute
         self._calls: deque[float] = deque()
         self._client = httpx.AsyncClient(
@@ -89,6 +93,7 @@ class OpenAIResponsesModel:
             base_url=settings.openai_base_url,
             timeout_seconds=settings.openai_timeout_seconds,
             max_output_tokens=settings.openai_max_output_tokens,
+            reasoning_effort=settings.openai_reasoning_effort,
             max_calls_per_minute=settings.openai_max_calls_per_minute,
             transport=transport,
         )
@@ -143,6 +148,8 @@ class OpenAIResponsesModel:
             # La observación es del cliente: no se deja almacenada en el proveedor.
             "store": False,
         }
+        if self.reasoning_effort is not None:
+            payload["reasoning"] = {"effort": self.reasoning_effort}
         started = time.monotonic()
         try:
             response = await self._client.post("/responses", json=payload)
@@ -158,6 +165,20 @@ class OpenAIResponsesModel:
         except ValueError as exc:
             raise ModelError("invalid_response") from exc
         if not isinstance(data, dict):
+            raise ModelError("invalid_response")
+
+        status = data.get("status")
+        if status == "incomplete":
+            details = data.get("incomplete_details")
+            reason = details.get("reason") if isinstance(details, dict) else None
+            # Truncada por el límite: no se reintenta (el mismo límite la volvería a cortar) y
+            # nunca se parsea el fragmento. El servicio la registra como intento fallido.
+            if reason == "max_output_tokens":
+                raise ModelError("output_truncated")
+            raise ModelError("invalid_response")
+        if status == "failed":
+            raise ModelError("unavailable")
+        if status not in (None, "completed"):
             raise ModelError("invalid_response")
 
         texts: list[str] = []

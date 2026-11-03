@@ -3,9 +3,10 @@
 Todas las operaciones son de `admin` + `StrongActor` (D-130). La organización sale del `Actor` y
 nunca del cuerpo. El precio no se guarda en la línea: se lee del `offer_snapshot` elegido (§3).
 
-Esta fase **no** registra compras (C5-B), no implementa compras parciales y no interpreta
-observaciones con IA (O2–O4): `advice` es `null` e `interpretation_status` es
-`sin_interpretacion`, sin simular un proveedor.
+Esta fase **no** registra compras (C5-B) ni implementa compras parciales. Las observaciones E13 se
+crean y listan aquí; su interpretación (A6 Fase 3B) vive en `observations.py` y esta API solo
+devuelve el estado persistido, sin llamar al proveedor. `advice` sigue siendo `null`: la IA no
+aconseja ni explica.
 """
 
 import uuid
@@ -19,7 +20,7 @@ from app.api.deps import Session, StrongActor
 from app.api.v1.demand import ERRORS
 from app.core.errors import DomainError
 from app.db.session import transaction
-from app.services import events
+from app.services import events, observation_ai
 from app.services import quotes as quote_svc
 
 router = APIRouter(tags=["cotizador"])
@@ -253,12 +254,15 @@ class ObservationOut(BaseModel):
     created_at: datetime
     context: dict[str, Any]
     data_origin: str
+    # `sin_interpretacion` o un estado real (`suggested`, `needs_review`, `failed`, …).
+    interpretation: dict[str, Any] | None = None
     interpretations: list[dict[str, Any]] = []
-    interpretation_status: Literal["sin_interpretacion"] = "sin_interpretacion"
+    interpretation_status: str = "sin_interpretacion"
 
 
 class ObservationListOut(BaseModel):
     observations: list[ObservationOut]
+    next_cursor: str | None = None
 
 
 # --------------------------------------------------------------------------- E10: cotizaciones
@@ -615,10 +619,13 @@ async def reinstate_cart(
     status_code=201,
     response_model=ObservationOut,
     responses=ERRORS,
-    summary="Registrar una observación comercial sobre un artículo (O1)",
+    summary="Registrar una observación comercial sobre un artículo (O1/O2)",
 )
 async def create_commercial_observation(
-    body: ObservationIn, session: Session, actor: StrongActor
+    body: ObservationIn,
+    session: Session,
+    actor: StrongActor,
+    idempotency_key: IdemKey = None,
 ):
     async with transaction(session):
         row = await quote_svc.create_observation(
@@ -629,8 +636,21 @@ async def create_commercial_observation(
             supplier_id=body.supplier_id,
             offer_snapshot_id=body.offer_snapshot_id,
             quote_id=body.quote_id,
+            idempotency_key=idempotency_key,
         )
-        return quote_svc.observation_payload(row)
+        # Un reintento idempotente devuelve la observación con el estado ya interpretado, no
+        # `sin_interpretacion`, sin volver a llamar al proveedor.
+        attempts = (
+            await observation_ai.load_interpretations(
+                session, actor.organization_id, [row.id]
+            )
+        ).get(row.id, ())
+        prefs = await observation_ai.load_preferences(
+            session, actor.organization_id, [attempt.id for attempt in attempts]
+        )
+        return quote_svc.observation_payload(
+            row, latest=attempts[0] if attempts else None, prefs=prefs
+        )
 
 
 @router.post(
@@ -671,15 +691,32 @@ async def list_line_observations(
     "/commercial-observations",
     response_model=ObservationListOut,
     responses=ERRORS,
-    summary="Historial de observaciones del artículo exacto (O1)",
+    summary="Historial de observaciones del artículo exacto (O1/O2)",
 )
 async def list_commercial_observations(
     session: Session,
     actor: StrongActor,
     trade_item_id: uuid.UUID,
+    cursor: Annotated[str | None, Query(description="Cursor de la página anterior")] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ):
-    rows = await quote_svc.list_observations_for_item(
-        session, actor, trade_item_id=trade_item_id, limit=limit
+    rows, next_cursor = await quote_svc.list_observations_page(
+        session, actor, trade_item_id=trade_item_id, limit=limit, cursor=cursor
     )
-    return {"observations": [quote_svc.observation_payload(r) for r in rows]}
+    interpretations = await observation_ai.load_interpretations(
+        session, actor.organization_id, [row.id for row in rows]
+    )
+    prefs = await observation_ai.load_preferences(
+        session,
+        actor.organization_id,
+        [attempt.id for group in interpretations.values() for attempt in group],
+    )
+    return {
+        "observations": [
+            quote_svc.observation_payload(
+                row, latest=(interpretations.get(row.id) or (None,))[0], prefs=prefs
+            )
+            for row in rows
+        ],
+        "next_cursor": next_cursor,
+    }

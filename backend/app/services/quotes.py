@@ -19,6 +19,7 @@ por línea: el precio no se reapunta solo aunque exista una observación más nu
 se hace sin persistir la corrida: leer una cotización no llena las tablas de comparaciones.
 """
 
+import hashlib
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -34,6 +35,7 @@ from app.models import (
     AuditEvent,
     CommercialObservation,
     DemandItem,
+    ObservationInterpretation,
     OfferSnapshot,
     Quote,
     QuoteCart,
@@ -47,6 +49,7 @@ from app.services import coverage as coverage_svc
 from app.services import demand as demand_svc
 from app.services import events
 from app.services.actors import Actor
+from app.services.observation_views import observation_view
 from app.services.provenance import org_kind, origin_for
 from app.services.search import _latest_offers
 
@@ -1582,8 +1585,14 @@ async def cart_view(
     return payload
 
 
-def observation_payload(row: CommercialObservation) -> dict:
-    return _observation_payload(row)
+def observation_payload(
+    row: CommercialObservation,
+    *,
+    latest: ObservationInterpretation | None = None,
+    prefs: dict | None = None,
+    history: tuple[ObservationInterpretation, ...] = (),
+) -> dict:
+    return _observation_payload(row, latest=latest, prefs=prefs, history=history)
 
 
 # --------------------------------------------------------------------------- evaluación por carrito
@@ -1966,23 +1975,14 @@ async def quote_summary(session: AsyncSession, actor: Actor, quote_id: uuid.UUID
 # --------------------------------------------------------------------------- E13 / O1: observaciones
 
 
-def _observation_payload(row: CommercialObservation) -> dict:
-    return {
-        "observation_id": row.id,
-        "text": row.text_original,
-        "trade_item_id": row.trade_item_id,
-        "supplier_id": row.supplier_id,
-        "offer_snapshot_id": row.offer_snapshot_id,
-        "quote_id": row.quote_id,
-        "quote_line_id": row.quote_line_id,
-        "author_id": row.author_id,
-        "created_at": row.created_at,
-        "context": row.context or {},
-        "data_origin": row.data_origin,
-        # O2–O4 no están implementados: no se finge una interpretación.
-        "interpretations": [],
-        "interpretation_status": "sin_interpretacion",
-    }
+def _observation_payload(
+    row: CommercialObservation,
+    *,
+    latest: ObservationInterpretation | None = None,
+    prefs: dict | None = None,
+    history: tuple[ObservationInterpretation, ...] = (),
+) -> dict:
+    return observation_view(row, latest, prefs or {}, history=history)
 
 
 async def _observation_context(
@@ -2022,6 +2022,23 @@ async def _observation_context(
     return context
 
 
+async def _prior_observation(
+    session: AsyncSession, org: uuid.UUID, key: str
+) -> AuditEvent | None:
+    return (
+        await session.execute(
+            select(AuditEvent)
+            .where(
+                AuditEvent.organization_id == org,
+                AuditEvent.action == "observation.create",
+                AuditEvent.after["idempotency_key"].astext == key,
+            )
+            .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
 async def create_observation(
     session: AsyncSession,
     actor: Actor,
@@ -2032,8 +2049,14 @@ async def create_observation(
     offer_snapshot_id: uuid.UUID | None = None,
     quote_id: uuid.UUID | None = None,
     line: QuoteLine | None = None,
+    idempotency_key: str | None = None,
 ) -> CommercialObservation:
-    """Guarda la observación siempre, sin categorías ni pasos extra (D-132)."""
+    """Guarda la observación siempre, sin categorías ni pasos extra (D-132).
+
+    `Idempotency-Key` es opcional. Si se repite con el mismo texto y artículo devuelve la
+    observación original; con otro contenido responde `409 IDEMPOTENCY_KEY_REUSED`. No hay
+    columna nueva: la clave vive en el evento de auditoría de la creación.
+    """
     require_admin(actor.roles)
     org = actor.organization_id
     if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT:
@@ -2042,6 +2065,29 @@ async def create_observation(
             f"La observación debe tener entre 1 y {MAX_TEXT} caracteres.",
             status_code=422,
         )
+    request_hash = hashlib.sha256(
+        f"{trade_item_id}|{supplier_id}|{offer_snapshot_id}|{quote_id}|{text}".encode()
+    ).hexdigest()
+    if idempotency_key:
+        await events.advisory_lock(session, f"idem:obs:{org}:{idempotency_key}")
+        prior = await _prior_observation(session, org, idempotency_key)
+        if prior is not None:
+            if prior.after.get("request_hash") != request_hash:
+                raise DomainError(
+                    "IDEMPOTENCY_KEY_REUSED",
+                    "Esa clave de idempotencia ya se usó con otro contenido.",
+                    status_code=409,
+                )
+            row = (
+                await session.execute(
+                    select(CommercialObservation).where(
+                        CommercialObservation.id == prior.entity_id,
+                        CommercialObservation.organization_id == org,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is not None:
+                return row
     item = (
         await session.execute(
             select(TradeItem).where(
@@ -2133,6 +2179,12 @@ async def create_observation(
     )
     session.add(row)
     await session.flush()
+    audit_after = {
+        "trade_item_id": str(item.id),
+        "quote_id": str(quote_id) if quote_id else None,
+    }
+    if idempotency_key:
+        audit_after.update({"idempotency_key": idempotency_key, "request_hash": request_hash})
     _emit(
         session,
         org_id=org,
@@ -2148,7 +2200,7 @@ async def create_observation(
             "quote_id": str(quote_id) if quote_id else None,
             "quote_line_id": str(line.id) if line else None,
         },
-        after={"trade_item_id": str(item.id), "quote_id": str(quote_id) if quote_id else None},
+        after=audit_after,
     )
     return row
 
@@ -2194,34 +2246,87 @@ async def list_line_observations(
     )
 
 
-async def list_observations_for_item(
-    session: AsyncSession, actor: Actor, *, trade_item_id: uuid.UUID, limit: int = 50
-) -> list[CommercialObservation]:
+
+
+async def get_trade_item(
+    session: AsyncSession, actor: Actor, trade_item_id: uuid.UUID
+) -> TradeItem:
+    """Artículo de la organización del actor; 404 si no existe o es de otra organización."""
     require_admin(actor.roles)
-    org = actor.organization_id
     item = (
         await session.execute(
-            select(TradeItem.id).where(
-                TradeItem.id == trade_item_id, TradeItem.organization_id == org
+            select(TradeItem).where(
+                TradeItem.id == trade_item_id,
+                TradeItem.organization_id == actor.organization_id,
             )
         )
     ).scalar_one_or_none()
     if item is None:
         raise not_found("El artículo")
-    return list(
+    return item
+
+
+async def get_observation(
+    session: AsyncSession, actor: Actor, observation_id: uuid.UUID
+) -> CommercialObservation:
+    """Observación de la organización del actor. Un id ajeno responde 404, nunca lo filtra.
+
+    El `join` con el artículo repite la comprobación de organización: ni una observación ni su
+    artículo pueden pertenecer a otra farmacia.
+    """
+    require_admin(actor.roles)
+    row = (
+        await session.execute(
+            select(CommercialObservation)
+            .join(TradeItem, TradeItem.id == CommercialObservation.trade_item_id)
+            .where(
+                CommercialObservation.id == observation_id,
+                CommercialObservation.organization_id == actor.organization_id,
+                TradeItem.organization_id == actor.organization_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise not_found("La observación")
+    return row
+
+
+async def list_observations_page(
+    session: AsyncSession,
+    actor: Actor,
+    *,
+    trade_item_id: uuid.UUID,
+    limit: int = 50,
+    cursor: str | None = None,
+) -> tuple[list[CommercialObservation], str | None]:
+    """Historial del artículo, más recientes primero, con cursor (mismo patrón que E10)."""
+    await get_trade_item(session, actor, trade_item_id)
+    stmt = select(CommercialObservation).where(
+        CommercialObservation.organization_id == actor.organization_id,
+        CommercialObservation.trade_item_id == trade_item_id,
+    )
+    if cursor:
+        ts, observation_id = _decode_cursor(cursor)
+        stmt = stmt.where(
+            (CommercialObservation.created_at < ts)
+            | and_(
+                CommercialObservation.created_at == ts,
+                CommercialObservation.id < observation_id,
+            )
+        )
+    rows = list(
         (
             await session.execute(
-                select(CommercialObservation)
-                .where(
-                    CommercialObservation.organization_id == org,
-                    CommercialObservation.trade_item_id == trade_item_id,
-                )
-                .order_by(
+                stmt.order_by(
                     CommercialObservation.created_at.desc(), CommercialObservation.id.desc()
-                )
-                .limit(limit)
+                ).limit(limit + 1)
             )
         )
         .scalars()
         .all()
     )
+    nxt = None
+    if len(rows) > limit:
+        rows = rows[:limit]
+        nxt = _encode_cursor(rows[-1].created_at, rows[-1].id)
+    return rows, nxt
