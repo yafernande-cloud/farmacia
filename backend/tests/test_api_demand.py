@@ -46,24 +46,27 @@ async def lst(api, who="pao"):
     return (await api.get("/api/v1/demand-items", headers=H(api, who))).json()
 
 
-async def test_dos_auxiliares_una_necesidad_dos_observaciones(api):
+async def test_dos_auxiliares_conservan_reportes_independientes(api):
     r1 = await report(api, "ana", "falta ibuprofeno de 400 mg")
     r2 = await report(api, "luis", "no queda ibuprofeno 400 mg")
     assert (r1.status_code, r2.status_code) == (201, 201)
-    assert r1.json()["outcome"] == "created_item" and r2.json()["outcome"] == "attached_existing"
-    assert r2.json()["quantity_changed"] is False
+    # Modelo A: cada persona tiene su propio reporte; nunca se adjunta al de otra persona.
+    assert r1.json()["outcome"] == "created_item" and r2.json()["outcome"] == "created_item"
+    assert r1.json()["quantity_changed"] is False and r2.json()["quantity_changed"] is False
     data = await lst(api)
-    assert len(data["items"]) == 1
-    item = data["items"][0]
-    assert item["observation_count"] == 2 and item["reporters"] == ["Ana", "Luis"]
-    assert item["target_quantity"] is None and item["quantity_status"] == "unknown"
-    assert item["needs_quantity"] is True
-    assert {p["attribute"] for p in item["pending_validation"]} == {
-        "form",
-        "content",
-    }  # falta, no es ambiguo
-    detail = (await api.get(f"/api/v1/demand-items/{item['id']}", headers=H(api, "pao"))).json()
-    assert [o["author"] for o in detail["observations"]] == ["Ana", "Luis"]
+    assert len(data["items"]) == 2
+    by_author = {i["reported_by_name"]: i for i in data["items"]}
+    assert set(by_author) == {"Ana", "Luis"}
+    for item in data["items"]:
+        assert item["observation_count"] == 1 and item["target_quantity"] is None
+        assert item["quantity_status"] == "unknown" and item["needs_quantity"] is True
+        assert {p["attribute"] for p in item["pending_validation"]} == {"form", "content"}
+    detail = (
+        await api.get(
+            f"/api/v1/demand-items/{by_author['Ana']['id']}", headers=H(api, "pao")
+        )
+    ).json()
+    assert [o["author"] for o in detail["observations"]] == ["Ana"]
 
 
 async def test_flujo_cantidades_por_http(api):
@@ -71,14 +74,17 @@ async def test_flujo_cantidades_por_http(api):
     r = await command(api, item["id"], 1, "SET", "5", "box")
     assert r.status_code == 200 and r.headers["etag"] == '"2"'
     assert r.json()["item"]["target_quantity"] == "5"
-    await report(api, "luis", "falta ibuprofeno 400")  # aviso repetido
-    assert (await lst(api))["items"][0]["target_quantity"] == "5"
+    r = await report(api, "luis", "falta ibuprofeno 400")  # reporte de otra persona
+    assert r.json()["item"]["id"] != item["id"] and r.json()["item"]["target_quantity"] is None
+    mine = next(i for i in (await lst(api))["items"] if i["id"] == item["id"])
+    assert mine["target_quantity"] == "5"  # el aviso de Luis no tocó la cantidad de Ana
 
     add = await command(api, item["id"], 2, "ADD", "5", "box", key="add-key-1")
     again = await command(api, item["id"], 2, "ADD", "5", "box", key="add-key-1")
     assert add.json()["item"]["target_quantity"] == "10"
     assert again.json()["replayed"] is True and again.json()["item"]["target_quantity"] == "10"
-    assert (await lst(api))["items"][0]["target_quantity"] == "10"  # sumó una vez
+    mine = next(i for i in (await lst(api))["items"] if i["id"] == item["id"])
+    assert mine["target_quantity"] == "10"  # sumó una vez
 
 
 async def test_400_y_600_separados_por_http(api):
@@ -99,7 +105,8 @@ async def test_reenvio_idempotente_devuelve_200_y_no_duplica(api):
 
 async def test_revision_y_resolucion_por_http(api):
     base = (await report(api, "ana", "falta ibuprofeno 400 mg")).json()["item"]
-    rev = (await report(api, "luis", "falta ibuprofeno 400 mg comprimidos x 20")).json()
+    # Misma persona: solo sus propios reportes pueden quedar en revisión y asociarse (D-135).
+    rev = (await report(api, "ana", "falta ibuprofeno 400 mg comprimidos x 20")).json()
     assert rev["outcome"] == "needs_review" and rev["item"] is None
     assert (await lst(api))["pending_review_count"] == 1
     pend = (await api.get("/api/v1/observations", headers=H(api, "pao"))).json()
@@ -224,7 +231,7 @@ async def test_sin_unidad_se_registra_sin_preguntar_y_sin_suponer(api):
 
 async def test_flujo_completo_confirmar_recordar_y_no_volver_a_preguntar(api):
     base = (await report(api, "ana", "falta ibuprofeno de 400")).json()["item"]
-    dudoso = (await report(api, "luis", "no queda ibuprofeno 400 mg")).json()
+    dudoso = (await report(api, "ana", "no queda ibuprofeno 400 mg")).json()
     assert dudoso["outcome"] == "needs_review"
     assert "unit_unconfirmed" in dudoso["observation"]["candidates"][0]["reasons"]
     assert "?" not in dudoso["message"]

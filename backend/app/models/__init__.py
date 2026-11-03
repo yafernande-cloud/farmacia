@@ -44,7 +44,13 @@ from app.models.demand import (
     QuantityEvent,
 )
 from app.models.events import AuditEvent, OutboxEvent
-from app.models.quote import CommercialObservation, Quote, QuoteCart, QuoteLine
+from app.models.quote import (
+    CommercialObservation,
+    Quote,
+    QuoteCart,
+    QuoteLine,
+    QuoteLineAllocation,
+)
 from app.models.search import SearchResult, SearchRun, SearchSourceResult
 
 __all__ = [
@@ -52,7 +58,7 @@ __all__ = [
     "ChannelBinding", "ChannelMessage", "CommercialCriterion", "CommercialObservation",
     "CommercialReference", "ComparisonCandidate", "ComparisonLine", "ComparisonRun",
     "ComparisonSupplierTotal", "DemandItem", "DemandObservation", "Quote", "QuoteCart",
-    "QuoteLine",
+    "QuoteLine", "QuoteLineAllocation",
     "ImportProfile", "ImportRequest", "ImportRun", "InboundEvent", "OfferSnapshot", "Organization", "OutboundMessage", "OutboxEvent",
     "PharmaIdentity", "ProductAlias", "PurchaseCycle", "QuantityEvent", "ReferencePrice",
     "SearchResult", "SearchRun", "SearchSourceResult",

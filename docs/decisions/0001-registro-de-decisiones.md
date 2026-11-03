@@ -890,7 +890,7 @@ en E10/E11/E12; purga diseñada y **deshabilitada** hasta que exista almacenamie
 | D-118 | Tomada (2026-10-30) | **Control individual de Telegram, no un interruptor global.** Pao habilita o deshabilita **por cuenta** quién puede enviar faltantes por Telegram. Se reutiliza `telegram_account.status active\|blocked`, `blocked_at/by/reason`, los endpoints `block`/`reactivate`/`history` y `GET /telegram-accounts` (con `MANAGE_ACCOUNTS` + `StrongActor`). Bloquear revoca sesiones (`end_reason='revoked'`), desactiva vínculos y **conserva todo el historial**; rehabilitar reutiliza la misma fila y recrea el vínculo privado sin nueva solicitud ni código. El backend valida el acceso en **cada** mensaje. **No hay tabla ni migración nuevas.** Límite: es por cuenta, no por chat; una cuenta `shared_device` se deshabilita para todas las personas del teléfono. Telegram y web son permisos independientes; `app_user.active=false` es una suspensión más fuerte que corta ambos. |
 | D-119 | Tomada (2026-10-30) | **Superadministradora global.** `app_user.is_superadmin` booleano, **no** un rol; `roles` conserva su CHECK cerrado. **Exactamente una activa**; no puede ser desactivada, bloqueada ni degradada por una administradora de farmacia, solo por ella misma o por el CLI `set-superadmin` (uso único, auditado). **Excepción nombrada a D-037:** cruza organizaciones **solo** para metadatos administrativos (organizaciones, administradoras, roles, solicitudes de acceso); los datos operativos siguen acotados a la organización. Ampliar el cruce a datos operativos exige decisión nueva. |
 | D-120 | Tomada (2026-10-30) | **Faltantes de Telegram en el Cotizador, con cobertura reversible.** Grilla «Productos faltantes (Telegram)» en la pantalla principal (orden: búsqueda, precios públicos, faltantes, ofertas, Mis cotizaciones). Reutiliza `GET /demand-items` con campos aditivos `last_raw_text`, `coverage_quantity`, `pending_quantity`, `is_pending` y filtro `pending_only=true`; **sin tabla ni endpoint nuevos**. «Buscar» usa la búsqueda principal y **no cambia** el estado del faltante. «Agregar a cotización» desde una fila **vincula la oferta al faltante sin confirmación adicional**, aunque sea otra marca o presentación; la clasificación y advertencias quedan visibles y **no se afirma equivalencia**. Vínculo solo si la petición lleva `demand_item_id`; una búsqueda libre no vincula nada. Cobertura **derivada, nunca almacenada**, de líneas activas de carritos activos de cotizaciones `draft`, **ampliada por D-121 a las compras `current` no anuladas, sin doble conteo**; quitar líneas, descartar carritos, anular o corregir compras recalcula y puede devolver el faltante a pendiente; varios proveedores suman; la cantidad desconocida no se inventa; el historial original de Telegram nunca se borra. `quote_line` gana `coverage_relation` (clasificación congelada). **P-8 resuelto por D-121.** |
-| D-121 | Tomada (2026-10-30) | **Cobertura de faltantes con compras vigentes, sin doble conteo (resuelve P-8).** La cobertura suma (a) líneas activas de carritos activos de cotizaciones `draft` sin compra vigente y (b) compras `current` no anuladas. Una línea con compra vigente cuenta **solo** lo comprado; compra y cotización nunca se suman dos veces. Cerrar la cotización no quita cobertura. Anular o corregir una compra recalcula. Las recepciones **no** se suman aparte (los campos de recepción se retiran con D-126). **D-127 precisa el alcance:** la cotización cubre de forma **provisional** y **nunca** cierra; solo la compra confirmada cierra. Sin tabla, columna ni migración nuevas: todo es derivado. |
+| D-121 | Tomada (2026-10-30) | **Cobertura de faltantes con compras vigentes, sin doble conteo (resuelve P-8).** La cobertura suma (a) líneas activas de carritos activos de cotizaciones `draft` —**D-139 amplía a `closed`**— sin compra vigente y (b) compras `current` no anuladas. Una línea con compra vigente cuenta **solo** lo comprado; compra y cotización nunca se suman dos veces. Cerrar la cotización no quita cobertura. Anular o corregir una compra recalcula. Las recepciones **no** se suman aparte (los campos de recepción se retiran con D-126). **D-127 precisa el alcance:** la cotización cubre de forma **provisional** y **nunca** cierra; solo la compra confirmada cierra. Sin tabla, columna ni migración nuevas: todo es derivado. **D-139 ratifica «cerrar no quita cobertura» y precisa que la compra se registra desde `closed` sin reabrir.** |
 | D-122 | Tomada (2026-10-30); **retirada del MVP por D-126** | **Recepción física desde el Cotizador web, con parciales y diferencias.** Se agregan `receipt` y `receipt_line` (inmutables, de solo agregar) a la migración **0017**. Solo rol `admin` + `StrongActor`, **solo web**; Telegram nunca confirma recepciones. Se registran cantidades aceptadas y rechazadas, diferencias (`missing`, `wrong_product`, `damaged`, `other`) y responsable/fecha. Un producto equivocado **no** se confirma como recibido. Recepción parcial deja saldo pendiente y **no** declara completo. El faltante pasa a `fulfilled` solo si toda compra vigente está `complete` y la cobertura alcanza el objetivo (o la cantidad es desconocida); cerrar conserva todo el historial. Un faltante cerrado no se reabre: un nuevo aviso crea un nuevo ciclo. P-9 (anulación con recepciones), P-10 (compra que nunca llega) y P-11 (corrección de recepción) quedan **abiertos**. |
 | D-123 | Tomada (2026-10-30) | **Estado por Telegram sin duplicar necesidades.** Un aviso repetido se registra como observación del mismo faltante `active`; no crea un segundo faltante ni suma cantidad. La respuesta informa el estado: pendiente, en cotización, comprado (con cantidades y, si es parcial, el saldo por comprar) o cerrado. Si ya hay compra, el bot dice «ya hay una compra registrada» y **no** afirma que llegó; ajustado por D-126 (sin estados de recepción). Cantidad adicional solo por `ADD`/`SET`/`CLEAR` explícito. Consulta `estado <texto>` determinista, sin IA, de solo lectura, con candidatos ante ambigüedad. **D-127:** la distinción aviso repetido / necesidad nueva depende del **ciclo** (mientras el faltante esté `active`), no de un plazo ni de la recepción; con cantidad desconocida la necesidad no se cierra por un aviso. Después de `fulfilled`, un nuevo aviso crea un nuevo faltante. |
 | D-124 | Tomada (2026-10-30) | **Las personas con rol `admin` también informan faltantes por Telegram.** Se agrega `REPORT_SHORTAGE` al rol `admin` en la matriz de permisos; no se crea un rol nuevo ni se fusionan planos. Para usar Telegram, una administradora necesita su propia cuenta `telegram_account` `active` e identidad vigente, igual que un auxiliar. Los permisos web y la autorización de Telegram siguen siendo independientes: tener `admin` no habilita el bot, y tener Telegram no otorga roles web. Sin exclusión alguna que impida a `admin` reportar. |
@@ -898,6 +898,13 @@ en E10/E11/E12; purga diseñada y **deshabilitada** hasta que exista almacenamie
 | D-127 | Tomada (2026-10-30); **compras parciales fuera de la demo por enmienda del 2026-11-02** | **Regla definitiva de cierre del ciclo de reposición y compras parciales.** Una necesidad se considera gestionada cuando la cantidad solicitada queda **completamente cubierta por compras confirmadas**; `fulfilled` no significa recibido físicamente. Cubrir con **cotización** es provisional —mientras la línea siga en un carrito activo— y **nunca** cierra el ciclo. Compra parcial (10 pedidas, 6 compradas): las 6 quedan cubiertas, las 4 restantes siguen como necesidad abierta **en el mismo faltante** (`purchased`, `pending_purchase_quantity = 4`), sin crear una solicitud duplicada, y se cotizan y compran sobre ese faltante hasta cerrar. `is_pending` significa «el ciclo sigue abierto» y no se apaga por cotizar; se distinguen `pending_quantity` (falta
 **cotizar**) y el derivado `pending_purchase_quantity` (falta **comprar**), sin tabla ni endpoint nuevos. La distinción aviso repetido / ciclo nuevo depende del **ciclo** (`active` vs. `fulfilled`), no de un plazo ni de la recepción. Cantidad desconocida: no se cierra automáticamente; sale del ciclo solo por `ADD`/`SET` explícito que declare la cantidad o por anulación con motivo, nunca inventando una cantidad ni una confirmación de recepción. Sin migración ni código. |
 | D-125 | Tomada (2026-10-30) | **Tres tablas de búsqueda en C4 y numeración definitiva.** C0 nombra dos tablas (`search_run`, `search_source_result`); el diseño aprobado usa tres: se agrega `search_result` (filas de resultado por producto) como **ampliación aditiva**, sin editar C0. Las tres se crean en la migración **0013**. Se ratifica **C4 = 0013** y **C3 = 0014**; no se invierte el orden. |
+
+| D-136 | Tomada (2026-11-02); **precisada por D-138** | **Las preferencias comerciales se interpretan internamente y ordenan las ofertas; la IA no muestra explicaciones, justificaciones ni puntuaciones.** Los administradores escriben comentarios en lenguaje natural con «Enseñar a la IA»; la IA los interpreta como preferencias y el sistema las usa para ordenar las ofertas recuperadas de los proveedores: primero las que mejor cumplen, manteniendo **visibles todas** las demás. La IA no inventa precios, stock ni productos, y no modifica cantidades de compra. Sustituye en esta materia al `advice` visible de D-116, a la prohibición de reordenar del contrato §8.6 y a la «no fricción» de D-132 en lo que respecta a mostrar justificaciones; **no implementada** (O2–O4). **D-138 precisa que el alcance es el producto específico y que no hay preferencias de organización ni propagación por laboratorio, marca o proveedor.** |
+| D-137 | Tomada (2026-11-02); **implementada en código** | **Integridad de las asignaciones de cotización.** (a) Una cotización no se cierra si alguna asignación vigente apunta a un reporte cancelado, sin cantidad o con cantidad menor a lo asignado, ni si la suma asignada supera la cantidad de la línea (`409 QUOTE_HAS_INCONSISTENT_ALLOCATIONS` con `details.issues[]`). (b) La cantidad pedida no baja por debajo de lo asignado (`409 QUANTITY_BELOW_ALLOCATED`), no queda sin definir (`409 REPORT_HAS_ALLOCATIONS`) y no cambia de unidad (`422 UNIT_MISMATCH`) mientras haya asignaciones vigentes. (c) La cancelación sigue siendo lógica; las asignaciones se corrigen a mano y `PATCH demand_allocations: []` las quita todas. Nada se reasigna ni se corrige solo. Sin migración nueva. |
+| D-138 | Tomada (2026-11-02); **no implementada** | **Preferencias independientes por producto (C7).** Cada observación comercial se aplica **únicamente al producto específico** al que se refiere. Una preferencia negativa sobre el Losartán de un laboratorio **no** perjudica a ese laboratorio en otro medicamento, y una positiva **no** lo favorece en otro producto. No se propagan preferencias por laboratorio, marca o proveedor; **no se construyen perfiles globales de reputación**. Se conservan texto original, autor, fecha y contexto; varias observaciones del mismo producto usan precedencia por la más reciente para la misma clase. La IA puede ordenar las ofertas de ese producto, todas siguen visibles, sin explicaciones, justificaciones, recomendaciones textuales ni puntuaciones, y sin modificar precios, stock, cantidades ni decisiones de compra. Aplica a cualquier producto comercializado, incluidos cosmética, higiene, perfumería y veterinaria. **Sustituye toda referencia a «preferencias reutilizables de la organización» en A5/A6, O2–O4 y la propuesta de revisión 10.** |
+| D-139 | Tomada (2026-11-02); **no implementada** | **Cierre de cotización (C9).** Cerrar una cotización significa que **terminó de prepararse y puede convertirse posteriormente en una compra**; no significa comprada, descartada ni anulada. `draft` = en preparación; `closed` = preparada y disponible para compra. Cerrar **no** registra compra y conserva líneas, cantidades, proveedores y asignaciones. **No se debe reabrir para comprar.** Las asignaciones de cotizaciones `draft` **y `closed`** cuentan para cobertura provisional, sin duplicar; una cotización anulada o descartada no aporta. La cobertura comprada proviene solo de compras registradas; no se cuenta dos veces cotizado y comprado. Los reportes se cierran solo por compra registrada que cubra sus cantidades; los parcialmente cubiertos conservan pendiente. Las cotizaciones cerradas sin compra permanecen en el historial. El frontend distingue **«Cotización preparada»** de **«Compra registrada»**. **El código actual contradice esta decisión** (`coverage.py` solo cuenta `draft`; `_ensure_draft` bloquea comprar sin reabrir); la corrección pertenece a C5-B y no se hizo. |
+| D-140 | Tomada (2026-11-02); **no implementada** | **Cantidades compradas sin asignación (C11).** La compra puede **superar** lo requerido. No es obligatorio asignar toda la línea: las asignaciones son explícitas, su suma **≤ cantidad comprada**, y las unidades sin asignar quedan como **compra adicional para inventario**. No se asignan automáticamente, no crean reportes ficticios, no cierran reportes y no modifican la cantidad de ningún reporte. Se conserva la trazabilidad de compra, línea, asignación y excedente. La compra sigue siendo **todo o nada respecto de la selección**: se registra completa —incluidas las unidades de inventario— o no se registra. Afecta `purchase_line_allocation` y C5-B (`0018`), no implementados. |
+| D-141 | Tomada (2026-11-02); **no implementada** | **Auditoría interna de la IA (AC31).** La trazabilidad de la IA se conserva **internamente**: qué observaciones se interpretaron, cuáles se aplicaron y qué versiones, modelo y criterios participaron en el ordenamiento. **No** se muestran explicaciones, recomendaciones textuales ni puntuaciones en las tarjetas ni en la API pública. La traza es para revisión administrativa y auditoría. Se mantienen D-116, D-132, D-133 y AC31; se deja constancia de que el `advice` visible de D-116 y la prohibición de reordenar del contrato §8.6 quedan sustituidos por D-136/D-138, y de que AC31 se satisface por auditoría interna, no por explicación visible. El HLD no se edita. |
 
 ### D-115 — Consulta por cadena, captura y vigencia (2026-10-30)
 
@@ -1696,6 +1703,14 @@ crean su propia base y la migran a `0012`.
 
 ### D-131 — Reporte repetido de un producto que ya está en la lista activa (2026-11-02)
 
+> **Vigencia (2026-11-02).** El **punto 3** queda sustituido por **D-135**: si otra persona confirma, el aviso
+> **no** se registra dentro del faltante existente, sino como **reporte independiente** de esa persona. Los puntos 1,
+> 2, 4, 5, 6 y 7 siguen vigentes; el punto 4 se lee como «un ciclo por producto y por persona». El **estado** cambió:
+> el flujo de confirmación y la migración `0016` ya existen en código (no aplicada), así que D-131 no es solo
+> documental. Se conserva el texto original como historial y no se reescribe. **D-135 también prevalece sobre la
+> consolidación automática del HLD §7.3 y §7.4** (que no se editan): el aviso de otro autor no se adjunta ni se suma
+> al faltante existente, y la fusión de reportes no es automática; ver D-135, punto 8.
+
 **Decisión del usuario.** Cuando un auxiliar autorizado reporta por Telegram un producto que **ya está en la lista
 activa**:
 
@@ -1718,8 +1733,10 @@ aviso repetido **no suma cantidad**: la confirmación agrega un **reporte**, no 
 cierre (D-127, con su enmienda del 2026-11-02): `fulfilled` sigue sin significar recibido y no hay compras parciales en
 la demo.
 
-**Estado.** Aprobada el 2026-11-02. **Solo documental**: se implementa en **T1**, junto con el bot real. No hay código,
-modelo ni migración.
+**Estado.** Aprobada el 2026-11-02. **Actualizado el 2026-11-02:** el flujo de confirmación, el autor por reporte y
+la migración `0016` **existen en código** (D-135), aunque la migración **no está aplicada** a ninguna base y no se
+probó con el bot real. Lo que sigue pendiente de **T1** es la verificación con Telegram real y la ampliación de
+permisos de D-124. Se corrige la frase «no hay código, modelo ni migración», que ya no es cierta.
 
 ### D-132 — Observaciones comerciales abiertas para cualquier `admin`, sin pasos adicionales (2026-11-02)
 
@@ -1779,3 +1796,319 @@ aplicó.
 
 **Estado.** Implementada en código el 2026-11-02; migración `0014` **solo en `farmacia_test`** (la suite la recrea).
 No se aplicó a `farmacia` ni a `farmacia_demo` sin autorización.
+
+### D-134 — Implementación de C5-A (cotizaciones E10 y observaciones O1) e interpretaciones declaradas (2026-11-02)
+
+**Contexto.** El usuario ordenó implementar C5-A (E10: cotizaciones, carritos y líneas; O1: observaciones comerciales)
+conforme al contrato v0.2 rev7 y sin empezar C5-B. Se implementó `backend/app/services/quotes.py`,
+`backend/app/services/coverage.py`, `backend/app/api/v1/quotes.py` y los campos aditivos de cobertura de
+`GET /api/v1/demand-items` (§12.5). La migración `0015` crea `quote`, `quote_cart`, `quote_line` y
+`commercial_observation`; la observación comercial y el historial de precios son de solo agregar.
+
+**Reglas que quedan fijadas por la implementación:**
+
+1. **Idempotencia del alta de línea sin tabla nueva.** `POST /quotes/{id}/lines` con `Idempotency-Key` guarda
+   `idempotency_key` y `request_hash` en `audit_event.after` de la acción `quote.line.add`, dentro de la misma
+   transacción que la línea. Repetir la misma clave y el mismo contenido devuelve la línea original con
+   `deduplicated: true` (200); reutilizar la clave con otro contenido responde `409 IDEMPOTENCY_KEY_REUSED`. E8 no
+   exige una tabla de idempotencia propia y la auditoría ya es obligatoria por AC12, así que no se agregó una.
+2. **`refresh` responde `refreshed`, no `deduplicated`.** El contrato no fija el cuerpo de
+   `POST /quotes/{id}/lines/{line_id}/refresh`. Reutilizar `LineAddedOut` obligaba a decir «deduplicado» cuando en
+   realidad se reapuntó el snapshot; se añadió `LineRefreshedOut` con `refreshed: bool` (verdadero si la línea pasó a
+   otro `offer_snapshot`) y la prueba cubre la segunda llamada con `refreshed: false`. No cambia qué se escribe ni
+   cuándo: el reapunte sigue siendo explícito, auditado y solo sobre el snapshot elegido.
+3. **`close-pending` y `refresh` exigen cotización `draft`.** §5.3 dice «mientras la cotización esté `draft`» solo
+   para `reopen-pending`, pero la tabla de errores §8 declara `409 QUOTE_CLOSED` para **modificar líneas** en una
+   cotización cerrada. Se interpretó que `close-pending` y `refresh`, que modifican la línea, también exigen `draft`;
+   una cotización cerrada no se edita. Si el usuario prefiere la letra estricta de §5.3, la restricción de
+   `close-pending` puede relajarse sin migración; no se hizo por no contradecir §8.
+4. **La relación `needs_review` cuenta como cobertura provisional.** La fórmula de §12.3 no filtra por
+   `coverage_relation`: una línea activa de carrito activo de cotización `draft` cubre su cantidad. La relación se
+   congela al agregar y queda visible; una necesidad sin forma ni contenido produce `needs_review`, y el faltante pasa
+   a `in_quote` con `pending_quantity=0` y `pending_purchase_quantity` intacto. Confirmar los atributos del faltante
+   (persona autorizada) es lo que permite una relación `exact`; no se completó nada por inferencia.
+
+**Datos de la demo (`farmacia_demo`, solo simulación).** El 2026-11-02 se aplicaron `0014` y `0015` allí (respaldo
+`pg_dump` verificado, restauración en base temporal con conteos idénticos, ensayo de subida y reversión, 47 tablas).
+Se corrigió el fixture ficticio para que Norte declare mínimo y múltiplo 1 y Sur múltiplo 1 (precios y Centro
+intactos) y se recargó como una observación nueva fechada; E5 queda completo para Norte (37.890 CLP) y Sur (41.680 CLP)
+y parcial para Centro (cota 41.180 CLP). Se registraron dos avisos individuales de Losartán 50 mg por 10 cajas
+(Juanito Pérez y María González, `auxiliary`, solo simulación) sobre el mismo faltante y se fijó la cantidad pedida
+con un `SET 10 box` explícito de Pao: los avisos **no** suman. La relación resultante es `needs_review` mientras la
+necesidad no tenga forma y contenido confirmados.
+
+**Estado.** Implementada en código el 2026-11-02; `0015` aplicada **solo a `farmacia_demo`**. `farmacia` sigue en
+`0008`. No se inició C5-B ni O2–O4.
+
+### D-135 — Reportes independientes por autor, asignaciones explícitas y cancelación lógica (Modelo A, 2026-11-02)
+
+**Contexto.** El usuario ordenó implementar el «Modelo A» para resolver dos problemas del cotizador: (a) dos personas
+que reportan el mismo producto por Telegram terminaban compartiendo un único `demand_item`, y un aviso de una podía
+quedar registrado dentro del faltante de la otra; (b) una línea de cotización cubría como máximo un faltante, de modo
+que la compra real de una caja no podía cubrir dos objetivos individuales sin un reparto que el sistema no debía
+inventar. Se implementaron las migraciones **`0016`** (reportes independientes, cancelación lógica y confirmación de
+coincidencias) y **`0017`** (`quote_line_allocation`), los servicios y endpoints correspondientes y el flujo de
+confirmación por botones en Telegram. **No se inició C5-B ni O2–O4.**
+
+**Reglas que quedan fijadas por la implementación:**
+
+1. **Un reporte por persona.** `demand_item.reported_by` es obligatorio en la práctica para los avisos nuevos. La
+   unicidad de `resolved_identity_key` es **por autor** (índice parcial `status='active'`): la misma persona no puede
+   tener dos veces el mismo producto activo, pero dos personas sí tienen cada una su reporte. Un reporte `cancelled`
+   libera la identidad de su autor para un aviso nuevo.
+2. **Nunca se adjunta un aviso al reporte de otra persona.** En Telegram, si el producto ya lo reportó otra persona,
+   el mensaje queda `pending_confirmation` con `confirmation_status='pending_other_report'` y **no se crea ni se
+   adjunta nada** hasta que la persona responda. Los botones son **Confirmar mi reporte**, **Modificar cantidad** y
+   **Cancelar**; confirmar crea un reporte propio, modificar guarda la cantidad **declarada** como dato y cancelar deja
+   el mensaje `discarded` sin crear nada.
+3. **Repetido de la misma persona:** si ya existe su faltante idéntico y la cantidad pedida es **conocida**, se pregunta
+   **Total (SET)**, **Sumar (ADD)** (solo si lo declarado supera lo pedido), **solo registrar aviso** o **Cancelar**.
+   El valor del `ADD` es la diferencia; el `SET` fija el total. Si la cantidad pedida es desconocida, no hay nada que
+   sumar: el aviso se registra y la cantidad escrita queda como `declared_quantity`. **Nunca hay suma automática.**
+4. **El auxiliar no aplica cantidades.** `can_apply_quantity` se evalúa con la matriz vigente: `auxiliary` solo deja
+   `demand_observation.quantity_proposal`; `purchasing` puede aplicar `SET`/`ADD` explícitos. No se creó ningún rol ni
+   se amplió la matriz (D-124 sigue sin implementar).
+5. **Asignaciones explícitas (`quote_line_allocation`, migración `0017`).** Una línea puede cubrir **uno o varios**
+   reportes. Cada asignación guarda `demand_item_id`, cantidad entera positiva y `coverage_relation` congelada; la suma
+   no puede superar la cantidad de la línea. El atajo `demand_item_id` sigue valiendo como una asignación por toda la
+   cantidad. Se rechazan lista vacía, duplicados, conflicto entre atajo y lista, unidad distinta y reporte sin cantidad
+   conocida. **No hay reparto automático.** La cobertura se lee de las asignaciones, nunca de una copia de precio ni
+   del campo antiguo `quote_line.demand_item_id` para el cálculo.
+6. **Cancelación lógica.** `POST /api/v1/demand-items/{item_id}/cancel` exige `admin` + `StrongActor`,
+   `Idempotency-Key` e `If-Match`; marca `status='cancelled'`, `cancelled_at`, `cancelled_by`, motivo y sube la versión.
+   No borra observaciones, mensajes ni historial. Devuelve las líneas de cotización que asignaban cantidad al reporte
+   (`affected_quote_lines`) para corregirlas; **no las modifica en silencio**. Errores: `409 VERSION_CONFLICT`,
+   `409 REPORT_NOT_ACTIVE` y —cuando C5-B exista— `409 REPORT_HAS_PURCHASE`.
+7. **Vía web administrativa.** Fijar o cambiar la cantidad por web usa el mismo servicio con `web_admin=True`:
+   `admin` + `StrongActor`; la auditoría registra `source: "web"`. Telegram registra `source: "telegram"`. No se creó
+   un segundo mecanismo ni un rol nuevo.
+8. **D-131 queda vigente según D-135.** Sigue siendo cierto que un aviso repetido **no suma cantidad** y que la
+   compra es todo o nada. Lo que cambia es a quién pertenece el registro: un aviso de otra persona **ya no** se
+   registra dentro del faltante existente; crea un reporte independiente. No se reescribe el historial de D-131.
+   **Prevalencia sobre el HLD (que no se edita):** el HLD §7.3 («Otro auxiliar: … Nuevo aviso en la misma necesidad
+   compatible; no sumar») y §7.4 («Si hay colisión, se vuelve a leer y **se adjunta al existente**») describen la
+   consolidación automática por producto que D-135 **sustituye**. Desde D-135 rige: mismo producto, misma persona →
+   un reporte; misma persona, producto distinto o cantidad distinta → su propio reporte; **otra persona → su propio
+   reporte**, previa confirmación en el canal. Se mantiene lo que el HLD sí prohíbe: no fusionar dosis, formatos ni
+   productos incompatibles y no alterar cantidades automáticamente. La nota queda aquí y en
+   `docs/decisions/ACUERDOS_FUNCIONALES.md` §3 (C2) porque el HLD no se modifica.
+
+**Costo de conservación declarado.** Con dos reportes de 10 cajas cada uno, una sola compra de 10 cajas **no** cierra
+ambos objetivos: las asignaciones 10/10 superarían la línea (`ALLOCATION_EXCEEDS_LINE`). Pao debe reducir o cancelar
+un reporte, asignar 5/5, o esperar una fusión explícita futura. El sistema **no** reparte ni consolida solo.
+
+**Restricción de esquema.** En `channel_message`, `ck_channel_message_autor_coherente` exige autor en `attributed` y
+`pending_confirmation`; `discarded` puede conservar al autor para trazabilidad. Un mensaje sin identidad nunca se
+atribuye solo.
+
+**Estado.** Implementada en código el 2026-11-02. Migraciones `0016` y `0017` **existen en el código y no están
+aplicadas** ni a `farmacia` (sigue en `0008`) ni a `farmacia_demo` (sigue en `0015`, 47 tablas). La suite completa con
+`REQUIRE_DB=1` queda en **531 pruebas** antes de D-137. No se inició C5-B (`0018`) ni O2–O4 (`0019`).
+
+**Actualización (D-137).** La cancelación sigue siendo lógica y **no** modifica líneas, pero la cotización afectada
+**ya no se puede cerrar** mientras conserve una asignación al reporte cancelado o a una cantidad inconsistente. Se
+corrige con `PATCH demand_allocations: []` o ajustando la línea; nada se reasigna solo.
+
+### D-136 — Preferencias comerciales que ordenan ofertas, sin explicación visible de la IA (2026-11-02)
+
+**Decisión del usuario.** Los administradores escriben comentarios en lenguaje natural mediante **«Enseñar a la IA»**.
+La IA **interpreta internamente** esas preferencias y el sistema las usa para **ordenar las ofertas recuperadas de los
+proveedores**:
+
+1. Se muestran primero las ofertas que **mejor cumplen** las preferencias.
+2. **Todas las demás ofertas siguen visibles**; no se ocultan ni se eliminan.
+3. **No** se muestran explicaciones, justificaciones ni puntuaciones generadas por IA.
+4. La IA **no inventa** precios, stock ni productos.
+5. La IA **no modifica** cantidades de compra.
+
+**Relación con lo aprobado.** Esta decisión **sustituye** en esta materia:
+
+- el objeto `advice` **visible y explicable** del contrato §8.4 (con `based_on` y `supersedes`);
+- la prohibición de «reordenar o destacar ofertas» del contrato §8.6 y de D-132, en cuanto a ordenar por preferencias;
+- la exigencia de mostrar las observaciones superadas (O3) y el «consejo explicado» (O4) como texto visible;
+- el criterio de aceptación **AC31** del HLD («toda recomendación permite ver reglas, ofertas y versiones»), que se
+  conserva solo como **auditoría interna**, no como explicación al usuario.
+
+No cambia: la IA sigue sin decidir dinero, cantidades, permisos ni elegibilidad; E5 sigue siendo determinista; las
+observaciones siguen siendo inmutables y auditables; O1 sigue implementado y O2–O4 siguen pendientes.
+
+**Correcciones documentales propuestas (no aplicadas todavía):** contrato **revisión 10** con §8.4 reescrito (orden
+interno y sin `advice` visible), §8.6 ajustado (se permite ordenar, nunca inventar ni ocultar), O3/O4 redefinidos como
+uso interno y traza de auditoría, y una nota de superación en AC31 registrada aquí (el HLD no se edita). Sin cambios de
+esquema: las tablas de O2–O4 siguen en `0019`. El texto propuesto, con el antes y después de cada cláusula, está en
+`docs/contracts/cotizador-v0.2-rev10-propuesta.md`; esa propuesta **no está aprobada**. Precisión de alcance
+(2026-11-02): las preferencias aplican a **cualquier producto comercializado** —cosmética, higiene, perfumería,
+veterinaria y otros—, no solo a medicamentos, y pueden referirse a laboratorio, marca, precio, disponibilidad u otros
+criterios. **El alcance quedó resuelto por D-138:** cada preferencia se aplica **solo al producto específico**; no hay
+preferencias de organización ni propagación por laboratorio, marca o proveedor. La redacción anterior que hablaba de
+«preferencia de organización» queda sustituida.
+
+**Estado.** Aprobada el 2026-11-02. **No implementada**: depende de O2–O4 (`0019`), de la interpretación con un modelo
+real y de la autorización de proveedor y costo (contrato §8.5 y §17). Hoy las ofertas **no** se ordenan por
+preferencias y no existe «Enseñar a la IA»; solo O1 guarda el texto.
+
+### D-137 — Integridad de asignaciones al cerrar y al reducir cantidades (2026-11-02)
+
+**Contexto.** La revisión de D-135 detectó una brecha: `update_quote(status="closed")` no consultaba las asignaciones y
+la cantidad pedida podía bajar por debajo de lo asignado. El usuario autorizó corregirla con las opciones (a) y (b),
+sin reasignar cobertura de forma automática.
+
+**Reglas implementadas:**
+
+1. **Cierre bloqueado por inconsistencias.** Al cerrar una cotización se revisan las asignaciones **vigentes** (línea
+   activa en carrito activo). Si alguna apunta a un reporte no `active`, a un reporte sin cantidad pedida o a una
+   cantidad menor a la asignada, o si la suma por línea supera la cantidad de la línea, responde
+   `409 QUOTE_HAS_INCONSISTENT_ALLOCATIONS` con `details.issues[]` (`code`, `quote_line_id`, `demand_item_id`,
+   `allocated`, `report_quantity`, `line_quantity`). La cotización **sigue en borrador** y nada se modifica.
+2. **Cantidad pedida protegida.** Con asignaciones vigentes: bajar por debajo de lo asignado →
+   `409 QUANTITY_BELOW_ALLOCATED`; dejar la cantidad sin definir (`CLEAR` o `SET` sin valor) →
+   `409 REPORT_HAS_ALLOCATIONS`; cambiar de unidad → `422 UNIT_MISMATCH`. Bajar **hasta** lo asignado se permite.
+3. **Corrección manual.** `PATCH` con `demand_allocations: []` quita todas las asignaciones de la línea (auditado); en
+   el alta la lista vacía sigue rechazándose. También se puede reemplazar por las asignaciones que correspondan.
+   Ninguna operación reasigna ni reparte por su cuenta.
+4. **Cancelación sin cambios de fondo.** Sigue siendo lógica, con `admin` + `StrongActor`, aviso de líneas afectadas
+   (ahora con `quote_status`) y sin tocar líneas.
+
+**Implementación.** `quotes._quote_allocation_issues`, `quotes.update_quote` (solo al cerrar),
+`quantities.apply_quantity_command`, `demand.active_allocations_for_item` y `quotes._replace_allocations`. Sin
+migración nueva.
+
+**Pruebas.** `tests/test_quotes_api.py::test_cerrar_bloquea_asignaciones_a_reportes_cancelados_y_permite_corregir`
+(escenario de Ana), `::test_cerrar_bloquea_cantidades_de_reporte_que_ya_no_cubren_lo_asignado` y
+`::test_no_se_puede_bajar_la_cantidad_pedida_por_debajo_de_lo_asignado`.
+
+**Estado.** Implementada en código el 2026-11-02. `0016`–`0017` siguen **no aplicadas**. No se inició C5-B ni O2–O4.
+
+### D-138 — Preferencias independientes por producto (C7, 2026-11-02)
+
+**Decisión.** Cada observación comercial se aplica **únicamente al producto específico** al que se refiere. No existen
+«preferencias de la organización» que ordenen todos los productos, ni propagación por laboratorio, marca o proveedor.
+
+**Ejemplo normativo.** «No me gusta el Losartán de Laboratorio Chile» afecta las ofertas de **ese Losartán**, pero **no**
+perjudica a Laboratorio Chile en otro medicamento. «Prefiero Laboratorio Chile para este paracetamol» no favorece a ese
+laboratorio en ningún otro producto.
+
+**Reglas.**
+
+1. Se conserva el texto original, autor, fecha y contexto.
+2. Cada observación es independiente.
+3. La interpretación respeta el producto específico.
+4. Las preferencias positivas o negativas **no se propagan** a otros productos del mismo laboratorio, marca o
+   proveedor.
+5. **No** se construyen perfiles globales de reputación.
+6. Varias observaciones del mismo producto se interpretan con contexto y precedencia (la más reciente de la misma clase
+   gana; las anteriores quedan en la traza interna).
+7. La IA puede **ordenar** las ofertas de ese producto según esas observaciones.
+8. Todas las ofertas siguen visibles.
+9. Sin explicaciones, justificaciones, recomendaciones textuales ni puntuaciones de IA.
+10. La IA no modifica precios, stock, cantidades ni decisiones de compra.
+
+**Alcance.** Aplica a cualquier producto comercializado: medicamentos, cosmética, higiene, perfumería, veterinaria y
+otros. No se supone equivalencia por compartir laboratorio, marca o proveedor.
+
+**Efecto documental.** Se elimina toda referencia a preferencias reutilizables de la organización o a propagación
+automática entre productos en A5, A6, O2–O4 y la propuesta de revisión 10. La revisión 9 ya exigía observaciones por
+artículo exacto; D-138 **confirma** esa prohibición y elimina la ambigüedad de la redacción anterior de A5/A6.
+
+**Estado.** No implementada. O2–O4 (`0019`) no existen. O1 solo guarda el texto de la observación.
+
+### D-139 — Cierre de cotización: preparada para comprar (C9, 2026-11-02)
+
+**Decisión.** Cerrar una cotización significa que **terminó de prepararse y puede convertirse posteriormente en una
+compra**. No significa comprada, descartada ni anulada.
+
+**Flujo aprobado.**
+
+1. **Preparación:** buscar, comparar, seleccionar cantidades.
+2. **Carrito:** agregar ofertas; conserva proveedor, producto, presentación, cantidad, precio y condiciones.
+3. **Revisión:** agrupada por proveedor, con cantidades, subtotales y condiciones.
+4. **Cierre:** `draft` → `closed`; conserva líneas, cantidades, proveedores y asignaciones.
+5. **Registro de compra:** desde la cotización cerrada, **sin reabrirla**.
+6. **Actualización de faltantes:** solo lo comprado y asignado genera cobertura; los reportes completamente cubiertos se
+   cierran; los parcialmente cubiertos conservan pendiente.
+
+**Reglas.**
+
+1. `draft` = en preparación.
+2. `closed` = preparada y disponible para compra.
+3. Cerrar no registra compra.
+4. Cerrada conserva líneas y asignaciones.
+5. **No debe ser necesario reabrir para comprar.**
+6. Asignaciones de cotizaciones `draft` **y `closed`** cuentan para cobertura provisional, sin duplicar.
+7. Cotización anulada o descartada no aporta cobertura.
+8. Cobertura comprada solo desde compras registradas.
+9. No contar dos veces cotizado y comprado.
+10. Reportes se cierran solo por compra registrada que cubra sus cantidades.
+11. Cotizaciones cerradas sin compra permanecen en historial.
+12. Frontend distingue «Cotización preparada» de «Compra registrada».
+
+**Estado real y contradicción.** `coverage.py` cuenta cobertura solo de cotizaciones `draft` (dos filtros:
+`quoted_totals_subquery` y `_quoted_totals`), y `quotes._ensure_draft()` responde `409 QUOTE_CLOSED` a cualquier
+operación sobre una cotización cerrada. **Eso contradice D-139.** La corrección —incluir `closed` en la cobertura y
+permitir la compra sin reabrir— pertenece a C5-B (`0018`) y **no se implementó**. No hay endpoint de compras.
+
+**Antecedente.** D-121 ya había fijado que «cerrar la cotización no quita cobertura». El código de C5-A implementó solo
+`draft`, así que la brecha es de **implementación**, no una decisión nueva: D-139 ratifica D-121 y agrega que la compra
+se registra sin reabrir.
+
+**Impacto documental.** Contrato §6 y §12.3, `coverage.py`, `quotes.py`, estados y etiquetas de la cotización, C5-B y
+las pruebas de cobertura al cerrar.
+
+### D-140 — Cantidades compradas sin asignación: inventario (C11, 2026-11-02)
+
+**Decisión.** Se permite comprar cantidades adicionales para inventario. La compra registra la cantidad comprada; solo
+las asignaciones explícitas cubren reportes; las unidades sin asignar quedan como **compra adicional para inventario**.
+
+**Ejemplo normativo.** Juanito reporta 10 y María 6. Pao cotiza 20 y asigna 10 a Juanito y 6 a María. Las **4
+restantes** se compran sin reporte: no se asignan automáticamente, no crean reportes ficticios y no cierran reportes.
+La compra registra 20; solo 16 cubren reportes.
+
+**Reglas.**
+
+1. La compra puede superar lo requerido.
+2. No es obligatorio asignar toda la línea.
+3. Las asignaciones son explícitas.
+4. La suma asignada **≤ cantidad comprada**.
+5. Las unidades sin asignar quedan como **compra adicional para inventario**.
+6. No se modifica automáticamente la cantidad de ningún reporte.
+7. No se cierran reportes por cantidades no asignadas y compradas.
+8. Se conserva la trazabilidad de compra, línea, asignación y excedente.
+9. La compra sigue siendo **todo o nada respecto de la selección**: se registra completa —incluidas las unidades de
+   inventario— o no se registra.
+
+**Estado.** No implementada. `purchase_line_allocation` y C5-B (`0018`) no existen. `coverage._purchased_totals`
+devuelve `{}`.
+
+### D-141 — AC31: auditoría interna de la IA (2026-11-02)
+
+**Decisión.** La trazabilidad de la IA se conserva **internamente**: qué observaciones se interpretaron, cuáles se
+aplicaron y qué versiones, modelo y criterios participaron en el ordenamiento. **No** se muestran explicaciones,
+recomendaciones textuales ni puntuaciones en las tarjetas ni en la API pública.
+
+**Reglas.**
+
+1. La traza es para revisión administrativa y auditoría, no para el usuario final.
+2. Se mantienen D-116, D-132, D-133 y AC31.
+3. Se deja constancia de qué reglas históricas quedaron sustituidas: el `advice` visible de D-116 y la prohibición de
+   reordenar del contrato §8.6 son sustituidos por D-136/D-138; AC31 se satisface por auditoría interna, no por
+   explicación visible.
+4. El HLD no se edita.
+
+**Estado.** No implementada. O1 guarda el texto, pero no hay interpretación ni orden que auditar. Corresponde a O2–O4
+(`0019`).
+
+### Revisión de D-124 — alcance y efecto en permisos de Telegram (sin cambio, 2026-11-02)
+
+**Qué dice.** `admin` también informa faltantes por Telegram: se agrega `REPORT_SHORTAGE` a su rol y puede reportar si
+tiene cuenta de Telegram `active` e identidad vigente.
+
+**Estado real hoy.** **No implementada.** La matriz de `backend/app/core/permissions.py` **no** incluye
+`REPORT_SHORTAGE` en `admin`, y `sessions.list_reporters` lo excluye del selector del bot. Los permisos web no se
+infieren de Telegram ni al revés; aprobar un acceso web no crea cuenta ni vínculo de Telegram.
+
+**Efecto si se implementara.** Solo agrega `REPORT_SHORTAGE` a `admin` y lo incluye en el selector; no crea roles, no
+amplía `APPLY_QUANTITY` (seguiría aplicando la encargada `purchasing`) y no toca D-130. Debe hacerse en la fase que
+habilite T1, con pruebas propias y sin cambios «de paso» en la matriz.
+
+**Decisión pendiente del usuario:** solo la oportunidad (fase), no el contenido. Mientras no se implemente, ninguna
+prueba ni documento debe presentar a `admin` como reportero de Telegram.

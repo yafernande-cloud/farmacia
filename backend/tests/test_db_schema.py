@@ -98,18 +98,23 @@ async def test_cantidad_desconocida_queda_nula(engine, seed):
     assert row == (None, None)
 
 
-async def test_identidad_resuelta_activa_es_unica(engine, seed):
-    await _item(engine, seed, resolved_identity_key="k1")
-    with pytest.raises(IntegrityError):
-        await _item(engine, seed, resolved_identity_key="k1")
+async def test_identidad_resuelta_activa_es_unica_por_autor(engine, seed):
+    await _item(engine, seed, resolved_identity_key="k1", reported_by=seed["ana"])
+    with pytest.raises(IntegrityError):  # la misma persona no puede tener dos veces el mismo producto
+        await _item(engine, seed, resolved_identity_key="k1", reported_by=seed["ana"])
+    # Otra persona con la misma identidad es un reporte independiente, no un duplicado (D-135).
+    await _item(engine, seed, resolved_identity_key="k1", reported_by=seed["luis"])
     # mismas claves nulas (identidades parciales) sí pueden coexistir: las protege el bloqueo del servicio
     await _item(engine, seed)
     await _item(engine, seed)
-    # una línea cancelada no bloquea una nueva con la misma identidad
+    # un reporte cancelado no bloquea uno nuevo de la misma persona con la misma identidad
     await _exec(
-        engine, "UPDATE demand_item SET status='cancelled' WHERE resolved_identity_key='k1'"
+        engine,
+        "UPDATE demand_item SET status='cancelled', cancelled_at=now() "
+        "WHERE resolved_identity_key='k1' AND reported_by=:a",
+        a=seed["ana"],
     )
-    await _item(engine, seed, resolved_identity_key="k1")
+    await _item(engine, seed, resolved_identity_key="k1", reported_by=seed["ana"])
 
 
 async def test_un_solo_ciclo_abierto_por_organizacion(engine, seed):

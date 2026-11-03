@@ -6,12 +6,17 @@ el precio no se copia ni se reapunta solo, una línea se quita de forma lógica,
 forma provisional y nunca cierra, y una observación comercial se guarda siempre, sin IA (O2–O4 no
 están implementados).
 
+D-137 agrega la integridad de las asignaciones: cerrar se bloquea si alguna asignación vigente
+apunta a un reporte cancelado, sin cantidad o con cantidad menor a lo asignado, y la cantidad pedida
+no puede bajar por debajo de lo asignado hasta que la administración ajuste o quite las asignaciones.
+
 Las compras (C5-B) no existen todavía: no hay aquí pruebas de compra, de `LINE_HAS_PURCHASES` ni de
 `QUANTITY_BELOW_PURCHASED`; las verificaciones quedan preparadas en el servicio.
 """
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -220,6 +225,28 @@ async def shop(sessions):
             quantity_unit="box",
             data_origin="simulated",
         )
+        # Reporte independiente del auxiliar: mismo producto que `exacta`, otra persona (D-135).
+        exacta_aux = DemandItem(
+            organization_id=org.id,
+            cycle_id=cycle.id,
+            display_name="Ibuprofeno 400 mg x 20 comprimidos",
+            ingredient="ibuprofeno",
+            attributes=_attrs("ibuprofeno", ("20", "un")),
+            target_quantity="6",
+            quantity_unit="box",
+            reported_by=aux.id,
+            data_origin="simulated",
+        )
+        unidad = DemandItem(
+            organization_id=org.id,
+            cycle_id=cycle.id,
+            display_name="Ibuprofeno 400 mg x 20 comprimidos (unidades)",
+            ingredient="ibuprofeno",
+            attributes=_attrs("ibuprofeno", ("20", "un")),
+            target_quantity="4",
+            quantity_unit="unit",
+            data_origin="simulated",
+        )
         otra = DemandItem(
             organization_id=org.id,
             cycle_id=cycle.id,
@@ -240,9 +267,15 @@ async def shop(sessions):
             quantity_unit=None,
             data_origin="simulated",
         )
-        s.add_all([exacta, otra, desconocida])
+        s.add_all([exacta, exacta_aux, unidad, otra, desconocida])
         await s.flush()
-        ids["demands"] = {"exacta": exacta.id, "otra": otra.id, "desconocida": desconocida.id}
+        ids["demands"] = {
+            "exacta": exacta.id,
+            "exacta_aux": exacta_aux.id,
+            "unidad": unidad.id,
+            "otra": otra.id,
+            "desconocida": desconocida.id,
+        }
     return ids
 
 
@@ -272,7 +305,17 @@ def _q(value="3", unit="box") -> dict:
     return {"value": value, "unit": unit}
 
 
-def _add(api, quote_id, *, supplier="uno", offer="uno_x", demand=None, value="3", key=None):
+def _alloc(api, *pairs) -> list[dict]:
+    return [
+        {"demand_item_id": str(api.shop["demands"][key]), "quantity": int(qty)}
+        for key, qty in pairs
+    ]
+
+
+def _add(
+    api, quote_id, *, supplier="uno", offer="uno_x", demand=None, value="3", key=None,
+    allocations=None,
+):  # fmt: skip
     body = {
         "supplier_id": str(api.shop["suppliers"][supplier]),
         "offer_snapshot_id": str(api.shop["offers"][offer]),
@@ -280,6 +323,8 @@ def _add(api, quote_id, *, supplier="uno", offer="uno_x", demand=None, value="3"
     }
     if demand:
         body["demand_item_id"] = str(api.shop["demands"][demand])
+    if allocations is not None:
+        body["demand_allocations"] = allocations
     headers = H(api)
     if key:
         headers["Idempotency-Key"] = key
@@ -290,6 +335,17 @@ async def _quote(api, title=None) -> str:
     r = await api.post("/api/v1/quotes", json={"title": title}, headers=H(api))
     assert r.status_code == 201, r.text
     return r.json()["quote_id"]
+
+
+def _set_quantity(api, item_id, version, value="1", unit="box", key=None):
+    headers = H(api)
+    headers["If-Match"] = f'"{version}"'
+    headers["Idempotency-Key"] = key or uuid.uuid4().hex
+    return api.post(
+        f"/api/v1/demand-items/{item_id}/quantity-commands",
+        json={"operation": "SET", "value": value, "unit": unit, "reason": "prueba C5-A"},
+        headers=headers,
+    )
 
 
 async def _demand_row(api, key) -> dict:
@@ -645,6 +701,15 @@ async def test_refresh_es_explicito_y_mueve_el_precio_elegido(api):
     assert r.json()["line"]["offer_snapshot_id"] == str(api.shop["offers"]["uno_x_nueva"])
     assert r.json()["line"]["selected"]["price"]["amount"] == "1900.00"
     assert r.json()["line"]["price_state"] == "current"
+    assert r.json()["refreshed"] is True
+
+    # Repetir sin una observación nueva no reapunta nada: `refreshed` lo dice explícitamente.
+    r = await api.post(
+        f"/api/v1/quotes/{quote_id}/lines/{line_id}/refresh", headers=H(api)
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["refreshed"] is False
+    assert r.json()["line"]["offer_snapshot_id"] == str(api.shop["offers"]["uno_x_nueva"])
 
     async with api.sessions() as s:
         event = (
@@ -694,12 +759,22 @@ async def test_relacion_otra_presentacion_y_cantidad_desconocida(api):
     # La oferta es de 20 comprimidos y el faltante pide 30: misma identidad, otro contenido.
     assert r.json()["line"]["coverage_relation"] == "other_presentation"
 
+    # Un reporte sin cantidad declarada no se puede asignar: primero una persona la fija (D-135).
     r = await _add(api, quote_id, offer="uno_y", demand="desconocida", value="1")
-    assert r.status_code == 201
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "REPORT_QUANTITY_UNKNOWN"
     row = await _demand_row(api, "desconocida")
     assert row["pending_quantity"] is None
     assert row["pending_purchase_quantity"] is None
     assert row["is_pending"] is True
+
+    assert (await _set_quantity(api, row["id"], row["version"])).status_code == 200
+    r = await _add(api, quote_id, offer="uno_y", demand="desconocida", value="1")
+    assert r.status_code == 201
+    row = await _demand_row(api, "desconocida")
+    assert row["quoted_quantity"] == "1"
+    assert row["pending_quantity"] == "0"
+    assert row["pending_purchase_quantity"] == "1"
 
 
 async def test_descartar_carrito_resta_cobertura_y_reincorporar_la_devuelve(api):
@@ -733,6 +808,343 @@ async def test_quitar_linea_resta_cobertura_sin_cerrar_la_cotizacion(api):
     r = await api.get(f"/api/v1/quotes/{quote_id}", headers=H(api))
     assert r.json()["status"] == "draft"
     assert r.json()["derived_state"] == "in_preparation"
+
+
+# --------------------------------------------------------------------------- asignaciones (D-135)
+
+
+async def test_una_linea_cubre_dos_reportes_independientes(api):
+    quote_id = await _quote(api)
+    r = await _add(
+        api, quote_id, value="8", allocations=_alloc(api, ("exacta", 5), ("exacta_aux", 3))
+    )
+    assert r.status_code == 201, r.text
+    line = r.json()["line"]
+    assert line["demand_item_id"] is None  # varias asignaciones: no hay un único reporte
+    allocs = {a["demand_item_id"]: a["quantity"] for a in line["demand_allocations"]}
+    assert allocs == {
+        str(api.shop["demands"]["exacta"]): "5",
+        str(api.shop["demands"]["exacta_aux"]): "3",
+    }
+    assert all(a["coverage_relation"] == "exact" for a in line["demand_allocations"])
+
+    # Cada reporte recibe solo lo asignado: nunca se reparte por su cuenta.
+    assert (await _demand_row(api, "exacta"))["quoted_quantity"] == "5"
+    assert (await _demand_row(api, "exacta_aux"))["quoted_quantity"] == "3"
+
+    # La suma no puede superar la cantidad de la línea.
+    r = await _add(
+        api, quote_id, value="8", allocations=_alloc(api, ("exacta", 5), ("exacta_aux", 4))
+    )
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "ALLOCATION_EXCEEDS_LINE"
+    assert r.json()["error"]["details"] == {"line_quantity": "8", "allocated": "9"}
+
+    # Reporte repetido en la misma línea.
+    r = await _add(api, quote_id, value="8", allocations=_alloc(api, ("exacta", 4), ("exacta", 4)))
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "DUPLICATE_ALLOCATION"
+
+    # Lista vacía: si no se asigna nada, no hay cobertura que inventar.
+    r = await _add(api, quote_id, value="8", allocations=[])
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "ALLOCATION_EMPTY"
+
+    # Atajo y lista son excluyentes.
+    r = await _add(
+        api, quote_id, value="8", demand="exacta", allocations=_alloc(api, ("exacta", 8))
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "ALLOCATION_CONFLICT"
+
+    # La unidad del reporte debe coincidir con la de la línea.
+    r = await _add(api, quote_id, value="8", allocations=_alloc(api, ("unidad", 2)))
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "UNIT_MISMATCH"
+
+
+async def test_patch_reemplaza_las_asignaciones_sin_tocar_el_resto(api):
+    quote_id = await _quote(api)
+    r = await _add(
+        api, quote_id, value="8", allocations=_alloc(api, ("exacta", 5), ("exacta_aux", 3))
+    )
+    line = r.json()["line"]
+    line_id = line["line_id"]
+
+    r = await api.patch(
+        f"/api/v1/quotes/{quote_id}/lines/{line_id}",
+        json={
+            "version": line["version"],
+            "quantity": _q(value="8"),
+            "demand_allocations": _alloc(api, ("exacta_aux", 6)),
+        },
+        headers=H(api),
+    )
+    assert r.status_code == 200, r.text
+    allocs = r.json()["line"]["demand_allocations"]
+    assert [(a["demand_item_id"], a["quantity"]) for a in allocs] == [
+        (str(api.shop["demands"]["exacta_aux"]), "6")
+    ]
+    assert (await _demand_row(api, "exacta"))["quoted_quantity"] == "0"
+    assert (await _demand_row(api, "exacta_aux"))["quoted_quantity"] == "6"
+
+    # Bajar la cantidad de la línea por debajo de lo asignado se rechaza.
+    r = await api.patch(
+        f"/api/v1/quotes/{quote_id}/lines/{line_id}",
+        json={"version": r.json()["line"]["version"], "quantity": _q(value="4")},
+        headers=H(api),
+    )
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "ALLOCATION_EXCEEDS_LINE"
+
+
+# --------------------------------------------------------------------------- cancelación (D-135)
+
+
+def _cancel(api, item_id, version, reason=None, who="admin", key=None):
+    headers = H(api, who)
+    headers["If-Match"] = f'"{version}"'
+    headers["Idempotency-Key"] = key or uuid.uuid4().hex
+    return api.post(
+        f"/api/v1/demand-items/{item_id}/cancel", json={"reason": reason}, headers=headers
+    )
+
+
+async def test_cancelar_un_reporte_asignado_informa_las_lineas_y_quita_la_cobertura(api):
+    quote_id = await _quote(api)
+    r = await _add(
+        api, quote_id, value="8", allocations=_alloc(api, ("exacta", 5), ("exacta_aux", 3))
+    )
+    assert r.status_code == 201, r.text
+    line_id = r.json()["line"]["line_id"]
+    row = await _demand_row(api, "exacta")
+    assert row["quoted_quantity"] == "5"
+
+    # Solo `admin`; el auxiliar no cancela reportes.
+    r = await _cancel(api, row["id"], row["version"], who="aux")
+    assert r.status_code == 403
+
+    # La versión siempre se exige y se compara.
+    r = await api.post(
+        f"/api/v1/demand-items/{row['id']}/cancel",
+        json={"reason": "duplicado"},
+        headers={**H(api), "Idempotency-Key": uuid.uuid4().hex},
+    )
+    assert r.status_code == 428
+    r = await _cancel(api, row["id"], row["version"] + 1)
+    assert r.status_code == 409
+    assert r.json()["error"]["details"]["current_version"] == row["version"]
+
+    r = await _cancel(api, row["id"], row["version"], reason="duplicado")
+    assert r.status_code == 200, r.text
+    assert r.headers["ETag"] == f'"{row["version"] + 1}"'
+    out = r.json()
+    assert out["item"]["status"] == "cancelled"
+    assert out["item"]["cancellation_reason"] == "duplicado"
+    assert out["item"]["cancelled_at"] is not None
+    assert out["item"]["cancelled_by_name"] == "Admin"
+    # La línea no se toca en silencio: se informa para que la administración la corrija.
+    (affected,) = out["affected_quote_lines"]
+    assert affected["quote_line_id"] == line_id
+    assert affected["quote_id"] == quote_id
+    assert affected["quote_status"] == "draft"
+    assert affected["allocation_quantity"] == "5"
+    assert "cotización" in out["message"]
+
+    # El reporte cancelado deja de cubrirse; el otro reporte conserva lo suyo.
+    r = await api.get("/api/v1/demand-items?status=cancelled", headers=H(api))
+    (cancelled,) = [i for i in r.json()["items"] if i["id"] == row["id"]]
+    assert cancelled["quoted_quantity"] == "0"
+    assert cancelled["replenishment_state"] == "cancelled"
+    assert cancelled["is_pending"] is False
+    assert (await _demand_row(api, "exacta_aux"))["quoted_quantity"] == "3"
+    r = await api.get("/api/v1/demand-items", headers=H(api))
+    assert row["id"] not in {i["id"] for i in r.json()["items"]}
+
+    # No se borró nada: la cancelación es lógica, con auditoría y una sola vez.
+    r = await _cancel(api, row["id"], row["version"] + 1)
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "REPORT_NOT_ACTIVE"
+    async with api.sessions() as s:
+        actions = (
+            await s.execute(select(AuditEvent.action).where(AuditEvent.entity_id == uuid.UUID(row["id"])))
+        ).scalars().all()
+    assert "demand_item.cancel" in actions
+
+
+# --------------------------------------------------- integridad de asignaciones (D-137)
+
+
+async def _close(api, quote_id, version):
+    return await api.patch(
+        f"/api/v1/quotes/{quote_id}",
+        json={"version": version, "status": "closed"},
+        headers=H(api),
+    )
+
+
+async def _quote_version(api, quote_id) -> int:
+    r = await api.get(f"/api/v1/quotes/{quote_id}", headers=H(api))
+    assert r.status_code == 200, r.text
+    return r.json()["version"]
+
+
+async def test_cerrar_bloquea_asignaciones_a_reportes_cancelados_y_permite_corregir(api):
+    quote_id = await _quote(api)
+    r = await _add(
+        api, quote_id, value="8", allocations=_alloc(api, ("exacta", 5), ("exacta_aux", 3))
+    )
+    assert r.status_code == 201, r.text
+    line_id = r.json()["line"]["line_id"]
+    assert (await _demand_row(api, "exacta"))["quoted_quantity"] == "5"
+
+    row = await _demand_row(api, "exacta")
+    assert (await _cancel(api, row["id"], row["version"], reason="duplicado")).status_code == 200
+
+    # Escenario de Ana: la línea sigue asignando cantidad a un reporte cancelado.
+    r = await _close(api, quote_id, await _quote_version(api, quote_id))
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["code"] == "QUOTE_HAS_INCONSISTENT_ALLOCATIONS"
+    assert error["details"]["quote_id"] == quote_id
+    (issue,) = error["details"]["issues"]
+    assert issue["code"] == "REPORT_NOT_ACTIVE"
+    assert issue["quote_line_id"] == line_id
+    assert issue["demand_item_id"] == row["id"]
+    assert issue["report_status"] == "cancelled"
+    # Nada se corrigió solo: la cotización sigue en borrador y la asignación intacta.
+    detail = (await api.get(f"/api/v1/quotes/{quote_id}", headers=H(api))).json()
+    assert detail["status"] == "draft"
+    allocations = detail["carts"][0]["lines"][0]["demand_allocations"]
+    assert {(a["demand_item_id"], a["quantity"]) for a in allocations} == {
+        (row["id"], "5"),
+        (str(api.shop["demands"]["exacta_aux"]), "3"),
+    }
+    assert {a["coverage_relation"] for a in allocations} == {"exact"}
+
+    # La administración ajusta las asignaciones: quita la del reporte cancelado.
+    line = detail["carts"][0]["lines"][0]
+    r = await api.patch(
+        f"/api/v1/quotes/{quote_id}/lines/{line_id}",
+        json={
+            "version": line["version"],
+            "quantity": _q(value="8"),
+            "demand_allocations": _alloc(api, ("exacta_aux", 3)),
+        },
+        headers=H(api),
+    )
+    assert r.status_code == 200, r.text
+    assert (await _demand_row(api, "exacta_aux"))["quoted_quantity"] == "3"
+
+    # Ahora sí cierra.
+    r = await _close(api, quote_id, await _quote_version(api, quote_id))
+    assert r.status_code == 200, r.text
+    assert (await api.get(f"/api/v1/quotes/{quote_id}", headers=H(api))).json()["status"] == "closed"
+
+
+async def test_cerrar_bloquea_cantidades_de_reporte_que_ya_no_cubren_lo_asignado(api):
+    quote_id = await _quote(api)
+    r = await _add(
+        api, quote_id, value="8", allocations=_alloc(api, ("exacta", 5), ("exacta_aux", 3))
+    )
+    assert r.status_code == 201, r.text
+
+    # Se fuerza un estado imposible por la vía normal para probar el guardián del cierre.
+    async with api.sessions() as s:
+        item = await s.get(DemandItem, api.shop["demands"]["exacta"])
+        assert item
+        item.target_quantity = Decimal("3")
+        await s.commit()
+    r = await _close(api, quote_id, await _quote_version(api, quote_id))
+    assert r.status_code == 409, r.text
+    (issue,) = [
+        i for i in r.json()["error"]["details"]["issues"]
+        if i["demand_item_id"] == str(api.shop["demands"]["exacta"])
+    ]  # fmt: skip
+    assert issue["code"] == "ALLOCATION_EXCEEDS_REPORT"
+    assert issue["allocated"] == "5" and issue["report_quantity"] == "3"
+
+    async with api.sessions() as s:
+        item = await s.get(DemandItem, api.shop["demands"]["exacta"])
+        assert item
+        item.target_quantity = None
+        item.quantity_unit = None
+        await s.commit()
+    r = await _close(api, quote_id, await _quote_version(api, quote_id))
+    assert r.status_code == 409, r.text
+    (issue,) = [
+        i for i in r.json()["error"]["details"]["issues"]
+        if i["demand_item_id"] == str(api.shop["demands"]["exacta"])
+    ]  # fmt: skip
+    assert issue["code"] == "REPORT_QUANTITY_UNKNOWN"
+
+    # Al quitar las asignaciones inconsistentes, el cierre deja de estar bloqueado.
+    line = (await api.get(f"/api/v1/quotes/{quote_id}", headers=H(api))).json()["carts"][0]["lines"][0]
+    r = await api.patch(
+        f"/api/v1/quotes/{quote_id}/lines/{line['line_id']}",
+        json={"version": line["version"], "quantity": _q(value="8"), "demand_allocations": []},
+        headers=H(api),
+    )
+    assert r.status_code == 200, r.text
+    r = await _close(api, quote_id, await _quote_version(api, quote_id))
+    assert r.status_code == 200, r.text
+
+
+async def test_no_se_puede_bajar_la_cantidad_pedida_por_debajo_de_lo_asignado(api):
+    quote_id = await _quote(api)
+    r = await _add(api, quote_id, value="8", allocations=_alloc(api, ("exacta", 5)))
+    assert r.status_code == 201, r.text
+    line_id = r.json()["line"]["line_id"]
+    row = await _demand_row(api, "exacta")
+    assert (row["target_quantity"], row["version"]) == ("10", 1)
+
+    # Reducir por debajo de lo asignado se bloquea con el detalle para la interfaz.
+    r = await _set_quantity(api, row["id"], 1, value="4", unit="box")
+    assert r.status_code == 409, r.text
+    error = r.json()["error"]
+    assert error["code"] == "QUANTITY_BELOW_ALLOCATED"
+    assert error["details"]["allocated"] == "5"
+    assert error["details"]["requested"] == "4"
+    assert error["details"]["unit"] == "box"
+    (allocation,) = error["details"]["allocations"]
+    assert allocation["quote_id"] == quote_id
+    assert allocation["quote_line_id"] == line_id
+    assert allocation["quote_status"] == "draft"
+
+    # Bajar hasta lo asignado sí se permite; quedar sin cantidad, no.
+    assert (await _set_quantity(api, row["id"], 1, value="5", unit="box")).status_code == 200
+    clear = await api.post(
+        f"/api/v1/demand-items/{row['id']}/quantity-commands",
+        json={"operation": "CLEAR", "reason": "prueba"},
+        headers={**H(api), "If-Match": '"2"', "Idempotency-Key": uuid.uuid4().hex},
+    )
+    assert clear.status_code == 409 and clear.json()["error"]["code"] == "REPORT_HAS_ALLOCATIONS"
+    # Cambiar la unidad mientras hay asignaciones tampoco.
+    r = await _set_quantity(api, row["id"], 2, value="5", unit="unit")
+    assert r.status_code == 422 and r.json()["error"]["code"] == "UNIT_MISMATCH"
+
+    # La administración quita las asignaciones con una lista vacía explícita.
+    line = (await api.get(f"/api/v1/quotes/{quote_id}", headers=H(api))).json()["carts"][0]["lines"][0]
+    r = await api.patch(
+        f"/api/v1/quotes/{quote_id}/lines/{line_id}",
+        json={"version": line["version"], "quantity": _q(value="8"), "demand_allocations": []},
+        headers=H(api),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["line"]["demand_allocations"] == []
+    assert r.json()["line"]["demand_item_id"] is None
+    assert (await _demand_row(api, "exacta"))["quoted_quantity"] == "0"
+
+    # Ahora la cantidad puede bajar y volver a quedar desconocida.
+    row = await _demand_row(api, "exacta")
+    assert (await _set_quantity(api, row["id"], row["version"], value="4")).status_code == 200
+    row = await _demand_row(api, "exacta")
+    clear = await api.post(
+        f"/api/v1/demand-items/{row['id']}/quantity-commands",
+        json={"operation": "CLEAR", "reason": "prueba"},
+        headers={**H(api), "If-Match": f'"{row["version"]}"', "Idempotency-Key": uuid.uuid4().hex},
+    )
+    assert clear.status_code == 200 and clear.json()["item"]["target_quantity"] is None
 
 
 # --------------------------------------------------------------------------- E5 por carrito

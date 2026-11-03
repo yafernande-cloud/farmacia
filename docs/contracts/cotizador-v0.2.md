@@ -1,6 +1,13 @@
 # Contrato del cotizador — v0.2 (cotizaciones, compras, historial, observaciones, accesos y precios públicos)
 
-**Estado: aprobado conceptualmente, 2026-10-30 (revisión 7, 2026-11-02).** No implementado. La revisión 5 se aprobó en el cierre de
+**Estado: aprobado conceptualmente, 2026-10-30 (revisión 9, 2026-11-02).** **Parcialmente implementado en código**:
+E10 y O1 (C5-A), los reportes independientes y las asignaciones (D-135) y la integridad de asignaciones (D-137). Siguen
+**sin implementar** las compras registradas y su cierre, el historial, la búsqueda de cadenas E15 y O2–O4. Nada de esto
+está aplicado a `farmacia` (sigue en `0008`), las migraciones `0016`–`0017` **no están aplicadas a ninguna base** y
+A6/D-136 —precisada por **D-138** (preferencias independientes por producto)—, **D-139** (cotización cerrada
+preparada para comprar), **D-140** (compra adicional para inventario) y **D-141** (AC31 como auditoría interna)
+esperan la **revisión 10**, todavía no aplicada. El texto propuesto está en
+`docs/contracts/cotizador-v0.2-rev10-propuesta.md`. La revisión 5 se aprobó en el cierre de
 D0; este encabezado corrige la contradicción que la llamaba «borrador no aprobado» (**C-0**, resuelta en D-128). Este
 documento **no modifica C0** (`docs/contracts/cotizador-v0.md`, congelado por D-093): lo **amplía** y declara cada
 ampliación de forma explícita. Ninguna de sus operaciones corre en el sistema mientras no se implemente.
@@ -41,19 +48,57 @@ siendo **control técnico** de la propietaria, no un perfil funcional. `purchasi
 para Telegram y los flujos de faltantes, pero **no son perfiles del Cotizador web**. **No agrega tablas ni columnas**
 (siguen 9 y 7). Sustituye a D-128; mantiene la independencia con Telegram y la seguridad JWT + `StrongActor`.
 
+**Revisión 8 (corrección funcional, 2026-11-02; D-135):** cada persona tiene su **reporte independiente**. Un aviso de
+otra persona sobre el mismo producto **nunca** se registra dentro del faltante ajeno ni se suma: el bot pregunta y, si
+se confirma, crea un reporte propio. La línea de cotización puede cubrir **varios reportes** mediante
+`quote_line_allocation`, con cantidades **explícitas** cuya suma no supera la cantidad de la línea; no hay reparto
+automático. Un reporte se **cancela lógicamente** (`admin` + `StrongActor`), nunca se borra, y las líneas que lo
+cubrían se informan para corregirlas antes de cerrar. En Telegram, el mismo autor con cantidad conocida elige **Total
+(SET)**, **Sumar (ADD)**, **solo registrar** o **cancelar**; el auxiliar sin `APPLY_QUANTITY` deja una **propuesta**.
+Agrega la tabla `quote_line_allocation` (migración `0017`) y columnas de autor, cancelación y confirmación en
+`demand_item`, `demand_observation` y `channel_message` (migración `0016`). Enmienda **D-131** sin reescribir su
+historial, según se registra en D-135.
+
+**Revisión 9 (corrección funcional, 2026-11-02; D-137):** las asignaciones dejan de ser solo una
+verificación al crearlas. Una cotización **no se cierra** si alguna asignación vigente apunta a un
+reporte cancelado, sin cantidad pedida o con cantidad menor a lo asignado, ni si la suma asignada
+supera la cantidad de la línea: `409 QUOTE_HAS_INCONSISTENT_ALLOCATIONS` con `details.issues[]` para
+que la interfaz muestre cada caso. La cantidad pedida de un reporte **no puede bajar** por debajo de
+lo asignado (`409 QUANTITY_BELOW_ALLOCATED`), ni quedar sin definir (`409 REPORT_HAS_ALLOCATIONS`),
+ni cambiar de unidad (`422 UNIT_MISMATCH`) mientras tenga asignaciones vigentes. Para corregir, la
+administración ajusta o quita las asignaciones: en `PATCH` una lista vacía **quita todas**; en el
+alta la lista vacía sigue rechazándose. Nada se reasigna ni se corrige solo. No agrega tablas ni
+columnas; las migraciones siguen siendo `0016` y `0017`.
+
+> **Aviso de revisión 10 (propuesta, 2026-11-02; D-136 y D-138 a D-141):** el texto de §8.3, §8.4, §8.6 y §8.7 sobre
+> el consejo `advice` visible, la prohibición de reordenar ofertas y el alcance de las preferencias está **pendiente de
+> sustitución** por D-136 y **D-138** (preferencias independientes por producto, sin propagación). También están
+> pendientes de sustitución §6 y §12.3 por **D-139** (cotización cerrada preparada para comprar, con cobertura
+> provisional y compra sin reabrir), **D-140** (compra adicional para inventario) y **D-141** (AC31 como auditoría
+> interna). La propuesta de revisión 10, con el texto exacto de los cambios, está en
+> `docs/contracts/cotizador-v0.2-rev10-propuesta.md` y **no se aplicó**. Mientras no se apruebe, rigen D-136 y D-138 a
+> D-141 como decisiones y el contrato conserva este texto histórico.
+
 **Corrección de alcance (2026-11-02; enmienda a D-127):** para la demo, la compra es **todo o nada**. Se registra
 completa —todos los productos y cantidades seleccionados— o no se registra; al registrarse, los faltantes cubiertos se
 cierran y se liberan para nuevos reportes por Telegram. **No hay compras parciales por productos ni cantidades**; no
-se implementa lógica para ellas y quedan fuera del alcance de la demo.
+se implementa lógica para ellas y quedan fuera del alcance de la demo. **Nota de la revisión 10 propuesta (D-140):**
+«todo o nada» se refiere a la **selección**, no a que toda unidad deba asignarse a un reporte; la compra puede incluir
+unidades sin asignación como **compra adicional para inventario**, sin asignarlas automáticamente ni cerrar reportes.
 
 **Cierre del ciclo (D-127, 2026-10-30):** la cobertura por **cotización** es **provisional** y nunca cierra; solo la
 **compra confirmada** cierra, y solo cuando cubre **toda** la cantidad pedida conocida. **Compra todo o nada (enmienda a
 D-127, 2026-11-02):** la compra se registra **completa** —todos los productos y cantidades seleccionados— o no se
 registra; al registrarse, los faltantes cubiertos se cierran y el producto vuelve a poder reportarse. **No hay compras
-parciales por productos ni cantidades en la demo.** `fulfilled` no significa recibido.
+parciales por productos ni cantidades en la demo.** `fulfilled` no significa recibido. **Nota de la revisión 10
+propuesta (D-139):** la cobertura provisional incluye cotizaciones `draft` y `closed`; cerrar una cotización no le
+quita cobertura ni obliga a reabrir para comprar.
 
-**Decisión que lo respalda:** D-114, con las enmiendas de D0 registradas en la misma sección de decisiones, y **D-130**
-(perfil único `admin`; aprobación web que otorga ese perfil), que sustituye a D-128.
+**Decisión que lo respalda:** D-114, con las enmiendas de D0 registradas en la misma sección de decisiones, **D-130**
+(perfil único `admin`; aprobación web que otorga ese perfil), que sustituye a D-128, **D-135** (reportes
+independientes, asignaciones explícitas, cancelación lógica y confirmación en Telegram), **D-137** (integridad de las
+asignaciones al cerrar y al reducir cantidades) y, en la revisión 10 propuesta, **D-138 a D-141** (preferencias por
+producto, cotización cerrada preparada para comprar, compra adicional para inventario y auditoría interna de la IA).
 **Decisiones relacionadas:** D-037 (separación de datos), D-064 a D-072 (Supabase Auth y enlaces), D-079/D-086
 (permisos y `StrongActor`), D-087/D-088 (cotas y cálculo), D-091 (criterios comerciales), D-110 (`review_status`),
 D-111 (idempotencia de importación), D-112 (investigación de catálogos de cadenas).
@@ -573,7 +618,7 @@ futura: G1 y el Cotizador no la implementan y no modifican ningún control de se
 | `GET /api/v1/quotes` | «Mis cotizaciones». Filtros: `status`, `updated_from`, `updated_to`, `q` (título), paginación |
 | `GET /api/v1/quotes/{quote_id}` | Detalle completo: carritos, líneas, evaluación E5 por carrito, total estimado, cobertura de faltantes y `advice` |
 | `GET /api/v1/quotes/{quote_id}/summary` | Sección integrada del cotizador: por proveedor, nº de productos, subtotal o causa, estado. Sin detalle de líneas |
-| `PATCH /api/v1/quotes/{quote_id}` | `title`, `status: "closed"` o `"draft"` (reabrir). Requiere `version` |
+| `PATCH /api/v1/quotes/{quote_id}` | `title`, `status: "closed"` o `"draft"` (reabrir). Requiere `version`. Cerrar exige asignaciones consistentes (`409 QUOTE_HAS_INCONSISTENT_ALLOCATIONS`, D-137); reabrir no cambia asignaciones |
 
 `GET /quotes/{id}/summary` responde en una sola llamada, pensado para refrescarse mientras Pao sigue buscando.
 
@@ -586,20 +631,36 @@ futura: G1 y el Cotizador no la implementan y no modifican ningún control de se
   "supplier_id": "uuid",
   "offer_snapshot_id": "uuid",
   "quantity": { "value": "20", "unit": "box" },
-  "demand_item_id": "uuid | null"
+  "demand_item_id": "uuid | null",
+  "demand_allocations": [
+    { "demand_item_id": "uuid", "quantity": 12 },
+    { "demand_item_id": "uuid", "quantity": 8 }
+  ]
 }
 ```
+
+`demand_item_id` (atajo de **una** asignación por toda la cantidad) y `demand_allocations` son **excluyentes**
+(`422 ALLOCATION_CONFLICT`). Con `demand_allocations` cada reporte recibe exactamente la cantidad declarada; la suma
+no puede superar la cantidad de la línea (`409 ALLOCATION_EXCEEDS_LINE`), un reporte no puede repetirse
+(`422 DUPLICATE_ALLOCATION`), la lista vacía se rechaza **en el alta** (`422 ALLOCATION_EMPTY`; en `PATCH`, la lista
+vacía quita todas las asignaciones, §5.3) y la unidad del reporte debe coincidir
+con la de la línea (`422 UNIT_MISMATCH`). **Nunca se reparte ni se suma solo:** si una línea cubre a dos personas, la
+cantidad de cada una se declara.
 
 - Crea el carrito del proveedor si no existe. Si existe y está `dismissed`, responde 409 `CART_DISMISSED`
   (hay que reincorporarlo explícitamente: no se resucita por accidente).
 - Valida: la oferta pertenece al proveedor (`422 OFFER_NOT_IN_SUPPLIER`), a la organización (404), la cotización está
   `draft` (`409 QUOTE_CLOSED`), la cantidad es entera > 0 (`422 INVALID_QUANTITY`).
-- **Si viene `demand_item_id`:** valida que el faltante pertenezca a la organización y esté vigente; calcula
-  `relation` con la misma clasificación de E1 (§12) y la guarda como `coverage_relation` **congelada**. Si no hay
-  `relation` calculable (por ejemplo, una ficha de cadena sin artículo), guarda `needs_review`. No se pide una
-  segunda confirmación: «Agregar a cotización» desde una fila de faltante ya es la acción explícita. La clasificación
-  y las advertencias quedan visibles en la línea y en el resumen.
-- **Si no viene `demand_item_id`:** la línea no cubre ningún faltante, aunque el producto coincida. Una búsqueda
+- **Si viene `demand_item_id` o `demand_allocations`:** valida que cada reporte pertenezca a la organización, esté
+  **`active`** y tenga **cantidad pedida conocida** (`422 REPORT_QUANTITY_UNKNOWN`; un reporte sin cantidad no se puede
+  asignar hasta que una persona la fije); calcula `relation` con la misma clasificación de E1 (§12) y la guarda
+  **congelada por asignación**. Si no hay `relation` calculable (por ejemplo, una ficha de cadena sin artículo), guarda
+  `needs_review`. No se pide una segunda confirmación: «Agregar a cotización» desde una fila de faltante ya es la
+  acción explícita. La clasificación y las advertencias quedan visibles en la línea y en el resumen.
+- **Reportes independientes (D-135):** dos personas pueden tener cada una su propio faltante del mismo producto. La
+  línea puede cubrir a ambos solo con asignaciones explícitas; no se consolidan ni se reparten de forma automática.
+  La cobertura de cada reporte es la suma de **sus** asignaciones (§12.3).
+- **Si no viene ninguno de los dos:** la línea no cubre ningún faltante, aunque el producto coincida. Una búsqueda
   libre no vincula nada.
 - Respuesta `201` con la línea y el carrito creado o reutilizado.
 - **Idempotencia de repetir la misma petición (F-5):** con `Idempotency-Key`, se aplica la semántica de E8. Sin ella,
@@ -614,11 +675,11 @@ futura: G1 y el Cotizador no la implementan y no modifican ningún control de se
 
 | Método y ruta | Regla |
 |---|---|
-| `PATCH /quotes/{quote_id}/lines/{line_id}` | SET explícito de cantidad + `version`. No hay suma implícita: repetir el aviso no acumula. Si ya hay compras vigentes, la nueva cantidad no puede ser menor que lo comprado → `409 QUANTITY_BELOW_PURCHASED` |
+| `PATCH /quotes/{quote_id}/lines/{line_id}` | SET explícito de cantidad + `version`. No hay suma implícita: repetir el aviso no acumula. Si ya hay compras vigentes, la nueva cantidad no puede ser menor que lo comprado → `409 QUANTITY_BELOW_PURCHASED`. Acepta `demand_allocations` y **reemplaza** las asignaciones vigentes (auditado); la suma no puede superar la nueva cantidad de la línea. Una lista vacía **quita todas las asignaciones** (D-137); es la acción explícita para corregir una línea antes de cerrar |
 | `DELETE /quotes/{quote_id}/lines/{line_id}` | Quita lógico (`removed`) con `removed_by`/`removed_at`. Solo si **no hay compras vigentes** → si las hay, `409 LINE_HAS_PURCHASES`; lo pendiente se cierra con `close-pending` |
 | `POST /quotes/{quote_id}/lines/{line_id}/close-pending` | **Desistir del pendiente**: marca `pending_closed_at`. No cambia `quantity`, no toca la compra histórica y no borra la línea. La cantidad cotizada original queda visible |
 | `POST /quotes/{quote_id}/lines/{line_id}/reopen-pending` | Deshace el cierre del pendiente mientras la cotización esté `draft` |
-| `POST /quotes/{quote_id}/lines/{line_id}/move` | `{ "target_offer_snapshot_id": "uuid", "quantity": {...} }`. Exige oferta destino **explícita**, del **mismo artículo** (`422 ARTICLE_MISMATCH` si no) y solo si **no hay compras vigentes** (`409 LINE_HAS_PURCHASES`). Atómico: quita + agrega en una transacción y un solo evento de auditoría con antes/después. Crea el carrito destino si hace falta. **No arrastra `demand_item_id` ni `coverage_relation`**: la nueva línea nace sin vínculo salvo que la petición lo declare |
+| `POST /quotes/{quote_id}/lines/{line_id}/move` | `{ "target_offer_snapshot_id": "uuid", "quantity": {...} }`. Exige oferta destino **explícita**, del **mismo artículo** (`422 ARTICLE_MISMATCH` si no) y solo si **no hay compras vigentes** (`409 LINE_HAS_PURCHASES`). Atómico: quita + agrega en una transacción y un solo evento de auditoría con antes/después. Crea el carrito destino si hace falta. **No arrastra `demand_item_id`, `demand_allocations` ni `coverage_relation`**: la nueva línea nace sin vínculo salvo que la petición lo declare |
 | `POST /quotes/{quote_id}/lines/{line_id}/refresh` | Acepta el precio actual; reapunta al snapshot nuevo. Auditado. **No toca compras**; si la línea está comprada por completo, responde con advertencia de que no tiene efecto sobre lo pendiente |
 
 **Repartir cantidades**: no es una operación nueva. Pao agrega la misma referencia en el carrito de otro proveedor
@@ -628,6 +689,12 @@ futura: G1 y el Cotizador no la implementan y no modifican ningún control de se
 alcanza la cantidad pedida, el saldo vuelve a `pending_quantity`. La cotización es cobertura provisional: quitarla no
 cierra ni reabre el ciclo, que solo se cierra con compra confirmada (D-127). No se borra ninguna observación ni el
 historial original de Telegram.
+
+**Cancelar un reporte** (`POST /api/v1/demand-items/{item_id}/cancel`, §12.2) **no modifica las líneas**: la respuesta
+informa `affected_quote_lines` (con `quote_status`) para que la administración corrija las asignaciones antes de cerrar
+la cotización o registrar la compra. La cobertura del reporte cancelado deja de contar; las demás asignaciones de la
+línea siguen intactas. **La cotización afectada no se puede cerrar mientras conserve esa asignación** (D-137): se quita
+la asignación con `PATCH demand_allocations: []` o se ajusta a los reportes que siguen activos. Nada se corrige solo.
 
 ### 5.4 Carritos: descartar y reincorporar
 
@@ -759,6 +826,10 @@ IDEMPOTENCY_KEY_REUSED`.
   la suma de compras confirmadas de ese faltante alcanza su cantidad pedida conocida, la compra lo pasa a `fulfilled`
   y el producto queda **liberado** para un nuevo reporte (§12.3). Si no la alcanza, el faltante no se cierra ni se
   libera. La respuesta incluye el faltante afectado y su `replenishment_state` resultante.
+- **Asignación por reporte (D-135).** Cuando C5-B se implemente (`0018`), cada línea de compra asignará explícitamente
+  a uno o varios reportes con `purchase_line_allocation`, igual que la cotización. Una línea con compra vigente usa esa
+  asignación y **nunca** suma su asignación de cotización (§12.3). No hay reparto automático ni consolidación entre
+  reportes de distintas personas.
 
 ### 6.2 Correcciones y anulaciones
 
@@ -1243,16 +1314,30 @@ Requieren `MANAGE_ACCOUNTS` + `StrongActor`; en organización real, JWT de Supab
 Mientras un faltante está **`active`**, la conversación del bot sigue estas reglas, sin IA:
 
 1. **Identifica** quién reporta, qué producto y qué cantidad, y **conserva lo escrito** (`original_text`).
-2. Si el producto **ya está en la lista activa**, informa **quién lo reportó anteriormente** y pregunta si desea
-   reportarlo también. La pregunta es del flujo determinista, no de un modelo.
-3. Si la persona **confirma**, el nuevo aviso se registra **dentro del faltante existente**, como observación del
-   mismo ciclo; **no se duplica el producto ni se suma cantidad**.
-4. Mientras el faltante siga `active`, **no se inicia otro ciclo** para el mismo producto.
-5. Al **registrar una compra** que cubre la cantidad pedida, el faltante se cierra (`fulfilled`, no «recibido») y el
+2. **El reporte es de cada persona (D-135).** Si el mismo producto lo reportó **otra persona**, el bot informa quién y
+   con qué cantidad, y pregunta si quiere **su propio reporte independiente**. No adjunta el aviso al faltante ajeno,
+   no lo fusiona y no suma cantidades: cada persona conserva su registro. La pregunta es determinista, no de un modelo.
+3. **Confirmación del otro autor:** los botones son **Confirmar mi reporte**, **Modificar cantidad** y **Cancelar**.
+   - Confirmar crea un **reporte propio** (con su propia cantidad pedida, si la declaró) y deja constancia de que no se
+     sumó al de la otra persona.
+   - Modificar pide escribir la cantidad; el reporte se crea con la cantidad **declarada**, nunca aplicada como pedido
+     hasta que una persona con `APPLY_QUANTITY` lo decida.
+   - Cancelar descarta el mensaje sin crear nada; no se borra la evidencia y el mensaje queda `discarded`.
+4. **Mismo autor, misma necesidad:** si ya existe **su** faltante idéntico y la cantidad pedida es conocida, el bot
+   pregunta **Total (SET)**, **Sumar (ADD)**, **solo registrar aviso** o **Cancelar**. El valor del `ADD` es la
+   diferencia entre lo declarado y lo ya pedido; el `SET` fija el total declarado. **Nunca se suma solo**, ni por el
+   texto ni por repetir el aviso. Si la cantidad pedida es desconocida, no hay nada que sumar ni fijar: el aviso se
+   registra y la cantidad declarada queda como dato, no como pedido.
+5. **Sin permiso para aplicar cantidades** (por ejemplo, `auxiliary`), el botón deja una **propuesta**
+   (`quantity_proposal`) en la observación para que la administración la aplique; el bot no cambia la cantidad. Si la
+   persona sí tiene `APPLY_QUANTITY`, el cambio es explícito, auditado y con la semántica `SET`/`ADD` existente.
+6. Mientras el faltante siga `active`, **no se inicia otro ciclo** para el mismo producto y la misma persona; cada
+   persona puede tener **su** reporte activo. Un reporte `cancelled` deja de bloquear uno nuevo de esa persona.
+7. Al **registrar una compra** que cubre la cantidad pedida, el faltante se cierra (`fulfilled`, no «recibido») y el
    producto **se libera**: puede volver a reportarse como un faltante nuevo si hace falta. La compra es **todo o nada**
    (enmienda a D-127): se registra completa o no se registra, y al registrarse libera el faltante en la misma
    transacción. No hay compras parciales que dejen un saldo abierto.
-6. **Se conserva el historial**: quién reportó cada aviso, cuándo y qué dijo. Nada se borra.
+8. **Se conserva el historial**: quién reportó cada aviso, cuándo y qué dijo. Nada se borra; cancelar es lógico.
 
 El bot **no usa OpenAI** para interpretar mensajes: producto, cantidad e identidad se resuelven con las reglas
 existentes y, ante ambigüedad, con candidatos para que compras decida (D-025 a D-036).
@@ -1466,6 +1551,17 @@ No se presenta como una solicitud sin gestionar, y tampoco está cerrado: el cie
 confirmada (D-127). La cobertura sigue siendo reversible si la línea se quita o el carrito se descarta.
 
 Solo se evalúan faltantes **`active`**; los `cancelled` y `fulfilled` no aparecen en la grilla ni en la cobertura.
+**Cada reporte es de una persona (D-135):** dos personas pueden aparecer con el mismo producto y cada fila muestra su
+autor, su cantidad declarada y su propio saldo. No hay consolidación automática ni una fila única que mezcle avisos.
+
+**Cancelación lógica (D-135).** `POST /api/v1/demand-items/{item_id}/cancel` con `admin` + `StrongActor`,
+`Idempotency-Key` y `If-Match` (versión). Cuerpo `{"reason": "texto | null"}`. Marca `status = cancelled`,
+`cancelled_at`, `cancelled_by` y el motivo; **no borra** observaciones, mensajes, cantidades ni historial, y no toca
+las líneas de cotización. Responde `200` con el reporte, `affected_quote_lines` (líneas activas que le asignaban
+cantidad) y un mensaje; `409 VERSION_CONFLICT` si la versión no coincide, `409 REPORT_NOT_ACTIVE` si ya no está activo
+y `409 REPORT_HAS_PURCHASE` cuando C5-B detecte una compra registrada. Un reporte cancelado deja de cubrirse y libera
+la identidad de esa persona para un aviso nuevo. **No se puede volver a asignar** (`409 REPORT_NOT_ACTIVE`). Las
+cotizaciones que lo tenían asignado no se cierran hasta corregir esas asignaciones (D-137).
 
 **«Buscar» usa la búsqueda principal** (`POST /api/v1/searches` + búsqueda de cadenas). **No cambia el estado del
 faltante.** La búsqueda principal es independiente de Telegram. El `demand_item_id` viaja en el contexto de la fila y
@@ -1488,19 +1584,21 @@ cierra el ciclo. Lo **comprado** es el único hecho que cierra, y solo cuando la
 **toda** la cantidad pedida conocida.
 
 ```
-line_cover(l) =
+cover_of_allocation(a) =
     CASE
-      WHEN EXISTS (purchase_line pl vigente de l) THEN SUM(pl.quantity de compras current no anuladas)
-      WHEN l.status = 'active' AND c.status = 'active' AND q.status = 'draft' THEN l.quantity
+      WHEN EXISTS (purchase_line_allocation pa vigente de a.quote_line) THEN pa.quantity   -- C5-B, 0018
+      WHEN l.status = 'active' AND c.status = 'active' AND q.status = 'draft'
+           AND item.status = 'active' THEN a.quantity
       ELSE 0
     END
 
-covered(item) = SUM(line_cover(l))
-  FROM quote_line l
+covered(item) = SUM(cover_of_allocation(a))
+  FROM quote_line_allocation a
+  JOIN quote_line l ON l.id = a.quote_line_id
   JOIN quote_cart c ON c.id = l.quote_cart_id
   JOIN quote q      ON q.id = c.quote_id
- WHERE l.demand_item_id = item.id
-   AND l.organization_id = item.organization_id
+ WHERE a.demand_item_id = item.id
+   AND a.organization_id = item.organization_id
 
 purchased_quantity(item) = SUM(pl.quantity de compras current no anuladas)
 
@@ -1518,12 +1616,14 @@ cierra(item) = item.status = 'active'
            AND purchased_quantity(item) >= item.target_quantity
 ```
 
-**Por qué no hay doble conteo.** `purchase_line.quote_line_id` apunta a la línea cotizada. Si esa línea tiene compra
-vigente, `line_cover` toma **solo** la cantidad comprada; la cantidad cotizada deja de sumarse. Si la compra se
-corrige, solo cuenta el registro vigente; si se anula, la línea vuelve a su cantidad cotizada **solo si sigue activa
-en un carrito activo de una cotización `draft`**; si la cotización ya se cerró, esa línea no aporta cobertura y el
-saldo queda sin cubrir. Una compra registrada **sin línea cotizada** (`quote_line_id = null`) no cubre ningún
-faltante, porque no tiene vínculo con el aviso.
+**Por qué no hay doble conteo.** Las asignaciones de una misma línea suman como máximo su cantidad (§5.2), así que
+una línea no puede cubrir dos veces lo mismo. Si la línea tiene compra vigente, su asignación de compra sustituye a la
+de cotización: **por asignación** cuenta lo comprado, no las dos cosas. Si la compra se corrige, solo cuenta el
+registro vigente; si se anula, la asignación vuelve a su cantidad cotizada **solo si la línea sigue activa en un
+carrito activo de una cotización `draft` y el reporte sigue `active`**; si la cotización ya se cerró, esa línea no
+aporta cobertura y el saldo queda sin cubrir. Una compra registrada **sin vínculo con la cotización**
+(`quote_line_id = null`) no cubre ningún faltante, porque no tiene asignación con el aviso. Un reporte `cancelled`
+conserva sus asignaciones como historia, pero **ninguna** aporta cobertura.
 
 - `target_quantity` y `quantity_event` siguen siendo datos **del faltante**; la cobertura solo los **lee**.
 - No se escribe en `demand_item` ni en `demand_observation`. No se borra el mensaje original de Telegram.
@@ -1600,6 +1700,10 @@ Sin tabla ni endpoint nuevos para listar:
 | `pending_purchase_quantity` | numeric \| null | Saldo **pendiente de comprar**: lo que las compras confirmadas no cubren; `null` si la cantidad pedida es desconocida. Es lo que decide el cierre (D-127) |
 | `is_pending` | boolean | `true` mientras el ciclo siga abierto (falta compra confirmada) o si la cantidad es desconocida; **no** indica que falte cotizar y cotizar no lo apaga |
 | `replenishment_state` | string | `pending` \| `in_quote` \| `purchased` \| `fulfilled` \| `cancelled` |
+| `reported_by`, `reported_by_name` | uuid \| null, text \| null | Autor del reporte independiente (D-135) |
+| `declared_quantity`, `declared_unit` | numeric \| null, text \| null | Cantidad **declarada**, nunca aplicada como pedido |
+| `reported_at` | datetime | Primera observación del reporte |
+| `cancelled_at`, `cancelled_by_name`, `cancellation_reason` | datetime \| null, text \| null, text \| null | Cancelación lógica, con su motivo |
 | `pending_only` | filtro | `true` devuelve solo los faltantes `active` con saldo **sin cubrir** (`pending_quantity > 0`); lo ya cubierto por cotización se ve en su estado `in_quote`, no como «sin gestionar» |
 
 Los campos son aditivos: `GET /api/v1/demand-items` conserva su forma y su paginación; no hay endpoint nuevo de
@@ -1647,14 +1751,15 @@ la mercadería llegue (D-126) y ninguno se produce por cotizar (D-127).
 
 ### 12.7 Estado por Telegram (D-123)
 
-1. **Un aviso repetido no crea una segunda necesidad.** Si el producto coincide con un faltante `active` del mismo
-   ciclo —pendiente, en cotización o con compra registrada—, se registra la observación en ese faltante y la respuesta
-   informa el estado: pendiente, en cotización, comprado (con las cantidades compradas y, si el ciclo sigue abierto, el
-   saldo por comprar) o cerrado.
-2. **Si el producto ya tiene compra registrada**, el bot lo dice explícitamente: «ya hay una compra registrada» y
-   muestra las cantidades compradas y, si el ciclo sigue abierto, cuánto falta por comprar. **No** vuelve a crear la
-   necesidad, **no** suma cantidad y **no** afirma que el producto fue recibido: compra y recepción son cosas
-   distintas y el MVP no registra la segunda (D-126).
+1. **Un aviso repetido de la misma persona no crea una segunda necesidad.** Si el producto coincide con **su** propio
+   faltante `active` del mismo ciclo —pendiente, en cotización o con compra registrada—, se registra la observación en
+   ese faltante y la respuesta informa el estado: pendiente, en cotización, comprado (con las cantidades compradas y,
+   si el ciclo sigue abierto, el saldo por comprar) o cerrado. **Si el producto lo reportó otra persona**, no se
+   adjunta: se pregunta y, si confirma, se crea un reporte propio (§10.5).
+2. **Si el producto ya tiene compra registrada para esa persona**, el bot lo dice explícitamente: «ya hay una compra
+   registrada» y muestra las cantidades compradas y, si el ciclo sigue abierto, cuánto falta por comprar. **No** vuelve
+   a crear la necesidad, **no** suma cantidad y **no** afirma que el producto fue recibido: compra y recepción son
+   cosas distintas y el MVP no registra la segunda (D-126). La compra de otra persona no cubre el reporte propio.
 3. **Aviso durante una compra registrada:** el mensaje informa la cobertura y no aplica ninguna cantidad. Para pedir
    **más** cantidad hace falta un comando explícito `ADD`/`SET`/`CLEAR`, con el permiso correspondiente; nunca una
    suma implícita (AC35).
@@ -1665,9 +1770,10 @@ la mercadería llegue (D-126) y ninguno se produce por cotizar (D-127).
    aplica cantidades y **no** confirma llegadas (§10.4).
 6. **Después de `fulfilled`:** un nuevo aviso del mismo producto crea un **nuevo** faltante (nuevo ciclo), con su
    propio historial; el anterior no se reabre ni se le suma cantidad.
-7. **El ciclo, no el tiempo, decide si es un aviso repetido o una necesidad nueva.** Mientras el faltante esté
-   `active`, todo aviso del mismo producto se registra en él; solo después de `fulfilled` (o `cancelled`) un aviso
-   abre un ciclo nuevo. No hay plazo, ventana de tiempo ni confirmación de recepción que intervenga.
+7. **El ciclo, no el tiempo, decide si es un aviso repetido o una necesidad nueva.** Mientras **su** faltante esté
+   `active`, un aviso del mismo producto de la misma persona se registra en él; solo después de `fulfilled` (o
+   `cancelled`) esa persona abre un ciclo nuevo. **Otra persona** siempre tiene su propio reporte, aunque el producto y
+   el ciclo coincidan. No hay plazo, ventana de tiempo ni confirmación de recepción que intervenga.
 8. **Cantidad desconocida:** el bot informa que la necesidad sigue abierta y nunca la cierra ni inventa una cantidad o
    una recepción; para cerrarla hace falta un `ADD`/`SET` explícito que declare la cantidad pedida o una anulación con
    motivo (§12.3, V-06).
@@ -1686,6 +1792,18 @@ Adiciones al sobre de error de C0 (`{"error": {"code", "message", "details"?}}`)
 | 409 | `LINE_EXISTS` | La misma oferta ya está activa en el carrito con **otra cantidad**; usar `PATCH` |
 | 409 | `LINE_HAS_PURCHASES` | Quitar o mover una línea con compras vigentes |
 | 409 | `QUANTITY_BELOW_PURCHASED` | Cantidad nueva menor que lo ya comprado |
+| 409 | `ALLOCATION_EXCEEDS_LINE` | La suma de asignaciones supera la cantidad de la línea |
+| 409 | `QUOTE_HAS_INCONSISTENT_ALLOCATIONS` | Cerrar una cotización con asignaciones a reportes cancelados, sin cantidad o con cantidad menor a lo asignado; `details.issues[]` |
+| 409 | `QUANTITY_BELOW_ALLOCATED` | La cantidad pedida quedaría por debajo de lo asignado en cotizaciones vigentes |
+| 409 | `REPORT_HAS_ALLOCATIONS` | Se intenta dejar sin cantidad un reporte con asignaciones vigentes |
+| 422 | `ALLOCATION_CONFLICT` | Se envían juntos `demand_item_id` y `demand_allocations` |
+| 422 | `ALLOCATION_EMPTY` / `ALLOCATION_INVALID` | Lista vacía o asignación sin reporte/cantidad válidos |
+| 422 | `DUPLICATE_ALLOCATION` | El mismo reporte aparece dos veces en una línea |
+| 422 | `UNIT_MISMATCH` | La unidad del reporte no coincide con la de la línea |
+| 422 | `REPORT_QUANTITY_UNKNOWN` | Se intenta asignar un reporte sin cantidad pedida conocida |
+| 422 | `CROSS_AUTHOR_ITEM` | Se intenta adjuntar una observación al reporte de otra persona |
+| 409 | `REPORT_NOT_ACTIVE` | Cancelar un reporte ya cancelado o cumplido |
+| 409 | `REPORT_HAS_PURCHASE` | Cancelar un reporte con compra registrada (C5-B) |
 | 409 | `PURCHASE_ALREADY_SUPERSEDED` | Ya existe una sustitución o anulación de ese registro |
 | 409 | `ACCESS_REQUEST_NOT_PENDING` | Aprobar o rechazar una solicitud ya decidida |
 | 409 | `INTERPRETATION_ALREADY_REVIEWED` | Revisar una interpretación ya confirmada o rechazada |

@@ -58,7 +58,7 @@ async def test_texto_original_se_conserva_y_no_se_puede_reescribir(ctx, engine):
 
 async def test_cifra_sin_unidad_contra_unidad_explicita_va_a_revision_con_motivo(ctx):
     await ctx.report("ana", "falta ibuprofeno de 400")
-    r = await ctx.report("luis", "no queda ibuprofeno 400 mg")
+    r = await ctx.report("ana", "no queda ibuprofeno 400 mg")
     assert r.outcome == "needs_review" and r.item is None
     assert "unit_unconfirmed" in r.observation.candidates[0]["reasons"]
     assert len(await ctx.items()) == 1  # ni se fusionó ni se creó otra a escondidas
@@ -66,7 +66,7 @@ async def test_cifra_sin_unidad_contra_unidad_explicita_va_a_revision_con_motivo
 
 async def test_misma_incognita_repetida_se_asocia_y_sigue_pendiente(ctx):
     a = await ctx.report("ana", "falta ibuprofeno de 400")
-    b = await ctx.report("luis", "no queda ibuprofeno 400")
+    b = await ctx.report("ana", "no queda ibuprofeno 400")
     assert b.outcome == "attached_existing" and b.item.id == a.item.id
     assert parsed(b.item).unassigned and not parsed(b.item).identity_complete
 
@@ -84,7 +84,7 @@ async def test_cantidad_solicitada_contenido_y_potencia_no_se_mezclan(ctx):
     p = parsed(r.item)
     assert [s.measure.label for s in p.strengths] == ["400 mg"] and p.content.measure.value == 20
     assert r.item.resolved_identity_key  # identidad completa y explícita
-    r2 = await ctx.report("luis", "falta ibuprofeno 400 mg comprimidos x 20")
+    r2 = await ctx.report("ana", "falta ibuprofeno 400 mg comprimidos x 20")
     assert r2.outcome == "attached_existing" and r2.item.id == r.item.id
 
 
@@ -94,7 +94,7 @@ async def test_cantidad_solicitada_contenido_y_potencia_no_se_mezclan(ctx):
 async def test_inferencia_no_se_fusiona_con_lo_explicito_hasta_confirmarse(ctx):
     a = await ctx.report("ana", "falta amoxicilina 1 g comprimidos x 20")
     assert a.item.resolved_identity_key is None  # potencia deducida del contexto
-    b = await ctx.report("luis", "falta amoxicilina 1000 mg comprimidos x 20")
+    b = await ctx.report("ana", "falta amoxicilina 1000 mg comprimidos x 20")
     assert (
         b.outcome == "needs_review"
     )  # misma cifra normalizada, pero hay una inferencia de por medio
@@ -109,7 +109,7 @@ async def test_inferencia_no_se_fusiona_con_lo_explicito_hasta_confirmarse(ctx):
 
 async def test_resolver_confirma_la_unidad_y_recuerda_sin_volver_a_preguntar(ctx):
     base = await ctx.report("ana", "falta ibuprofeno de 400")
-    dudoso = await ctx.report("luis", "no queda ibuprofeno 400 mg")
+    dudoso = await ctx.report("ana", "no queda ibuprofeno 400 mg")
     assert dudoso.outcome == "needs_review"
     ok = await ctx.run("pao", resolve_observation, dudoso.observation.id, demand_item_id=base.item.id,
                        create_new=False, apply_observed_attributes=True, remember_alias=True)  # fmt: skip
@@ -129,7 +129,7 @@ async def test_resolver_confirma_la_unidad_y_recuerda_sin_volver_a_preguntar(ctx
 
 async def test_alias_es_revisable_y_desactivable_y_por_organizacion(ctx):
     base = await ctx.report("ana", "falta ibuprofeno de 400")
-    dudoso = await ctx.report("luis", "falta ibuprofeno 400 mg")
+    dudoso = await ctx.report("ana", "falta ibuprofeno 400 mg")
     await ctx.run("pao", resolve_observation, dudoso.observation.id, demand_item_id=base.item.id,
                   create_new=False, apply_observed_attributes=True, remember_alias=True)  # fmt: skip
     (alias,) = await ctx.run("pao", list_aliases)
@@ -144,7 +144,7 @@ async def test_alias_es_revisable_y_desactivable_y_por_organizacion(ctx):
     ajeno = await ctx.report("intruso", "falta ibuprofeno 400")
     assert ajeno.item.attributes["unassigned"] and not ajeno.item.attributes["strengths"]
     await ctx.run("pao", deactivate_alias, alias.id)
-    despues = await ctx.report("luis", "falta ibuprofeno 400")  # sin memoria vuelve a ser ambiguo
+    despues = await ctx.report("ana", "falta ibuprofeno 400")  # sin memoria vuelve a ser ambiguo
     assert (
         despues.outcome == "needs_review"
     )  # el ítem ya está confirmado en 400 mg: coincidencia no segura
@@ -171,7 +171,7 @@ async def test_confirmar_exige_version_y_no_pisa_en_silencio(ctx):
 async def test_confirmar_hasta_coincidir_con_otra_necesidad_se_bloquea(ctx):
     a = await ctx.report("ana", "falta ibuprofeno 400 mg comprimidos x 20")
     b = await ctx.report(
-        "luis", "falta ibuprofeno 400 comprimidos x 20"
+        "ana", "falta ibuprofeno 400 comprimidos x 20"
     )  # cifra sin unidad: revisión
     assert b.outcome == "needs_review"
     nuevo = await ctx.run(
@@ -204,7 +204,7 @@ async def test_confirmacion_deja_auditoria_y_evento_sin_cambiar_cantidad(ctx):
 
 async def test_resolver_la_misma_observacion_en_paralelo_solo_una_vez(ctx):
     await ctx.report("ana", "falta ibuprofeno de 400")
-    d = await ctx.report("luis", "falta ibuprofeno 400 mg")
+    d = await ctx.report("ana", "falta ibuprofeno 400 mg")
     res = await asyncio.gather(
         *[
             ctx.run(

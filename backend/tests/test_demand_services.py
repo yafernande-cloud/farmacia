@@ -18,14 +18,15 @@ pytestmark = pytest.mark.db
 # ---- Escenarios pedidos ----
 
 
-async def test_dos_auxiliares_mismo_ibuprofeno_una_necesidad_dos_observaciones(ctx):
+async def test_dos_auxiliares_conservan_dos_reportes_independientes(ctx):
     a = await ctx.report("ana", "falta ibuprofeno de 400 mg")
     b = await ctx.report("luis", "no queda ibuprofeno 400 mg")
-    assert a.outcome == "created_item" and b.outcome == "attached_existing"
+    assert a.outcome == "created_item" and b.outcome == "created_item"
+    assert a.item.id != b.item.id and a.item.reported_by == a.observation.author_id
     items = await ctx.items()
-    assert len(items) == 1
+    assert len(items) == 2
     assert await ctx.count(DemandObservation) == 2
-    assert items[0].target_quantity is None  # y la cantidad no cambió (AC04)
+    assert all(i.target_quantity is None for i in items)  # la cantidad no cambió (AC04)
 
 
 async def test_aviso_repetido_no_aumenta_la_cantidad(ctx):
@@ -33,8 +34,12 @@ async def test_aviso_repetido_no_aumenta_la_cantidad(ctx):
     await ctx.qty(r.item.id, Op.SET, D(5), U.BOX)
     for who in ("ana", "luis", "ana"):
         await ctx.report(who, "falta ibuprofeno 400 mg")
-    (item,) = await ctx.items()
-    assert (item.target_quantity, item.quantity_unit) == (D(5), "box")  # AC05
+    items = await ctx.items()
+    assert len(items) == 2  # Ana y Luis tienen su propio reporte
+    ana = next(i for i in items if i.reported_by == r.item.reported_by)
+    luis = next(i for i in items if i.id != ana.id)
+    assert (ana.target_quantity, ana.quantity_unit) == (D(5), "box")  # AC05
+    assert luis.target_quantity is None  # el aviso de Luis no toca la cantidad de Ana
     assert await ctx.count(DemandObservation) == 4
 
 
@@ -141,17 +146,19 @@ async def test_sin_ciclo_abierto_se_rechaza(ctx, sessions):
 # ---- Ambigüedad y revisión ----
 
 
-async def test_coincidencia_parcial_va_a_revision_sin_elegir_por_el_usuario(ctx):
-    await ctx.report("ana", "falta ibuprofeno 400 mg")
+async def test_coincidencia_parcial_con_otro_autor_no_fusiona(ctx):
+    base = await ctx.report("ana", "falta ibuprofeno 400 mg")
     r = await ctx.report("luis", "falta ibuprofeno 400 mg comprimidos x 20")
-    assert r.outcome == "needs_review" and r.item is None
-    assert r.observation.candidates[0]["relation"] == "compatible_partial"
-    assert len(await ctx.items()) == 1  # no se creó ni fusionó nada
+    # Modelo A: no es candidato de otra persona. Luis conserva su reporte independiente.
+    assert r.outcome == "created_item" and r.item is not None
+    assert r.item.id != base.item.id and r.observation.candidates == []
+    assert len(await ctx.items()) == 2
 
 
 async def test_resolver_asocia_o_crea_pero_nunca_une_incompatibles(ctx):
     base = await ctx.report("ana", "falta ibuprofeno 400 mg")
-    review = await ctx.report("luis", "falta ibuprofeno 400 mg comprimidos x 20")
+    review = await ctx.report("ana", "falta ibuprofeno 400 mg comprimidos x 20")
+    assert review.outcome == "needs_review"
     ok = await ctx.run(
         "pao",
         resolve_observation,
@@ -170,10 +177,28 @@ async def test_resolver_asocia_o_crea_pero_nunca_une_incompatibles(ctx):
         )
     assert e.value.code == "ALREADY_RESOLVED"
 
+    # Nunca se cruza de autor: la observación de Luis no puede ir al reporte de Ana.
+    await ctx.report("luis", "falta ibuprofeno 400 mg comprimidos")
+    luis = await ctx.report("luis", "falta ibuprofeno 400")
+    assert luis.outcome == "needs_review"
+    with pytest.raises(DomainError) as e:
+        await ctx.run(
+            "pao",
+            resolve_observation,
+            luis.observation.id,
+            demand_item_id=base.item.id,
+            create_new=False,
+        )
+    assert e.value.code == "CROSS_AUTHOR_ITEM" and e.value.status_code == 409
+    created = await ctx.run(
+        "pao", resolve_observation, luis.observation.id, demand_item_id=None, create_new=True
+    )
+    assert created.item.reported_by == luis.observation.author_id
+
     # una observación de 600 mg nunca puede asociarse a la necesidad de 400 mg
     six = await ctx.report("ana", "falta ibuprofeno 600 mg comprimidos")
     assert six.outcome == "created_item"
-    dudosa = await ctx.report("luis", "falta ibuprofeno 600 mg")
+    dudosa = await ctx.report("ana", "falta ibuprofeno 600 mg")
     with pytest.raises(DomainError) as e:
         await ctx.run(
             "pao",
@@ -188,7 +213,7 @@ async def test_resolver_asocia_o_crea_pero_nunca_une_incompatibles(ctx):
 async def test_varios_candidatos_parciales_exigen_aclaracion(ctx):
     await ctx.report("ana", "falta ibuprofeno 400 mg comprimidos")
     await ctx.report("ana", "falta ibuprofeno 400 mg suspension")
-    r = await ctx.report("luis", "falta ibuprofeno 400")
+    r = await ctx.report("ana", "falta ibuprofeno 400")
     assert r.outcome == "needs_review" and len(r.observation.candidates) == 2  # AC10
 
 
@@ -204,10 +229,11 @@ async def test_concurrentes_equivalentes_una_necesidad_n_observaciones(ctx):
             for i in range(12)
         ]
     )
-    assert sorted(r.outcome for r in res).count("created_item") == 1  # AC11
-    assert len(await ctx.items()) == 1
+    # Dos autores: dos reportes independientes, doce observaciones.
+    assert sorted(r.outcome for r in res).count("created_item") == 2  # AC11
+    assert len(await ctx.items()) == 2
     assert await ctx.count(DemandObservation) == 12
-    assert (await ctx.items())[0].target_quantity is None
+    assert all(i.target_quantity is None for i in await ctx.items())
 
 
 async def test_mismo_evento_entregado_varias_veces_una_sola_observacion(ctx):
@@ -258,7 +284,7 @@ async def test_add_concurrente_con_la_misma_clave_suma_una_vez(ctx):
 
 async def test_auditoria_y_outbox_se_escriben_con_el_cambio(ctx):
     r = await ctx.report("ana", "falta ibuprofeno 400")
-    await ctx.report("luis", "falta ibuprofeno 400")
+    await ctx.report("ana", "falta ibuprofeno 400")
     await ctx.qty(r.item.id, Op.SET, D(5), U.BOX)
     async with ctx.sessions() as s:
         types = (

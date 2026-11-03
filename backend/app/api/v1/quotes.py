@@ -52,6 +52,15 @@ class QuotePatchIn(BaseModel):
     status: Literal["draft", "closed"] | None = None
 
 
+class AllocationIn(BaseModel):
+    """Cuánto de esta línea cubre a un reporte concreto (D-135). Nunca se reparte solo."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    demand_item_id: uuid.UUID
+    quantity: int = Field(gt=0, description="Entero > 0. La suma no puede superar la línea.")
+
+
 class LineIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -62,7 +71,12 @@ class LineIn(BaseModel):
         description="`value` entero > 0 (texto o número) y `unit` ∈ box|package|unit|bottle.",
     )
     demand_item_id: uuid.UUID | None = Field(
-        default=None, description="Faltante que esta línea ayuda a cubrir. Opcional."
+        default=None,
+        description="Atajo de una sola asignación; incompatible con `demand_allocations`.",
+    )
+    demand_allocations: list[AllocationIn] | None = Field(
+        default=None,
+        description="Asignaciones explícitas a uno o varios reportes. Sin reparto automático.",
     )
 
 
@@ -72,6 +86,9 @@ class LinePatchIn(BaseModel):
     version: int | None = None
     quantity: dict[str, Any]
     quantity_unit: str | None = None
+    demand_allocations: list[AllocationIn] | None = Field(
+        default=None, description="Reemplaza las asignaciones de la línea si se envía."
+    )
 
 
 class ClosePendingIn(BaseModel):
@@ -89,6 +106,9 @@ class MoveIn(BaseModel):
     demand_item_id: uuid.UUID | None = Field(
         default=None,
         description="Vínculo nuevo y explícito; el original no se arrastra (§5.2).",
+    )
+    demand_allocations: list[AllocationIn] | None = Field(
+        default=None, description="Asignaciones nuevas y explícitas; no se arrastran."
     )
 
 
@@ -174,6 +194,7 @@ class LineOut(BaseModel):
     removed_by: uuid.UUID | None
     demand_item_id: uuid.UUID | None
     coverage_relation: str | None
+    demand_allocations: list[dict[str, Any]] = []
     pending_closed_at: datetime | None
     pending_closed_by: uuid.UUID | None
     pending_closed_note: str | None
@@ -195,6 +216,15 @@ class LineAddedOut(BaseModel):
     line: LineOut
     cart: dict[str, Any]
     deduplicated: bool = False
+    warnings: list[str] = []
+
+
+class LineRefreshedOut(BaseModel):
+    """Respuesta de refrescar: `refreshed` es un hecho propio, no una deduplicación de alta."""
+
+    line: LineOut
+    cart: dict[str, Any]
+    refreshed: bool
     warnings: list[str] = []
 
 
@@ -357,6 +387,13 @@ async def add_line(
                 "value": str(value),
                 "unit": unit,
                 "demand_item_id": str(body.demand_item_id) if body.demand_item_id else None,
+                "demand_allocations": sorted(
+                    (
+                        {"demand_item_id": str(a.demand_item_id), "quantity": a.quantity}
+                        for a in (body.demand_allocations or [])
+                    ),
+                    key=lambda a: (a["demand_item_id"], a["quantity"]),
+                ),
             }
         )
         if key
@@ -372,6 +409,11 @@ async def add_line(
             quantity=value,
             quantity_unit=unit,
             demand_item_id=body.demand_item_id,
+            demand_allocations=(
+                [a.model_dump() for a in body.demand_allocations]
+                if body.demand_allocations is not None
+                else None
+            ),
             idempotency_key=key,
             request_hash=digest,
         )
@@ -409,6 +451,11 @@ async def patch_line(
             expected_version=body.version,
             quantity=value,
             quantity_unit=body.quantity_unit or unit,
+            demand_allocations=(
+                [a.model_dump() for a in body.demand_allocations]
+                if body.demand_allocations is not None
+                else None
+            ),
         )
         return {
             "line": await quote_svc.line_view(session, actor, quote, line),
@@ -490,6 +537,11 @@ async def move_line(
             quantity=value,
             quantity_unit=body.quantity_unit or unit,
             demand_item_id=body.demand_item_id,
+            demand_allocations=(
+                [a.model_dump() for a in body.demand_allocations]
+                if body.demand_allocations is not None
+                else None
+            ),
         )
         return {
             "line": await quote_svc.line_view(session, actor, quote, line),
@@ -501,7 +553,7 @@ async def move_line(
 
 @router.post(
     "/quotes/{quote_id}/lines/{line_id}/refresh",
-    response_model=LineAddedOut,
+    response_model=LineRefreshedOut,
     responses=ERRORS,
     summary="Aceptar el precio actual y reapuntar la línea (explícito y auditado)",
 )
@@ -515,7 +567,7 @@ async def refresh_line(
         return {
             "line": await quote_svc.line_view(session, actor, quote, line),
             "cart": await quote_svc.cart_view(session, actor, quote, cart),
-            "deduplicated": not refreshed,
+            "refreshed": refreshed,
             "warnings": [],
         }
 

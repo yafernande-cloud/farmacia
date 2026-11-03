@@ -71,6 +71,15 @@ def can_report(roles: list[str]) -> bool:
         return False
 
 
+def can_apply_quantity(roles: list[str]) -> bool:
+    """¿Esta persona aplica cantidades por sí misma? El auxiliar solo propone (D-135)."""
+    try:
+        require(roles, Permission.APPLY_QUANTITY)
+        return True
+    except DomainError:
+        return False
+
+
 def require_admin(roles: list[str]) -> None:
     """Chequeo de rol del Cotizador (C0 §6): el único perfil funcional web es `admin`."""
     if Role.ADMIN.value not in (roles or []):

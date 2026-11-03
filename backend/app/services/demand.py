@@ -9,7 +9,8 @@ Lo que depende de la incertidumbre es el vínculo con una necesidad existente:
 """
 
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -31,7 +32,16 @@ from app.domain.products import (
 from app.domain.units import fmt
 from app.interpretation.ai import AIInterpreter
 from app.interpretation.types import Interpretation
-from app.models import DemandItem, DemandObservation, ProductAlias, PurchaseCycle
+from app.models import (
+    DemandItem,
+    DemandObservation,
+    ProductAlias,
+    PurchaseCycle,
+    Quote,
+    QuoteCart,
+    QuoteLine,
+    QuoteLineAllocation,
+)
 from app.services.actors import Actor
 from app.services.events import advisory_lock, emit, request_hash
 from app.services.interpretation import interpret_product, interpret_text
@@ -40,13 +50,19 @@ from app.services.provenance import org_kind, origin_for
 
 @dataclass
 class ObservationResult:
-    observation: DemandObservation
+    observation: DemandObservation | None
     item: DemandItem | None
-    outcome: str  # created_item | attached_existing | needs_review | resolved_manual
+    # created_item | attached_existing | needs_review | resolved_manual | needs_confirmation
+    outcome: str
     parsed: ParsedProduct
     replayed: bool = False
     alias_created: bool = False
     interpretation: Interpretation | None = None
+    # Reportes de OTRAS personas sobre el mismo producto. Solo informan: nunca se adjunta ni se
+    # fusiona automáticamente un reporte a la necesidad de otra persona (Modelo A, D-135).
+    other_reports: list[dict] = field(default_factory=list)
+    # Reporte del MISMO autor con cantidad conocida, cuando un nuevo aviso trae otra cantidad.
+    same_author_item: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -81,10 +97,15 @@ def _apply_to_item(item: DemandItem, p: ParsedProduct) -> None:
 
 
 def _new_item(
-    org_id: uuid.UUID, cycle_id: uuid.UUID, p: ParsedProduct, data_origin: str
+    org_id: uuid.UUID,
+    cycle_id: uuid.UUID,
+    p: ParsedProduct,
+    data_origin: str,
+    reported_by: uuid.UUID,
 ) -> DemandItem:
     item = DemandItem(organization_id=org_id, cycle_id=cycle_id, ingredient=p.ingredient,
-                      display_name="", attributes={}, data_origin=data_origin)  # fmt: skip
+                      display_name="", attributes={}, data_origin=data_origin,
+                      reported_by=reported_by)  # fmt: skip
     _apply_to_item(item, p)
     return item
 
@@ -94,6 +115,9 @@ def _item_snapshot(i: DemandItem) -> dict:
         "display_name": i.display_name, "target_quantity": i.target_quantity and fmt(i.target_quantity),
         "quantity_unit": i.quantity_unit, "version": i.version, "status": i.status,
         "identity_complete": parsed_of_item(i).identity_complete,
+        "reported_by": str(i.reported_by) if i.reported_by else None,
+        "cancelled_at": i.cancelled_at.isoformat() if i.cancelled_at else None,
+        "cancellation_reason": i.cancellation_reason,
     }  # fmt: skip
 
 
@@ -123,17 +147,33 @@ async def active_aliases(session: AsyncSession, org: uuid.UUID, ingredient: str)
     return [{"source_value": a.source_value, "assignment": a.assignment} for a in rows]
 
 
-async def _family_items(session, org, cycle_id, ingredient) -> list[DemandItem]:
-    return list(
-        (
-            await session.execute(
-                select(DemandItem).where(
-                    DemandItem.organization_id == org, DemandItem.cycle_id == cycle_id,
-                    DemandItem.status == "active", DemandItem.ingredient == ingredient,
-                ).order_by(DemandItem.created_at, DemandItem.id)
-            )
-        ).scalars()
+async def _family_items(
+    session,
+    org,
+    cycle_id,
+    ingredient,
+    *,
+    reported_by: uuid.UUID | None = None,
+    all_authors: bool = False,
+) -> list[DemandItem]:
+    """Faltantes activos de la misma familia, filtrados por autor salvo `all_authors`.
+
+    El filtro por autor es la regla del Modelo A: la deduplicación solo mira las necesidades de la
+    MISMA persona. Las de otras personas se consultan aparte, solo para informar (D-135).
+    """
+    q = select(DemandItem).where(
+        DemandItem.organization_id == org, DemandItem.cycle_id == cycle_id,
+        DemandItem.status == "active", DemandItem.ingredient == ingredient,
     )  # fmt: skip
+    if not all_authors:
+        q = q.where(
+            DemandItem.reported_by.is_(None)
+            if reported_by is None
+            else DemandItem.reported_by == reported_by
+        )
+    return list(
+        (await session.execute(q.order_by(DemandItem.created_at, DemandItem.id))).scalars()
+    )
 
 
 def _require_available(actor: Actor, origin: "Origin | None") -> None:
@@ -157,8 +197,14 @@ async def record_observation(
     declared_unit: str | None = None,
     ai: AIInterpreter | None = None,
     origin: Origin | None = None,
+    confirmation_mode: str | None = None,
+    quantity_proposal: dict | None = None,
 ) -> ObservationResult:
-    """Registra un aviso escrito. Nunca modifica cantidades objetivo (inv. 1)."""
+    """Registra un aviso escrito. Nunca modifica cantidades objetivo (inv. 1).
+
+    `confirmation_mode="telegram"` no registra el aviso cuando hay una coincidencia que requiere
+    confirmación: devuelve `needs_confirmation` y el canal pregunta antes de crear nada (D-135).
+    """
     require(actor.roles, Permission.REPORT_SHORTAGE)
     _require_available(actor, origin)
     org = actor.organization_id
@@ -173,7 +219,8 @@ async def record_observation(
     interp = await interpret_text(session, org, cycle.id, text, ai)  # puede lanzar DomainError
     return await _store(session, actor, cycle, interp, raw_text=text, idempotency_key=idempotency_key,
                         req=req, declared_quantity=declared_quantity, declared_unit=declared_unit,
-                        origin=origin or Origin())  # fmt: skip
+                        origin=origin or Origin(), confirmation_mode=confirmation_mode,
+                        quantity_proposal=quantity_proposal)  # fmt: skip
 
 
 async def record_interpreted_observation(
@@ -188,6 +235,8 @@ async def record_interpreted_observation(
     extra_interpretation: dict | None = None,
     ai: AIInterpreter | None = None,
     ai_derived: bool = False,
+    confirmation_mode: str | None = None,
+    quantity_proposal: dict | None = None,
 ) -> ObservationResult:
     """Registra un aviso cuya interpretación ya viene hecha (p. ej. foto + pie de foto).
 
@@ -209,13 +258,15 @@ async def record_interpreted_observation(
     return await _store(session, actor, cycle, interp, raw_text=raw_text, idempotency_key=idempotency_key,
                         req=req, declared_quantity=parsed.requested_quantity,
                         declared_unit=parsed.requested_unit, origin=origin, force_review=force_review,
-                        extra_interpretation=extra_interpretation, ai_derived=ai_derived)  # fmt: skip
+                        extra_interpretation=extra_interpretation, ai_derived=ai_derived,
+                        confirmation_mode=confirmation_mode,
+                        quantity_proposal=quantity_proposal)  # fmt: skip
 
 
 async def _store(
     session, actor, cycle, interp: Interpretation, *, raw_text, idempotency_key, req,
     declared_quantity, declared_unit, origin: Origin, force_review=(), extra_interpretation=None,
-    ai_derived=False,
+    ai_derived=False, confirmation_mode: str | None = None, quantity_proposal: dict | None = None,
 ) -> ObservationResult:  # fmt: skip
     org = actor.organization_id
     parsed = interp.parsed
@@ -224,17 +275,54 @@ async def _store(
     kind = await org_kind(session, org)
     data_origin = origin_for(kind, ai_derived=ai_derived)
     # Serializa por familia (ciclo + principio activo YA resuelto): avisos simultáneos del mismo
-    # producto producen una necesidad y N observaciones (AC11, HLD §7.4).
+    # producto producen una necesidad por autor y N observaciones (AC11, HLD §7.4, D-135).
     await advisory_lock(session, f"fam:{org}:{cycle.id}:{parsed.ingredient}")
     if declared_quantity is None:  # la cantidad escrita en el texto es solo una sugerencia
         declared_quantity, declared_unit = parsed.requested_quantity, parsed.requested_unit
 
+    # La deduplicación solo considera las necesidades del MISMO autor. Las de otras personas se
+    # leen aparte para informar y, en Telegram, pedir confirmación: nunca se adjunta el aviso.
+    own_family = await _family_items(
+        session, org, cycle.id, parsed.ingredient, reported_by=actor.id
+    )
+    all_family = await _family_items(
+        session, org, cycle.id, parsed.ingredient, all_authors=True
+    )
     comps = [
         (c, compare(parsed, parsed_of_item(c)))
-        for c in await _family_items(session, org, cycle.id, parsed.ingredient)
+        for c in own_family
     ]
     comps = [(c, k) for c, k in comps if k.relation is not Relation.INCOMPATIBLE]  # AC09
     identical = [c for c, k in comps if k.relation is Relation.IDENTICAL]
+
+    other_reports: list[dict] = []
+    for c in all_family:
+        if c.reported_by == actor.id:
+            continue
+        k = compare(parsed, parsed_of_item(c))
+        if k.relation is Relation.INCOMPATIBLE:
+            continue
+        other_reports.append(_other_report(c, k.relation.value))
+    other_identical = [r for r in other_reports if r["relation"] == Relation.IDENTICAL.value]
+
+    # Confirmación explícita en el canal: no se crea ni se adjunta nada todavía.
+    if confirmation_mode == "telegram":
+        if len(identical) == 1:
+            # Es su propio reporte: solo se pregunta si el aviso trae una cantidad y ya hay una
+            # cantidad conocida (¿total o adicional?). Nunca se adivina ni se suma.
+            same = identical[0]
+            if declared_quantity is not None and same.target_quantity is not None:
+                return ObservationResult(
+                    None, same, "needs_confirmation", parsed, interpretation=interp,
+                    same_author_item=_other_report(same, Relation.IDENTICAL.value),
+                )  # fmt: skip
+        elif other_identical:
+            # Otra persona ya reportó lo mismo. No se adjunta ni se suma: se pregunta si es un
+            # reporte propio independiente (D-135).
+            return ObservationResult(
+                None, None, "needs_confirmation", parsed, interpretation=interp,
+                other_reports=other_reports,
+            )  # fmt: skip
 
     reasons = list(force_review)
     if interp.unrecognized_name_with_candidates:
@@ -257,14 +345,18 @@ async def _store(
             for c, k in comps
         ]  # fmt: skip
     else:
+        # Sin coincidencia PROPIA: el aviso crea su propio reporte, aunque otra persona ya haya
+        # reportado el mismo producto. No se fusiona ni se suma nada entre autores.
         outcome, cands = "created_item", []
-        item = _new_item(org, cycle.id, parsed, data_origin)
+        item = _new_item(org, cycle.id, parsed, data_origin, actor.id)
         session.add(item)
         await session.flush()
 
     snapshot = interp.snapshot() | (extra_interpretation or {})
     if reasons:
         snapshot["uncertainties"] = list(dict.fromkeys([*snapshot["uncertainties"], *reasons]))
+    if other_reports:
+        snapshot["other_reports"] = other_reports
     obs = DemandObservation(
         organization_id=org, cycle_id=cycle.id, demand_item_id=item.id if item else None,
         author_id=actor.id, raw_text=raw_text, parsed=_parsed_json(parsed), interpretation=snapshot,
@@ -272,6 +364,7 @@ async def _store(
         channel_message_id=origin.channel_message_id, attachment_id=origin.attachment_id,
         account_id=origin.account_id,
         declared_quantity=declared_quantity, declared_unit=declared_unit,
+        quantity_proposal=quantity_proposal or {},
         match_status=outcome, candidates=cands, policy_version=POLICY_VERSION,
         idempotency_key=idempotency_key, request_hash=req, data_origin=data_origin,
     )  # fmt: skip
@@ -291,7 +384,20 @@ async def _store(
          aggregate_version=item.version if item else None,
          payload={"demand_item_id": str(item.id) if item else None, "observation_id": str(obs.id),
                   "quantity_changed": False, "source": origin.source})  # fmt: skip
-    return ObservationResult(obs, item, outcome, parsed, interpretation=interp)
+    return ObservationResult(
+        obs, item, outcome, parsed, interpretation=interp, other_reports=other_reports
+    )
+
+
+def _other_report(item: DemandItem, relation: str) -> dict:
+    return {
+        "demand_item_id": str(item.id),
+        "display_name": item.display_name,
+        "reported_by": str(item.reported_by) if item.reported_by else None,
+        "target_quantity": None if item.target_quantity is None else fmt(item.target_quantity),
+        "quantity_unit": item.quantity_unit,
+        "relation": relation,
+    }
 
 
 async def _observation_by_key(session, org, key) -> DemandObservation | None:
@@ -325,9 +431,12 @@ async def _assert_no_key_collision(
 ) -> None:
     if not key:
         return
+    # La colisión solo importa dentro del mismo autor: dos personas pueden tener su propio
+    # reporte del mismo producto (D-135).
     family = await _family_items(
-        session, item.organization_id, item.cycle_id, ingredient or item.ingredient
-    )
+        session, item.organization_id, item.cycle_id, ingredient or item.ingredient,
+        reported_by=item.reported_by,
+    )  # fmt: skip
     other = next((o for o in family if o.id != item.id and o.resolved_identity_key == key), None)
     if other:
         raise DomainError(
@@ -432,7 +541,11 @@ async def resolve_observation(
             )
         parsed = replace(parsed, ingredient=as_ingredient, name_anchor=False)
     await advisory_lock(session, f"fam:{org}:{obs.cycle_id}:{parsed.ingredient}")
-    family = await _family_items(session, org, obs.cycle_id, parsed.ingredient)
+    # La resolución tampoco cruza autores: la observación pertenece a su autor y solo puede
+    # asociarse a una necesidad de esa persona (D-135).
+    family = await _family_items(
+        session, org, obs.cycle_id, parsed.ingredient, reported_by=obs.author_id
+    )
     alias_created = False
 
     if create_new:
@@ -441,7 +554,7 @@ async def resolve_observation(
                 "DUPLICATE_ITEM_EXISTS",
                 "Ya existe una necesidad idéntica; asocia la observación a ella.",
             )
-        item = _new_item(org, obs.cycle_id, parsed, obs.data_origin)
+        item = _new_item(org, obs.cycle_id, parsed, obs.data_origin, obs.author_id)
         await _assert_no_key_collision(session, item, item.resolved_identity_key)
         session.add(item)
         await session.flush()
@@ -452,6 +565,22 @@ async def resolve_observation(
     else:
         item = next((c for c in family if c.id == demand_item_id), None)
         if item is None:
+            other = (
+                await session.execute(
+                    select(DemandItem).where(
+                        DemandItem.id == demand_item_id,
+                        DemandItem.organization_id == org,
+                        DemandItem.cycle_id == obs.cycle_id,
+                        DemandItem.status == "active",
+                    )
+                )
+            ).scalar_one_or_none()
+            if other is not None:
+                raise DomainError(
+                    "CROSS_AUTHOR_ITEM",
+                    "Esa necesidad es de otra persona. Cada reporte conserva su autor: crea uno nuevo.",
+                    status_code=409,
+                )
             raise not_found("La necesidad")
         current = parsed_of_item(item)
         if compare(parsed, current).relation is Relation.INCOMPATIBLE:
@@ -573,6 +702,170 @@ async def confirm_item_attributes(
          payload={"demand_item_id": str(item.id), "quantity_changed": False},
          before=before, after=_item_snapshot(item))  # fmt: skip
     return item
+
+
+# ---------------------------------------------------------------- cancelación de reportes
+
+
+async def affected_quote_lines(
+    session: AsyncSession, org: uuid.UUID, item_id: uuid.UUID
+) -> list[dict]:
+    """Líneas de cotización que asignan cantidad a este reporte. Solo informan: no se tocan."""
+    rows = (
+        await session.execute(
+            select(
+                QuoteLineAllocation.quote_line_id,
+                QuoteLineAllocation.quantity,
+                QuoteLineAllocation.coverage_relation,
+                QuoteLine.quantity.label("line_quantity"),
+                QuoteLine.quantity_unit,
+                QuoteLine.supplier_id,
+                Quote.status.label("quote_status"),
+                QuoteCart.quote_id,
+            )
+            .join(QuoteLine, QuoteLine.id == QuoteLineAllocation.quote_line_id)
+            .join(QuoteCart, QuoteCart.id == QuoteLine.quote_cart_id)
+            .join(Quote, Quote.id == QuoteCart.quote_id)
+            .where(
+                QuoteLineAllocation.organization_id == org,
+                QuoteLineAllocation.demand_item_id == item_id,
+                QuoteLine.status == "active",
+            )
+            .order_by(QuoteCart.quote_id, QuoteLineAllocation.quote_line_id)
+        )
+    ).all()
+    return [
+        {
+            "quote_line_id": r.quote_line_id,
+            "quote_id": r.quote_id,
+            "quote_status": r.quote_status,
+            "supplier_id": r.supplier_id,
+            "line_quantity": r.line_quantity,
+            "quantity_unit": r.quantity_unit,
+            "allocation_quantity": r.quantity,
+            "coverage_relation": r.coverage_relation,
+        }
+        for r in rows
+    ]
+
+
+async def active_allocations_for_item(
+    session: AsyncSession, org: uuid.UUID, item_id: uuid.UUID
+) -> list[dict]:
+    """Asignaciones **vigentes** de un reporte: línea activa en carrito activo.
+
+    Es la misma noción de vigencia que usa la cobertura (§12.3): un carrito descartado o una línea
+    retirada no cubren y, por tanto, no impiden bajar la cantidad pedida. La consulta no modifica
+    nada; los servicios deciden si bloquean la operación.
+    """
+    rows = (
+        await session.execute(
+            select(
+                QuoteLineAllocation.quantity,
+                QuoteLineAllocation.quote_line_id,
+                QuoteLine.quantity.label("line_quantity"),
+                QuoteLine.quantity_unit,
+                QuoteCart.quote_id,
+                Quote.status.label("quote_status"),
+            )
+            .join(QuoteLine, QuoteLine.id == QuoteLineAllocation.quote_line_id)
+            .join(QuoteCart, QuoteCart.id == QuoteLine.quote_cart_id)
+            .join(Quote, Quote.id == QuoteCart.quote_id)
+            .where(
+                QuoteLineAllocation.organization_id == org,
+                QuoteLineAllocation.demand_item_id == item_id,
+                QuoteLine.status == "active",
+                QuoteCart.status == "active",
+            )
+            .order_by(QuoteCart.quote_id, QuoteLineAllocation.quote_line_id)
+        )
+    ).all()
+    return [
+        {
+            "quote_line_id": r.quote_line_id,
+            "quote_id": r.quote_id,
+            "quote_status": r.quote_status,
+            "quantity": r.quantity,
+            "line_quantity": r.line_quantity,
+            "quantity_unit": r.quantity_unit,
+        }
+        for r in rows
+    ]
+
+
+async def _has_registered_purchase(session: AsyncSession, org: uuid.UUID, item_id: uuid.UUID) -> bool:
+    """C5-B (0018) conectará aquí `purchase_line_allocation`. Hoy no existe una compra registrada."""
+    return False
+
+
+async def cancel_item(
+    session: AsyncSession,
+    actor: Actor,
+    item_id: uuid.UUID,
+    *,
+    expected_version: int,
+    reason: str | None,
+) -> tuple[DemandItem, list[dict]]:
+    """Cancelación lógica de un reporte. Nunca borra observaciones, cantidades ni historial.
+
+    Si el reporte está asignado a líneas de cotización, se devuelven las líneas afectadas para que
+    la administración corrija las asignaciones antes de cerrar la cotización. No se modifican líneas
+    en silencio. Una compra registrada bloqueará la cancelación (`409 REPORT_HAS_PURCHASE`, C5-B).
+    """
+    from app.core.permissions import require_admin
+
+    require_admin(actor.roles)
+    org = actor.organization_id
+    item = (
+        await session.execute(
+            select(DemandItem)
+            .where(DemandItem.id == item_id, DemandItem.organization_id == org)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        raise not_found("El reporte")
+    if item.status != "active":
+        raise DomainError("REPORT_NOT_ACTIVE", "El reporte no está activo.", status_code=409)
+    if item.version != expected_version:
+        raise DomainError(
+            "VERSION_CONFLICT",
+            "El reporte cambió. Revisa la versión actual antes de cancelar.",
+            status_code=409,
+            details={"current_version": item.version},
+        )
+    if await _has_registered_purchase(session, org, item.id):
+        raise DomainError(
+            "REPORT_HAS_PURCHASE",
+            "El reporte tiene una compra registrada: anula o corrige la compra antes de cancelarlo.",
+            status_code=409,
+        )
+    affected = await affected_quote_lines(session, org, item.id)
+    before = _item_snapshot(item)
+    item.status = "cancelled"
+    item.cancelled_at = datetime.now(UTC)
+    item.cancelled_by = actor.id
+    item.cancellation_reason = reason
+    item.version += 1
+    emit(
+        session,
+        org_id=org,
+        actor_id=actor.id,
+        action="demand_item.cancel",
+        entity_type="demand_item",
+        entity_id=item.id,
+        event_type="demand.item_cancelled",
+        aggregate_version=item.version,
+        payload={
+            "demand_item_id": str(item.id),
+            "reason": reason,
+            "affected_quote_lines": len(affected),
+        },
+        before=before,
+        after=_item_snapshot(item),
+    )
+    await session.flush()
+    return item, affected
 
 
 # ---------------------------------------------------------------- alias verificados

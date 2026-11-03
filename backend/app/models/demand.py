@@ -65,21 +65,54 @@ class DemandItem(Base):
             "jsonb_typeof(attributes) = 'object' AND attributes ? 'schema_version'", name="atributos_validos"
         ),
         CheckConstraint("quantity_unit IS NULL OR quantity_unit IN ('box','package','unit','bottle')", name="unidad_valida"),
-        # Respaldo de la deduplicación para identidades comerciales completas (HLD §6.4).
+        # La cancelación es lógica: una necesidad cancelada conserva su historial y sus avisos.
+        CheckConstraint(
+            "(status = 'cancelled') = (cancelled_at IS NOT NULL)", name="cancelacion_coherente"
+        ),
+        CheckConstraint(
+            "cancelled_by IS NULL OR status = 'cancelled'", name="cancelada_por_coherente"
+        ),
+        CheckConstraint(
+            "cancellation_reason IS NULL OR status = 'cancelled'", name="motivo_cancelacion_coherente"
+        ),
+        # Una necesidad pertenece a la persona que la reportó. Dos personas NUNCA comparten fila:
+        # cada reporte conserva su autor, su cantidad declarada y su historial (D-135).
+        ForeignKeyConstraint(
+            ["reported_by", "organization_id"],
+            ["app_user.id", "app_user.organization_id"],
+            name="fk_demand_item_reported_by_app_user",
+        ),
+        ForeignKeyConstraint(
+            ["cancelled_by", "organization_id"],
+            ["app_user.id", "app_user.organization_id"],
+            name="fk_demand_item_cancelled_by_app_user",
+        ),
+        # Respaldo de la deduplicación por autor: una misma persona no crea dos necesidades idénticas
+        # en el mismo ciclo; dos personas distintas sí tienen una cada una (D-135).
         Index(
             "uq_demand_item_identity_active",
-            "organization_id", "cycle_id", "resolved_identity_key",
+            "organization_id", "cycle_id", "resolved_identity_key", "reported_by",
             unique=True,
-            postgresql_where=text("status = 'active' AND resolved_identity_key IS NOT NULL"),
+            postgresql_where=text(
+                "status = 'active' AND resolved_identity_key IS NOT NULL "
+                "AND reported_by IS NOT NULL"
+            ),
         ),
         Index("ix_demand_item_cycle_listing", "organization_id", "cycle_id", "created_at", "id"),
         Index("ix_demand_item_family", "organization_id", "cycle_id", "ingredient"),
+        Index("ix_demand_item_reporter", "organization_id", "cycle_id", "reported_by", "status"),
         Index("ix_demand_item_pharma", "organization_id", "pharma_identity_key"),
     )  # fmt: skip
     id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
     organization_id: Mapped[uuid.UUID] = mapped_column()
     cycle_id: Mapped[uuid.UUID] = mapped_column()
     status: Mapped[str] = mapped_column(String(12), server_default="active")
+    # Autor del reporte (NULL solo en filas legado consolidadas antes de la 0016).
+    reported_by: Mapped[uuid.UUID | None] = mapped_column()
+    # Cancelación lógica: nunca se borra la fila ni sus observaciones.
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_by: Mapped[uuid.UUID | None] = mapped_column()
+    cancellation_reason: Mapped[str | None] = mapped_column(Text)
     display_name: Mapped[str] = mapped_column(String(300))
     ingredient: Mapped[str] = mapped_column(String(200))
     # Atributos estructurados (esquema v2): potencias con su unidad original, contenido, forma,
@@ -128,6 +161,7 @@ class DemandObservation(Base):
         # Una observación pendiente no tiene destino; las demás sí.
         CheckConstraint("(match_status = 'needs_review') = (demand_item_id IS NULL)", name="destino_coherente"),
         CheckConstraint("declared_quantity IS NULL OR declared_quantity > 0", name="declarada_positiva"),
+        CheckConstraint("jsonb_typeof(quantity_proposal) = 'object'", name="propuesta_valida"),
         Index("ix_demand_observation_item", "organization_id", "demand_item_id", "created_at"),
         Index(
             "ix_demand_observation_pending", "organization_id", "created_at",
@@ -151,6 +185,12 @@ class DemandObservation(Base):
     policy_version: Mapped[str] = mapped_column(String(40))
     # Qué propuso la capa de interpretación (alias aplicados, candidatos, incertidumbres, visión).
     interpretation: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb")
+    )
+    # Propuesta de cantidad que el canal deja a la administración (nunca se aplica sola):
+    # {"operation": "SET"|"ADD", "value": "...", "unit": "...", "target_quantity": "...",
+    #  "status": "pending", "source": "telegram"}.
+    quantity_proposal: Mapped[dict[str, Any]] = mapped_column(
         JSONB, server_default=text("'{}'::jsonb")
     )
     # Trazabilidad: por qué canal llegó, bajo qué sesión declarada y desde qué mensaje/foto.

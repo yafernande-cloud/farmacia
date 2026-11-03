@@ -44,6 +44,76 @@ async def aggregates(session: AsyncSession, org, item_ids: list[uuid.UUID]) -> d
     return {r[0]: (r[1], r[2], sorted(r[3])) for r in rows}
 
 
+async def report_meta(
+    session: AsyncSession, org, items: list[DemandItem]
+) -> dict[uuid.UUID, dict]:
+    """Autor, nombre y cantidad declarada de cada reporte independiente (D-135)."""
+    if not items:
+        return {}
+    ids = [i.id for i in items]
+    user_ids = {i.reported_by for i in items if i.reported_by}
+    user_ids |= {i.cancelled_by for i in items if i.cancelled_by}
+    names: dict = {}
+    if user_ids:
+        names = dict(
+            (
+                await session.execute(
+                    select(AppUser.id, AppUser.display_name).where(
+                        AppUser.organization_id == org, AppUser.id.in_(user_ids)
+                    )
+                )
+            ).all()
+        )
+    declared = {
+        r[0]: (r[1], r[2])
+        for r in (
+            await session.execute(
+                select(
+                    DemandObservation.demand_item_id,
+                    DemandObservation.declared_quantity,
+                    DemandObservation.declared_unit,
+                )
+                .where(
+                    DemandObservation.organization_id == org,
+                    DemandObservation.demand_item_id.in_(ids),
+                    DemandObservation.declared_quantity.is_not(None),
+                )
+                .ext(distinct_on(DemandObservation.demand_item_id))
+                .order_by(
+                    DemandObservation.demand_item_id,
+                    DemandObservation.created_at.desc(),
+                    DemandObservation.id.desc(),
+                )
+            )
+        ).all()
+    }
+    first = dict(
+        (
+            await session.execute(
+                select(
+                    DemandObservation.demand_item_id, func.min(DemandObservation.created_at)
+                )
+                .where(
+                    DemandObservation.organization_id == org,
+                    DemandObservation.demand_item_id.in_(ids),
+                )
+                .group_by(DemandObservation.demand_item_id)
+            )
+        ).all()
+    )
+    return {
+        i.id: {
+            "reported_by": i.reported_by,
+            "reported_by_name": names.get(i.reported_by),
+            "cancelled_by_name": names.get(i.cancelled_by),
+            "declared_quantity": declared.get(i.id, (None, None))[0],
+            "declared_unit": declared.get(i.id, (None, None))[1],
+            "reported_at": first.get(i.id),
+        }
+        for i in items
+    }
+
+
 async def last_texts(
     session: AsyncSession, org, item_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, str]:

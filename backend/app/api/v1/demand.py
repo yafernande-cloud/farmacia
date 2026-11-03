@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, Query, Response
 
-from app.api.deps import CurrentActor, Session
+from app.api.deps import CurrentActor, Session, StrongActor, require_strong_admin_authentication
 from app.api.headers import parse_if_match
 from app.api.v1 import schemas as s
 from app.core.errors import DomainError
@@ -66,6 +66,7 @@ def item_out(
     *,
     coverage: dict | None = None,
     last_raw_text: str | None = None,
+    meta: dict | None = None,
 ) -> s.DemandItemOut:
     count, last, reporters = agg.get(i.id, (0, None, []))
     attrs = attributes_out(demand_svc.parsed_of_item(i))
@@ -90,6 +91,14 @@ def item_out(
         needs_quantity=i.target_quantity is None, data_origin=i.data_origin, suggestions=suggestions or [],
         status=i.status, version=i.version,
         observation_count=count, reporters=reporters, last_observed_at=last, created_at=i.created_at,
+        reported_by=i.reported_by,
+        reported_by_name=(meta or {}).get("reported_by_name"),
+        declared_quantity=(meta or {}).get("declared_quantity"),
+        declared_unit=(meta or {}).get("declared_unit"),
+        reported_at=(meta or {}).get("reported_at") or i.created_at,
+        cancelled_at=i.cancelled_at,
+        cancelled_by_name=(meta or {}).get("cancelled_by_name"),
+        cancellation_reason=i.cancellation_reason,
         last_raw_text=last_raw_text,
         coverage_quantity=cov["coverage_quantity"],
         quoted_quantity=cov["quoted_quantity"],
@@ -129,6 +138,8 @@ _MESSAGES = {
     "needs_review": "Registré tu aviso, pero no puedo asegurar que sea lo mismo que algo que ya está en "
     "la lista. Quedó con candidatos para que compras lo confirme; la cantidad no cambió.",
     "resolved_manual": "Observación resuelta. La cantidad no cambió.",
+    "needs_confirmation": "Registré tu mensaje y te pregunté cómo seguir. Todavía no creé ni cambié "
+    "ninguna cantidad.",
 }
 _PENDING_TEXT = {
     "unit_not_stated": lambda p: f"la unidad de {p.value} (no la supuse)",
@@ -149,16 +160,26 @@ def _message(outcome: str, pending: list[s.PendingOut]) -> str:
 async def _result(session, actor, r: demand_svc.ObservationResult) -> s.ObservationResultOut:
     agg = await queries.aggregates(session, actor.organization_id, [r.item.id] if r.item else [])
     sug = await suggestions_for_items(session, actor.organization_id, [r.item]) if r.item else {}
-    item = item_out(r.item, agg, sug.get(r.item.id)) if r.item else None
+    metas = await queries.report_meta(session, actor.organization_id, [r.item] if r.item else [])
+    item = item_out(r.item, agg, sug.get(r.item.id), meta=metas.get(r.item.id)) if r.item else None
     pending = (
         item.pending_validation
         if item
         else [s.PendingOut(**x) for x in r.parsed.pending_validation]
     )
+    def _other(o: dict) -> s.OtherReportOut:
+        return s.OtherReportOut(**o)
+
     return s.ObservationResultOut(
         outcome=r.outcome, replayed=r.replayed, message=_message(r.outcome, pending),
         pending_validation=pending, alias_created=r.alias_created,
-        observation=obs_out(r.observation, actor.display_name if not r.replayed else None), item=item,
+        observation=(
+            obs_out(r.observation, actor.display_name if not r.replayed else None)
+            if r.observation
+            else None
+        ),
+        item=item, other_reports=[_other(o) for o in r.other_reports],
+        same_author_item=_other(r.same_author_item) if r.same_author_item else None,
     )  # fmt: skip
 
 
@@ -191,9 +212,11 @@ async def list_demand_items(
     ids = [i.id for i in items]
     cov = await coverage_svc.coverage_for_items(session, actor.organization_id, items)
     texts = await queries.last_texts(session, actor.organization_id, ids)
+    metas = await queries.report_meta(session, actor.organization_id, items)
     return s.DemandItemList(
         items=[
-            item_out(i, agg, sug.get(i.id), coverage=cov.get(i.id), last_raw_text=texts.get(i.id))
+            item_out(i, agg, sug.get(i.id), coverage=cov.get(i.id), last_raw_text=texts.get(i.id),
+                     meta=metas.get(i.id))
             for i in items
         ],
         next_cursor=nxt,
@@ -210,7 +233,8 @@ async def get_demand_item(
     item, agg, obs, evs = await queries.get_item_detail(session, actor, item_id)
     response.headers["ETag"] = f'"{item.version}"'
     sug = await suggestions_for_items(session, actor.organization_id, [item])
-    base = item_out(item, agg, sug.get(item.id)).model_dump()
+    metas = await queries.report_meta(session, actor.organization_id, [item])
+    base = item_out(item, agg, sug.get(item.id), meta=metas.get(item.id)).model_dump()
     return s.DemandItemDetail(**base, observations=[obs_out(o, a) for o, a in obs],
                               quantity_events=[event_out(e, a) for e, a in evs])  # fmt: skip
 
@@ -270,10 +294,15 @@ async def quantity_command(
     if_match: Annotated[str | None, Header(alias="If-Match", description='Versión actual, p. ej. "7"')] = None,
 ):  # fmt: skip
     version = _parse_if_match(if_match)
+    if "admin" in (actor.roles or []):
+        # La vía web de la administración exige además autenticación fuerte (D-130/D-135). No se
+        # amplía la matriz: `purchasing` sigue usando la misma ruta desde su sesión de siempre.
+        await require_strong_admin_authentication(session, actor)
     async with transaction(session):
         r = await apply_quantity_command(
             session, actor, item_id, operation=body.operation, value=body.value, unit=body.unit,
             reason=body.reason, idempotency_key=idempotency_key, expected_version=version,
+            web_admin="admin" in (actor.roles or []),
         )  # fmt: skip
         agg = await queries.aggregates(session, actor.organization_id, [r.item.id])
         out = s.QuantityResultOut(
@@ -281,6 +310,44 @@ async def quantity_command(
             item=item_out(r.item, agg), event=event_out(r.event, actor.display_name),
         )  # fmt: skip
     response.headers["ETag"] = f'"{r.item.version}"'
+    return out
+
+
+@router.post(
+    "/demand-items/{item_id}/cancel",
+    response_model=s.ReportCancelOut,
+    responses=ERRORS,
+    summary="Cancelar lógicamente un reporte (admin + StrongActor; If-Match e Idempotency-Key)",
+)
+async def cancel_report(
+    item_id: uuid.UUID,
+    body: s.ReportCancelIn,
+    session: Session,
+    actor: StrongActor,
+    idempotency_key: IdemKey,
+    response: Response,
+    if_match: Annotated[
+        str | None, Header(alias="If-Match", description='Versión actual, p. ej. "7"')
+    ] = None,
+):
+    version = _parse_if_match(if_match)
+    async with transaction(session):
+        item, affected = await demand_svc.cancel_item(
+            session, actor, item_id, expected_version=version, reason=body.reason
+        )
+        agg = await queries.aggregates(session, actor.organization_id, [item.id])
+        metas = await queries.report_meta(session, actor.organization_id, [item])
+        out = s.ReportCancelOut(
+            item=item_out(item, agg, meta=metas.get(item.id)),
+            affected_quote_lines=[s.AffectedQuoteLineOut(**a) for a in affected],
+            message=(
+                "Reporte cancelado. No se borró ninguna observación ni el historial."
+                if not affected
+                else "Reporte cancelado. Hay líneas de cotización que lo cubrían: corrígelas antes "
+                "de cerrar la cotización o registrar la compra."
+            ),
+        )
+    response.headers["ETag"] = f'"{item.version}"'
     return out
 
 

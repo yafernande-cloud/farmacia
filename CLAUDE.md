@@ -6,9 +6,17 @@ Asistente de compras con IA (demo → producción). Idioma de trabajo y UI: espa
 - `docs/Farmacia_Parque_Lantano_HLD_LLD.md`: requisitos, invariantes (§2), AC01–AC40. **No editar**; registrar
   cambios en `docs/decisions/`. Si el prompt del usuario contradice el HLD, rige el usuario y se registra.
 - `docs/ARQUITECTURA.md`, `docs/ROADMAP.md`, `docs/decisions/0001-registro-de-decisiones.md`: estado vigente.
-- `docs/contracts/cotizador-v0.2.md`: contrato del cotizador **revisión 7**, aprobado conceptualmente en D0
-  (2026-10-30) y **no implementado**. Define E10–E15, la cobertura de faltantes, la regla de cierre y la aprobación
-  web que otorga `admin` (D-130). Nada de él se implementa sin orden explícita.
+- `docs/contracts/cotizador-v0.2.md`: contrato del cotizador **revisión 9**, aprobado conceptualmente en D0
+  (2026-10-30) y **parcialmente implementado** (C5-A, D-135 y D-137; compras, historial y cadenas siguen sin código).
+  Define E10–E15, la cobertura de faltantes, la regla de cierre y la aprobación web que otorga `admin` (D-130). La
+  revisión 9 solo agrega la integridad de asignaciones de D-137. **La revisión 10 está propuesta y no aplicada**
+  (`docs/contracts/cotizador-v0.2-rev10-propuesta.md`): incorpora D-136/D-138 (preferencias por producto), D-139
+  (cotización cerrada preparada para comprar), D-140 (compra adicional para inventario) y D-141 (AC31 como auditoría
+  interna). Nada de lo pendiente se implementa sin orden explícita.
+- `docs/decisions/ACUERDOS_FUNCIONALES.md`: acuerdos A1–A11 y flujo funcional completo con su estado real
+  (implementado en código / aprobado sin código / pendiente), contradicciones documentales y recomendación de
+  migración. **Es una propuesta en revisión, no aprobada todavía como documento de referencia**; no acredita despliegue.
+  C7, C9, C11 y AC31 ya están decididos (D-138 a D-141); lo pendiente es su implementación, no su definición.
 
 ## Reglas permanentes
 - **Git:** rama `master`. NO ejecutar commit, push, init, remote add ni renombrar ramas sin orden explícita.
@@ -18,17 +26,38 @@ Asistente de compras con IA (demo → producción). Idioma de trabajo y UI: espa
 - Invariantes críticos: un aviso repetido no suma cantidad; cantidad desconocida = NULL (no 0/1); sin fusión
   automática de dosis/formatos distintos; solo `SET/ADD/CLEAR` explícitos; aprobaciones ligadas a snapshot;
   referencia de cadena ≠ oferta comprable; compra real **bloqueada**; el LLM no decide dinero, cantidades ni permisos.
-- **Cotizador (D-113 a D-132; contrato v0.2 rev7):** el MVP demuestra *faltante → búsqueda → comparación →
+- **Cotizador (D-113 a D-141; contrato v0.2 rev9, revisión 10 propuesta):** el MVP demuestra *faltante → búsqueda → comparación →
   cotización → compra*; **no** es inventario ni recepción. La recepción física y las diferencias de entrega están
   **fuera del MVP** (D-126). El ciclo se cierra **solo** con compras confirmadas que cubren toda la cantidad pedida
-  conocida; cotizar cubre de forma **provisional** y nunca cierra. **Compra todo o nada (enmienda a D-127, 2026-11-02):**
-  se registra completa —todos los productos y cantidades seleccionados— o no se registra; al registrarse, los faltantes
-  cubiertos se cierran y se liberan para nuevos reportes por Telegram. **No hay compras parciales por productos ni
-  cantidades en la demo** y no se implementa lógica para ellas. Dos saldos distintos: `pending_quantity` = falta
+  conocida; cotizar cubre de forma **provisional** y nunca cierra. **Cotización cerrada (C9, D-139, aprobado y no
+  implementado):** cerrar significa que la cotización **terminó de prepararse y puede convertirse en compra**; no
+  significa comprada, descartada ni anulada. `closed` conserva líneas, cantidades y asignaciones, **sigue aportando
+  cobertura provisional** y **se compra sin reabrir**. El código actual todavía cuenta solo `draft` y bloquea comprar
+  con `409 QUOTE_CLOSED`; esa contradicción se corrige cuando se autorice C5-B. **Compra todo o nada (enmienda a
+  D-127, 2026-11-02):** se registra completa —todos los productos y cantidades seleccionados— o no se registra; al
+  registrarse, los faltantes cubiertos se cierran y se liberan para nuevos reportes por Telegram. **La compra puede
+  incluir cantidades sin asignación para inventario (C11, D-140, aprobado y no implementado):** las asignaciones son
+  explícitas, su suma ≤ cantidad comprada, y el excedente no se asigna automáticamente ni cierra reportes. **No hay
+  compras parciales por productos ni cantidades de la selección en la demo** y no se implementa lógica para ellas. Dos saldos distintos: `pending_quantity` = falta
   **cotizar**, `pending_purchase_quantity` = falta **comprar**. `fulfilled` **no** significa recibido. Telegram solo
   lee: no registra compras, no aplica cantidades ni confirma llegadas. Cotizar y comprar son `admin` + `StrongActor`
-  (D-130). Observaciones comerciales: `/api/v1/commercial-observations`, separadas de los avisos de faltante
-  (`/api/v1/observations`, D-129).
+  (D-130). **Reportes independientes (D-135):** cada persona tiene su propio reporte; un aviso de otra persona nunca se
+  adjunta ni se suma, el bot pregunta (Confirmar/Modificar/Cancelar) y, si se confirma, crea un reporte propio. La
+  línea de cotización cubre uno o varios reportes solo mediante `quote_line_allocation` con cantidades **explícitas**
+  (suma ≤ línea, sin reparto automático). Cancelar un reporte es lógico (`admin` + `StrongActor`, versión e
+  idempotencia), no borra historial e informa las líneas afectadas. **Integridad de asignaciones (D-137):** una
+  cotización **no se cierra** si tiene asignaciones a reportes cancelados o cantidades inválidas
+  (`409 QUOTE_HAS_INCONSISTENT_ALLOCATIONS`), y la cantidad pedida **no baja** de lo asignado
+  (`409 QUANTITY_BELOW_ALLOCATED`) ni se puede borrar con asignaciones vigentes (`409 REPORT_HAS_ALLOCATIONS`); nada se
+  reasigna ni se corrige solo: la administración ajusta las asignaciones (PATCH con lista vacía quita todas) y vuelve a
+  cerrar. Telegram: mismo autor con cantidad conocida elige SET/ADD/registrar/cancelar; el auxiliar sin
+  `APPLY_QUANTITY` deja propuesta. **Preferencias comerciales (A6, D-136 y D-138, aprobado y no implementado):**
+  «Enseñar a la IA» interpreta internamente las preferencias **de un producto específico** y **ordena sus ofertas**;
+  todas las demás siguen visibles; las preferencias **no se propagan** a otros productos del mismo laboratorio, marca o
+  proveedor y **no se construyen perfiles globales de reputación**. La IA **no** muestra explicaciones, justificaciones,
+  recomendaciones textuales ni puntuaciones, no inventa precios/stock/productos y no modifica cantidades. Su
+  trazabilidad se conserva **internamente** (AC31/D-141), no en la interfaz. Observaciones comerciales:
+  `/api/v1/commercial-observations`, separadas de los avisos de faltante (`/api/v1/observations`, D-129).
 - **Acceso web (D-130, implementado en código; `0012` no aplicada a `farmacia`):** **único perfil funcional web:
   `admin`**; `purchasing` y `auxiliary` siguen siendo roles de Telegram, no perfiles web. Google/Supabase **identifica
   pero no concede**: sin aprobación solo se puede *solicitar*, y la solicitud no otorga nada. Todas las `admin` ven las
@@ -77,24 +106,40 @@ Asistente de compras con IA (demo → producción). Idioma de trabajo y UI: espa
   con `relation`, detalle E3, cadenas E15 sin persistencia; `search_run`, `search_source_result`, `search_result`;
   migración `0013`) y **C3** (comparación E5 con elegibilidad por candidato, totales solo completos y cota inferior,
   criterios y notas E9 que solo anotan; `comparison_run`, `comparison_line`, `comparison_candidate`,
-  `comparison_supplier_total`, `commercial_criterion`; migración `0014`).
-- **Aplicado a `farmacia`:** solo hasta **0008** (32 tablas). Las `0009`–`0014` existen en el código y **no** están
-  aplicadas allí. `farmacia_demo` tiene aplicadas **`0012` y `0013`** (2026-11-02, cada una con respaldo `pg_dump`
-  verificado; 38 tablas) y es la base donde se prueba C4 con el catálogo ficticio. Ninguna migración nueva se aplica
-  sin autorización explícita. La `0014` de C3 **no** se aplicó a ninguna base operativa: solo la crea la suite en
-  `farmacia_test`.
-- **Solo documental (aprobado, sin código):** contrato v0.2 **revisión 7** completo —E10–E15, `quote`/`quote_cart`/
-  `quote_line`, compras registradas y su cierre, historial, observaciones (D-132), reporte repetido por Telegram
-  (D-131), búsqueda de cadenas E15, `relation`— y las decisiones **D-113 a D-132**. No hay endpoints de cotizador,
-  compras ni recepción; la recepción está fuera del MVP (D-126). G1 (D-130) y C4 **sí** están implementados.
-- **Sin empezar:** C5-A (`0015`), O1–O4 (`0016`), C5-B (`0017`), C5-C (`0018`), C5-D (`0019`,
+  `comparison_supplier_total`, `commercial_criterion`; migración `0014`) y **C5-A** (cotizaciones E10 con carritos por
+  proveedor, líneas sin copia de precio, SET/retiro lógico/close-pending/reopen-pending/move/refresh, evaluación E5 por
+  carrito y total general solo completo; observaciones comerciales O1 inmutables y sin IA; cobertura provisional §12;
+  `quote`, `quote_cart`, `quote_line`, `commercial_observation`; migración `0015`; D-134) y **D-135** (reportes
+  independientes por autor, cancelación lógica `admin` + `StrongActor`, confirmación en Telegram, propuesta de cantidad
+  sin `APPLY_QUANTITY`, asignaciones `quote_line_allocation`; migraciones `0016`–`0017`; contrato rev8) y **D-137**
+  (integridad de asignaciones: cierre bloqueado con asignaciones inconsistentes, cantidad pedida protegida por debajo de
+  lo asignado, `PATCH []` quita todas; contrato rev9; **sin tablas ni columnas nuevas**, migraciones siguen `0016`–`0017`).
+- **Aplicado a `farmacia`:** solo hasta **0008** (32 tablas). Las `0009`–`0017` existen en el código y **no** están
+  aplicadas allí. `farmacia_demo` tiene aplicadas **`0012`–`0015`** (2026-11-02, cada una con respaldo `pg_dump`
+  verificado; 47 tablas) y es la base donde se prueban C3, C4 y C5-A con el catálogo ficticio; **`0016`–`0017` no están
+  aplicadas** en ninguna base y no se aplican sin autorización explícita.
+- **Solo documental (aprobado, sin código):** contrato v0.2 **revisión 9** en lo que falta —compras registradas y su
+  cierre, historial, búsqueda de cadenas E15, y la revisión 10 propuesta para A6, C9, C11 y AC31— y las decisiones
+  **D-113 a D-141**. E10 y O1 **sí** están implementados (C5-A); los reportes independientes y las asignaciones
+  (D-135) también; la integridad de asignaciones (D-137) también. **D-136 (preferencias que ordenan ofertas vía
+  «Enseñar a la IA») está aprobada y NO implementada**, precisada por **D-138**: las preferencias son **del producto
+  específico**, no se propagan por laboratorio, marca o proveedor y no construyen perfiles globales. Corresponde a
+  O2–O4 (`0019`) y exige la revisión 10 del contrato (§8.4, §8.6, O3/O4 y AC31); el texto propuesto está en
+  `docs/contracts/cotizador-v0.2-rev10-propuesta.md` y **no está aprobado**. Las preferencias aplican a cualquier
+  producto comercializado (no solo medicamentos). **D-139 (C9, cotización cerrada preparada para comprar)** y
+  **D-140 (C11, compra adicional para inventario)** están aprobadas y **no implementadas**; el código actual todavía
+  contradice D-139 (cobertura solo de `draft`, compra bloqueada con `409 QUOTE_CLOSED`). **D-141 (AC31, auditoría
+  interna de la IA)** también está aprobada y sin código. **A3 (mantenedor de proveedores con URL, contacto
+  comercial, cuentas, credenciales y estado de conexión)** sigue aprobado y **sin código ni migración**: no hay
+  conectores reales, cuentas operativas ni credenciales almacenadas. La recepción está fuera del MVP (D-126).
+- **Sin empezar:** C5-B (`0018`), O2–O4 (`0019`), C5-C (`0020`), C5-D (`0021`,
   bloqueado), T1, C6/C6a y H2–H6.
 
 ## Metodología
 Por fases con informe (objetivo, alcance, archivos, implementación, pruebas, aceptación, riesgos, continuar).
 Hecho: F0, **H1-A**, corrección del modelo de productos, **H1-B** con simuladores y **H1-B.4**
-(solicitud/aprobación/bloqueo de accesos de Telegram; ver `docs/H1B_TELEGRAM.md`); **C1** (migración `0008` aplicada a `farmacia`); **C2** implementado **en código** (`catalog-load`, conector `manual_import`, perfiles de importación, estado de revisión de oferta y endpoint E8 con idempotencia; migraciones `0009`–`0011`, **no aplicadas a `farmacia`**; D-109 a D-111); **D0 cerrado el 2026-10-30** (commit `38adb6b`: contrato v0.2, decisiones D-113 y D-115 a D-127, roadmap); la **fase documental del 2026-10-30** (contrato **revisión 6**, **D-128**, alineación de `CLAUDE.md`, `docs/AUTH_SUPABASE.md` y `docs/ROADMAP.md`); la **Fase 0 del 2026-11-02** (commit `fe3518e`: preparación para Heroku, proveedores, fuentes y catálogo ficticio; D-129); **G1 implementado en código el 2026-11-02** (contrato **revisión 7**, **D-130 a D-132**, migración `0012`, 16 pruebas nuevas; `0012` aplicada **solo a `farmacia_demo`**) **C4 implementado en código el 2026-11-02** (E1/E2/E3 + E15, migración `0013` aplicada **solo a `farmacia_demo`**, 14 pruebas nuevas; suite **486** con `REQUIRE_DB=1`) y **C3 implementado en código el 2026-11-02** (E5/E9, migración `0014` solo en `farmacia_test`, 15 pruebas nuevas; **D-133**). La suite completa con `REQUIRE_DB=1` queda en **501 pruebas**.
-El siguiente paso es **C5-A** (`0015`), O1–O4 (`0016`), **C5-B** (`0017`), C5-C (`0018`) y C5-D (`0019`, ejecución bloqueada). Siguen abiertas **H1-B.5** (verificar con el bot real; el usuario crea el bot y guarda el token en `.env`), H1-C (SSE + dashboard Lovable) y las autorizaciones externas (cadenas, OpenAI, almacenamiento).
+(solicitud/aprobación/bloqueo de accesos de Telegram; ver `docs/H1B_TELEGRAM.md`); **C1** (migración `0008` aplicada a `farmacia`); **C2** implementado **en código** (`catalog-load`, conector `manual_import`, perfiles de importación, estado de revisión de oferta y endpoint E8 con idempotencia; migraciones `0009`–`0011`, **no aplicadas a `farmacia`**; D-109 a D-111); **D0 cerrado el 2026-10-30** (commit `38adb6b`: contrato v0.2, decisiones D-113 y D-115 a D-127, roadmap); la **fase documental del 2026-10-30** (contrato **revisión 6**, **D-128**, alineación de `CLAUDE.md`, `docs/AUTH_SUPABASE.md` y `docs/ROADMAP.md`); la **Fase 0 del 2026-11-02** (commit `fe3518e`: preparación para Heroku, proveedores, fuentes y catálogo ficticio; D-129); **G1 implementado en código el 2026-11-02** (contrato **revisión 7**, **D-130 a D-132**, migración `0012`, 16 pruebas nuevas; `0012` aplicada **solo a `farmacia_demo`**) **C4 implementado en código el 2026-11-02** (E1/E2/E3 + E15, migración `0013` aplicada **solo a `farmacia_demo`**, 14 pruebas nuevas; suite **486** con `REQUIRE_DB=1`) y **C3 implementado en código el 2026-11-02** (E5/E9, migración `0014` solo en `farmacia_test`, 15 pruebas nuevas; **D-133**) y **C5-A implementado en código el 2026-11-02** (E10/O1, migración `0015` aplicada **solo a `farmacia_demo`** junto con `0014`, 23 pruebas; **D-134**) y **D-135 implementada en código el 2026-11-02** (reportes independientes, cancelación lógica, confirmación en Telegram y asignaciones; migraciones `0016`–`0017` **no aplicadas**, contrato rev8, 7 pruebas nuevas; **D-135**) y **D-137 implementada en código el 2026-11-02** (integridad de asignaciones: cierre bloqueado, cantidad protegida, `PATCH []`; contrato **revisión 9**, 3 pruebas nuevas; **D-137**), con **D-136 aprobada y sin implementar** (preferencias que ordenan ofertas; **A6**). El 2026-11-02 se registraron además **D-138 (C7, preferencias por producto)**, **D-139 (C9, cotización cerrada preparada para comprar)**, **D-140 (C11, compra adicional para inventario)** y **D-141 (AC31, auditoría interna)**; **solo documentación, sin cambios de código**. La suite completa con `REQUIRE_DB=1` queda en **534 pruebas**.
+El siguiente paso es **C5-B** (`0018`, que debe incorporar D-139 y D-140), **O2–O4** (`0019`, donde entran D-136/D-138 y D-141), C5-C (`0020`) y C5-D (`0021`, ejecución bloqueada). Las migraciones `0016`–`0017` solo se aplican a `farmacia_demo` con autorización explícita (ver `docs/decisions/ACUERDOS_FUNCIONALES.md` §7). Siguen abiertas **H1-B.5** (verificar con el bot real; el usuario crea el bot y guarda el token en `.env`), H1-C (SSE + dashboard Lovable) y las autorizaciones externas (cadenas, OpenAI, almacenamiento).
 No declarar pruebas de BD como exitosas si se omitieron: validar con `REQUIRE_DB=1 .venv/bin/pytest` (PostgreSQL local por Docker; `open -a Docker`).
 Supabase: proyecto `faltantes-farmacia` creado por el usuario (2026-10-29) con Google OAuth y JWKS asimétrico verificado; `AUTH_MODE=demo_header` se mantiene. Auth web: validador JWT implementado; enlace `auth_subject` por CLI (solo rol `admin`, auditado) y bootstrap `create-admin` (solo `admin`, sin enlace, solo `real_test`/`simulation`, una activa por organización; D-071/D-072); `/staff` y accesos de Telegram exigen `StrongActor`. **G1 (solicitudes con campanita, vencimiento del acceso web, superadministradora y aprobación que otorga `admin`; D-117/D-119/D-130) está implementado en código; `0012` está aplicada solo a `farmacia_demo` y NO a `farmacia`.** El endpoint público exige `WEB_ACCESS_ORGANIZATION_ID`; para pruebas con `AUTH_MODE=demo_header` la identidad se envía en `X-Demo-Subject`/`X-Demo-Email`/`X-Demo-Name`. La superadministradora se marca una sola vez con `set-superadmin <app_user_id>` (CLI, auditado con actor nulo). **La administradora de pruebas «Yarella Fernández» existe en `real_test` (`83c03aa5-6496-4bef-8f96-b92cbbd59f6e`, solo `admin`, separada de Pao) y su identidad está enlazada**; A2/A3 verificaron que Google y correo+contraseña dan el mismo `sub` y que `/api/v1/me` responde 200 (`docs/AUTH_SUPABASE.md`, D-064 a D-072). Pao sigue sin `auth_subject` en `real_test`, `simulation` y `legacy_mixed`; se enlazará con su propia identidad más adelante (D-067).
 Patrón de servicios: `services/*` reciben `Actor` + sesión, verifican permisos, no hacen commit (la API usa `transaction()`); auditoría+outbox en la misma transacción (`services/events.emit`).

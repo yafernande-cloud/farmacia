@@ -5,9 +5,14 @@ Suma dos fuentes sin contar dos veces la misma línea:
   1. lo **cotizado** en líneas activas de carritos activos de cotizaciones `draft`;
   2. lo **comprado** en compras `current` no anuladas.
 
-C5-A implementa la primera fuente. Las compras llegan con C5-B (migración 0017): hasta entonces
+C5-A implementa la primera fuente. Las compras llegan con C5-B (migración 0018): hasta entonces
 `purchased` es 0 porque la tabla no existe, no porque se asuma que no se compró. La consulta de
 compras se añade en `_purchased_totals` sin cambiar la forma de este módulo ni la de la respuesta.
+
+Desde 0017 una línea comercial puede cubrir **varios reportes independientes**. La fuente cotizada
+se lee de `quote_line_allocation`, no de `quote_line.demand_item_id`: cada asignación dice cuánto
+de esa línea cubre a ese reporte. Cuando C5-B exista, una línea con compra vigente usará
+`purchase_line_allocation` y no su asignación de cotización: nunca se suman ambas.
 
 Reglas que se respetan aquí:
   * `pending_quantity` es lo que falta **cotizar**; `pending_purchase_quantity`, lo que falta
@@ -25,28 +30,34 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import DemandItem, Quote, QuoteCart, QuoteLine
+from app.models import DemandItem, Quote, QuoteCart, QuoteLine, QuoteLineAllocation
 
 ZERO = Decimal(0)
 
 
 def quoted_totals_subquery(org: uuid.UUID):
-    """Suma cotizada por faltante: líneas activas, carrito activo y cotización `draft`."""
+    """Suma cotizada por reporte: asignaciones de líneas activas, carrito activo y cotización `draft`.
+
+    Solo cuentan asignaciones a reportes `active`: uno cancelado conserva su historial pero ya no
+    se cubre. La cantidad asignada es explícita y nunca supera la cantidad de la línea (servicio).
+    """
     return (
         select(
-            QuoteLine.demand_item_id.label("demand_item_id"),
-            func.sum(QuoteLine.quantity).label("quantity"),
+            QuoteLineAllocation.demand_item_id.label("demand_item_id"),
+            func.sum(QuoteLineAllocation.quantity).label("quantity"),
         )
+        .join(QuoteLine, QuoteLine.id == QuoteLineAllocation.quote_line_id)
         .join(QuoteCart, QuoteCart.id == QuoteLine.quote_cart_id)
         .join(Quote, Quote.id == QuoteCart.quote_id)
+        .join(DemandItem, DemandItem.id == QuoteLineAllocation.demand_item_id)
         .where(
-            QuoteLine.organization_id == org,
-            QuoteLine.demand_item_id.is_not(None),
+            QuoteLineAllocation.organization_id == org,
             QuoteLine.status == "active",
             QuoteCart.status == "active",
             Quote.status == "draft",
+            DemandItem.status == "active",
         )
-        .group_by(QuoteLine.demand_item_id)
+        .group_by(QuoteLineAllocation.demand_item_id)
         .subquery()
     )
 
@@ -58,17 +69,20 @@ async def _quoted_totals(
         return {}
     rows = (
         await session.execute(
-            select(QuoteLine.demand_item_id, func.sum(QuoteLine.quantity))
+            select(QuoteLineAllocation.demand_item_id, func.sum(QuoteLineAllocation.quantity))
+            .join(QuoteLine, QuoteLine.id == QuoteLineAllocation.quote_line_id)
             .join(QuoteCart, QuoteCart.id == QuoteLine.quote_cart_id)
             .join(Quote, Quote.id == QuoteCart.quote_id)
+            .join(DemandItem, DemandItem.id == QuoteLineAllocation.demand_item_id)
             .where(
-                QuoteLine.organization_id == org,
-                QuoteLine.demand_item_id.in_(item_ids),
+                QuoteLineAllocation.organization_id == org,
+                QuoteLineAllocation.demand_item_id.in_(item_ids),
                 QuoteLine.status == "active",
                 QuoteCart.status == "active",
                 Quote.status == "draft",
+                DemandItem.status == "active",
             )
-            .group_by(QuoteLine.demand_item_id)
+            .group_by(QuoteLineAllocation.demand_item_id)
         )
     ).all()
     return {item_id: total for item_id, total in rows if item_id is not None}
@@ -77,7 +91,7 @@ async def _quoted_totals(
 async def _purchased_totals(
     session: AsyncSession, org: uuid.UUID, item_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, Decimal]:
-    """Compras `current` no anuladas vinculadas al faltante. C5-B (0017) completa esta lectura."""
+    """Compras `current` no anuladas vinculadas al faltante. C5-B (0018) completa esta lectura."""
     return {}
 
 

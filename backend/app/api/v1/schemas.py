@@ -182,6 +182,22 @@ class DemandItemOut(BaseModel):
     reporters: list[str]
     last_observed_at: datetime | None
     created_at: datetime
+    # Reporte independiente (D-135): cada persona tiene su propia fila y su propia cantidad. Un
+    # lector nunca debe sumar `declared_quantity` de personas distintas: es información, no pedido.
+    reported_by: uuid.UUID | None = Field(
+        default=None, description="Autor del reporte; null solo en filas anteriores a la 0016."
+    )
+    reported_by_name: str | None = None
+    declared_quantity: Qty | None = Field(
+        default=None, description="Última cantidad declarada por el autor de este reporte."
+    )
+    declared_unit: str | None = None
+    reported_at: datetime | None = Field(
+        default=None, description="Fecha del primer aviso que sostiene este reporte."
+    )
+    cancelled_at: datetime | None = None
+    cancelled_by_name: str | None = None
+    cancellation_reason: str | None = None
     # Cobertura derivada (C5-A §12.9): nunca se almacena. Sin compras todavía, `purchased_quantity`
     # es 0 porque la tabla no existe; C5-B la completa sin cambiar la forma.
     last_raw_text: str | None = Field(
@@ -237,8 +253,52 @@ class AliasOut(BaseModel):
     created_at: datetime
 
 
+class AffectedQuoteLineOut(BaseModel):
+    """Línea de cotización que cubre al reporte y queda sin destino si se cancela (D-135)."""
+
+    quote_line_id: uuid.UUID
+    quote_id: uuid.UUID
+    quote_status: Literal["draft", "closed"]
+    supplier_id: uuid.UUID
+    line_quantity: Qty
+    quantity_unit: str
+    allocation_quantity: Qty
+    coverage_relation: str
+
+
+class ReportCancelIn(BaseModel):
+    reason: str | None = Field(
+        default=None, max_length=500, description="Motivo de la cancelación (opcional, se conserva)."
+    )
+
+
+class ReportCancelOut(BaseModel):
+    """Cancelación lógica: nunca borra observaciones ni historial."""
+
+    item: DemandItemOut
+    affected_quote_lines: list[AffectedQuoteLineOut] = []
+    message: str
+
+
+class OtherReportOut(BaseModel):
+    """Reporte activo con el mismo producto; se informa, no se consolida (D-135)."""
+
+    demand_item_id: uuid.UUID
+    display_name: str
+    reported_by: uuid.UUID | None
+    target_quantity: Qty | None
+    quantity_unit: str | None
+    relation: str
+
+
 class ObservationResultOut(BaseModel):
-    outcome: Literal["created_item", "attached_existing", "needs_review", "resolved_manual"]
+    outcome: Literal[
+        "created_item",
+        "attached_existing",
+        "needs_review",
+        "resolved_manual",
+        "needs_confirmation",
+    ]
     replayed: bool
     quantity_changed: Literal[False] = Field(
         False, description="Un aviso nunca cambia la cantidad (HLD inv. 1)."
@@ -248,8 +308,12 @@ class ObservationResultOut(BaseModel):
         description="Qué falta o no está confirmado. El aviso ya quedó registrado: no es una pregunta."
     )
     alias_created: bool = False
-    observation: ObservationOut
-    item: DemandItemOut | None
+    observation: ObservationOut | None = None
+    item: DemandItemOut | None = None
+    # Modelo A: un aviso de otra persona sobre el mismo producto no se suma ni se adjunta. El
+    # canal de Telegram pregunta; la API solo informa para que la web muestre el contexto.
+    other_reports: list[OtherReportOut] = []
+    same_author_item: OtherReportOut | None = None
 
 
 class QuantityResultOut(BaseModel):

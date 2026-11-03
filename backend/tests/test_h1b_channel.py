@@ -6,6 +6,7 @@ la Bot API, no el servicio real.
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import func, select
@@ -134,23 +135,193 @@ async def test_luis_cambia_identidad_mismo_producto_dos_avisos_sin_sumar(
     await chat.pick("luis", now=mins(2))
     assert "Reportando como Luis" in tg_api.texts()[-1]
     await chat.text("no queda vitamina D 50000", now=mins(3))
+    # Modelo A: el bot no adjunta el aviso al reporte de otra persona; pregunta primero.
+    async with sessions() as s:
+        (pending,) = (
+            await s.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.confirmation_status == "pending_other_report"
+                )
+            )
+        ).scalars().all()
+        (item,) = (await s.execute(select(DemandItem))).scalars().all()
+    assert item.reported_by == seed["ana"]
+    assert "otra persona" in tg_api.texts()[-1] or "Ana" in tg_api.texts()[-1]
+    assert len(await observations(sessions)) == 1  # todavía no se creó nada para Luis
+
+    await chat.click(f"rp:ok:{pending.id}", now=mins(4))
     obs = await observations(sessions)
     assert [o.author_id for o in obs] == [seed["ana"], seed["luis"]]  # autores correctos
     assert obs[0].actor_session_id != obs[1].actor_session_id
-    assert (
-        obs[0].demand_item_id == obs[1].demand_item_id
-        and obs[1].match_status == "attached_existing"
-    )
+    assert obs[0].demand_item_id != obs[1].demand_item_id  # reportes independientes
+    assert obs[1].match_status == "created_item"
     async with sessions() as s:
-        (item,) = (await s.execute(select(DemandItem))).scalars().all()
+        items = (await s.execute(select(DemandItem))).scalars().all()
         sess = (
             (await s.execute(select(ActorSession).order_by(ActorSession.started_at)))
             .scalars()
             .all()
         )
-    assert item.target_quantity is None  # no aumentó ninguna cantidad
+    assert len(items) == 2 and all(i.target_quantity is None for i in items)
+    assert {i.reported_by for i in items} == {seed["ana"], seed["luis"]}
     assert [(x.end_reason, x.ended_at is None) for x in sess] == [("replaced", False), (None, True)]
-    assert "ya estaba en la lista" in tg_api.texts()[-1]
+    assert "reporte independiente" in tg_api.texts()[-1]
+
+
+# ---- D-135: confirmación explícita antes de tocar una cantidad ----
+
+
+async def test_pao_fija_el_total_y_suma_solo_con_botones(chat, sessions, seed, tg_api, ctx):
+    from app.domain.quantities import QuantityOp, QuantityUnit
+
+    await chat.pick("pao")
+    await chat.text("falta ibuprofeno 400 mg", now=mins(1))
+    (item,) = await ctx.items()
+    await ctx.qty(
+        item.id, QuantityOp.SET, Decimal(5), QuantityUnit.BOX, version=item.version
+    )
+
+    await chat.text("necesitamos 8 cajas de ibuprofeno 400 mg", now=mins(2))
+    async with sessions() as s:
+        (pending,) = (
+            await s.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.confirmation_status == "pending_same_author_quantity"
+                )
+            )
+        ).scalars().all()
+        assert (
+            await s.execute(select(DemandItem))
+        ).scalar_one().target_quantity == Decimal(5)  # el texto no cambió nada
+        assert (
+            await s.execute(select(func.count()).select_from(DemandObservation))
+        ).scalar_one() == 1
+    assert "¿Son 8 en total o 3 más?" in tg_api.texts()[-1]
+
+    await chat.click(f"rp:add:{pending.id}", now=mins(3))
+    (item,) = await ctx.items()
+    assert item.target_quantity == Decimal(8)  # ADD explícito: 5 + 3, nunca 5 + 8
+    assert "Cantidad actualizada: 8" in tg_api.texts()[-1]
+
+    # Si la cantidad declarada es menor, solo se ofrece fijar el total (SET).
+    await chat.text("necesitamos 6 cajas de ibuprofeno 400 mg", now=mins(4))
+    async with sessions() as s:
+        (pending,) = (
+            await s.execute(
+                select(ChannelMessage)
+                .where(ChannelMessage.confirmation_status == "pending_same_author_quantity")
+                .order_by(ChannelMessage.received_at.desc())
+            )
+        ).scalars().all()
+    assert "¿Fijo el total en 6?" in tg_api.texts()[-1]
+    assert all("Sumar" not in b["text"] for b in tg_api.last_buttons())
+    await chat.click(f"rp:set:{pending.id}", now=mins(5))
+    (item,) = await ctx.items()
+    assert item.target_quantity == Decimal(6)
+
+
+async def test_el_auxiliar_solo_deja_una_propuesta_y_no_aplica_la_cantidad(
+    chat, sessions, seed, tg_api, ctx
+):
+    from app.domain.quantities import QuantityOp, QuantityUnit
+
+    await chat.pick("ana")
+    await chat.text("falta ibuprofeno 400 mg", now=mins(1))
+    (item,) = await ctx.items()
+    await ctx.qty(item.id, QuantityOp.SET, Decimal(5), QuantityUnit.BOX, version=item.version)
+
+    await chat.text("necesitamos 8 cajas de ibuprofeno 400 mg", now=mins(2))
+    async with sessions() as s:
+        (pending,) = (
+            await s.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.confirmation_status == "pending_same_author_quantity"
+                )
+            )
+        ).scalars().all()
+    await chat.click(f"rp:add:{pending.id}", now=mins(3))
+
+    (item,) = await ctx.items()
+    assert item.target_quantity == Decimal(5)  # Ana no aplica cantidades (D-124/D-135)
+    async with sessions() as s:
+        obs = (
+            (
+                await s.execute(
+                    select(DemandObservation).order_by(DemandObservation.created_at.desc()).limit(1)
+                )
+            )
+            .scalars()
+            .one()
+        )
+        assert obs.author_id == seed["ana"]
+        assert obs.quantity_proposal["operation"] == "ADD"
+        assert obs.quantity_proposal["value"] == "3"
+    assert "no cambio cantidades" in tg_api.texts()[-1]
+
+
+async def test_otro_autor_modifica_su_cantidad_y_crea_su_reporte_independiente(
+    chat, sessions, seed, tg_api
+):
+    await chat.pick("ana")
+    await chat.text("falta ibuprofeno 400 mg", now=mins(1))
+    await chat.text("Cambiar auxiliar", now=mins(2))
+    await chat.pick("luis", now=mins(2))
+    await chat.text("falta ibuprofeno 400 mg", now=mins(3))
+    async with sessions() as s:
+        (pending,) = (
+            await s.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.confirmation_status == "pending_other_report"
+                )
+            )
+        ).scalars().all()
+    assert "independiente" in tg_api.texts()[-1]
+
+    await chat.click(f"rp:new:{pending.id}", now=mins(4))
+    assert "Escribe la cantidad" in tg_api.texts()[-1]
+    await chat.text("6 cajas", now=mins(5))
+
+    async with sessions() as s:
+        obs = (
+            await s.execute(select(DemandObservation).order_by(DemandObservation.created_at))
+        ).scalars().all()
+        items = (await s.execute(select(DemandItem))).scalars().all()
+    assert [o.author_id for o in obs] == [seed["ana"], seed["luis"]]
+    assert (obs[1].declared_quantity, obs[1].declared_unit) == (Decimal(6), "box")
+    assert obs[1].match_status == "created_item" and obs[1].demand_item_id != obs[0].demand_item_id
+    assert len(items) == 2 and all(i.target_quantity is None for i in items)
+    assert {i.reported_by for i in items} == {seed["ana"], seed["luis"]}
+    assert "reporte independiente" in tg_api.texts()[-1]
+
+
+async def test_otro_autor_puede_cancelar_su_aviso_sin_crear_nada(chat, sessions, seed, tg_api):
+    await chat.pick("ana")
+    await chat.text("falta paracetamol 500 mg", now=mins(1))
+    await chat.text("Cambiar auxiliar", now=mins(2))
+    await chat.pick("luis", now=mins(2))
+    await chat.text("falta paracetamol 500 mg", now=mins(3))
+    async with sessions() as s:
+        (pending,) = (
+            await s.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.confirmation_status == "pending_other_report"
+                )
+            )
+        ).scalars().all()
+    await chat.click(f"rp:cancel:{pending.id}", now=mins(4))
+
+    assert "no registré ese aviso" in tg_api.texts()[-1]
+    async with sessions() as s:
+        assert (
+            await s.execute(select(func.count()).select_from(DemandObservation))
+        ).scalar_one() == 1
+        assert (
+            await s.execute(select(func.count()).select_from(DemandItem))
+        ).scalar_one() == 1
+        msg = await s.get(ChannelMessage, pending.id)
+        assert msg.attribution_status == "discarded"
+        assert msg.confirmation_status == "cancelled"
+        assert msg.discard_reason == "confirmation_cancelled"
 
 
 # ---- Escenario 5: duplicados técnicos ----
@@ -377,9 +548,12 @@ async def test_eventos_concurrentes_no_corrompen_sesiones_ni_observaciones(
         assert sess[o.actor_session_id].auxiliary_id == o.author_id
     assert len({o.idempotency_key for o in obs}) == len(obs)  # sin observaciones repetidas
     assert (
-        len(obs) + dict(msg_attr).get("pending_attribution", 0) == 10
-    )  # cada mensaje: observación o pendiente
-    assert len(items) <= 1 and all(i.target_quantity is None for i in items)
+        len(obs)
+        + dict(msg_attr).get("pending_attribution", 0)
+        + dict(msg_attr).get("pending_confirmation", 0)
+        == 10
+    )  # cada mensaje: observación, pendiente de identidad o pendiente de confirmación
+    assert len(items) <= 2 and all(i.target_quantity is None for i in items)
     assert await count(sessions, InboundEvent) == len(batch) + len(msgs)  # duplicados descartados
 
 

@@ -343,8 +343,11 @@ async def test_otro_auxiliar_con_la_misma_foto_suma_aviso_sin_sumar_cantidad(
     await c.send(photo_update, "x2")
     obs = await observations(sessions)
     assert [o.author_id for o in obs] == [seed["ana"], seed["luis"]]
-    assert obs[0].demand_item_id == obs[1].demand_item_id
-    assert (await item_of(sessions)).target_quantity is None
+    # Modelo A: la foto de Luis no se adjunta al reporte de Ana; cada persona conserva el suyo.
+    assert obs[0].demand_item_id != obs[1].demand_item_id
+    async with sessions() as s:
+        items = (await s.execute(select(DemandItem))).scalars().all()
+    assert len(items) == 2 and all(i.target_quantity is None for i in items)
 
 
 async def test_distinto_laboratorio_no_se_fusiona_automaticamente(photo_chat, sessions):

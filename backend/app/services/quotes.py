@@ -38,6 +38,7 @@ from app.models import (
     Quote,
     QuoteCart,
     QuoteLine,
+    QuoteLineAllocation,
     Supplier,
     TradeItem,
 )
@@ -274,6 +275,7 @@ def _line_payload(
     selected: OfferSnapshot,
     current: OfferSnapshot | None,
     now: datetime,
+    allocations: list[QuoteLineAllocation] = (),
 ) -> dict:
     state, causes = _price_state(selected, current, now)
     return {
@@ -287,8 +289,11 @@ def _line_payload(
         "status": line.status,
         "removed_at": line.removed_at,
         "removed_by": line.removed_by,
+        # Atajo compatible: solo se llena cuando la línea tiene UNA asignación. La verdad está en
+        # `demand_allocations`, que permite cubrir varios reportes independientes (D-135).
         "demand_item_id": line.demand_item_id,
         "coverage_relation": line.coverage_relation,
+        "demand_allocations": [_allocation_payload(a) for a in allocations],
         "pending_closed_at": line.pending_closed_at,
         "pending_closed_by": line.pending_closed_by,
         "pending_closed_note": line.pending_closed_note,
@@ -506,6 +511,18 @@ async def update_quote(
                 "VALIDATION_ERROR", "El estado debe ser `draft` o `closed`.", status_code=400
             )
         if status == "closed" and quote.status != "closed":
+            # D-137: una cotización no se cierra con asignaciones rotas. No se corrige nada solo;
+            # la administración ajusta o quita las asignaciones y vuelve a intentar el cierre.
+            issues = await _quote_allocation_issues(session, actor.organization_id, quote.id)
+            if issues:
+                raise DomainError(
+                    "QUOTE_HAS_INCONSISTENT_ALLOCATIONS",
+                    "La cotización tiene asignaciones que no coinciden con sus reportes "
+                    "(reportes cancelados o cantidades menores). Corrige las líneas antes de "
+                    "cerrarla.",
+                    status_code=409,
+                    details={"quote_id": str(quote.id), "issues": issues},
+                )
             quote.status = "closed"
             quote.closed_by = actor.id
             quote.closed_at = now
@@ -598,6 +615,348 @@ def _relation_for(demand: DemandItem, item: TradeItem) -> str:
         return "needs_review"
 
 
+async def _allocation_demand(
+    session: AsyncSession, org: uuid.UUID, demand_item_id: uuid.UUID
+) -> DemandItem:
+    """Reporte asignable: activo, con cantidad conocida y no cancelado (D-135)."""
+    demand = (
+        await session.execute(
+            select(DemandItem).where(
+                DemandItem.id == demand_item_id, DemandItem.organization_id == org
+            )
+        )
+    ).scalar_one_or_none()
+    if demand is None:
+        raise not_found("El reporte")
+    if demand.status != "active":
+        raise DomainError(
+            "REPORT_NOT_ACTIVE",
+            "El reporte no está activo: no se le puede asignar cantidad.",
+            status_code=409,
+        )
+    if demand.target_quantity is None:
+        raise DomainError(
+            "REPORT_QUANTITY_UNKNOWN",
+            "El reporte no tiene cantidad conocida. Fija la cantidad (SET) antes de asignarlo.",
+            status_code=422,
+            details={"demand_item_id": str(demand.id)},
+        )
+    return demand
+
+
+async def _normalize_allocations(
+    session: AsyncSession,
+    org: uuid.UUID,
+    *,
+    line_quantity: Decimal,
+    unit: str,
+    item: TradeItem,
+    raw: list[dict[str, Any]] | None,
+    demand_item_id: uuid.UUID | None,
+) -> list[dict[str, Any]]:
+    """Valida asignaciones explícitas. Nunca suma ni reparte cantidades por su cuenta.
+
+    Compatibilidad: una línea con `demand_item_id` y sin lista recibe una asignación por su
+    cantidad total, que es exactamente lo que hacía C5-A.
+    """
+    if raw is not None and demand_item_id is not None:
+        raise DomainError(
+            "ALLOCATION_CONFLICT",
+            "Usa `demand_allocations` o `demand_item_id`, no ambos.",
+            status_code=422,
+        )
+    if raw is None:
+        if demand_item_id is None:
+            return []
+        raw = [{"demand_item_id": demand_item_id, "quantity": line_quantity}]
+    if not raw:
+        raise DomainError(
+            "ALLOCATION_EMPTY", "La lista de asignaciones no puede estar vacía.", status_code=422
+        )
+    out: list[dict[str, Any]] = []
+    seen: set[uuid.UUID] = set()
+    total = ZERO
+    for entry in raw:
+        try:
+            demand_id = uuid.UUID(str(entry["demand_item_id"]))
+            quantity = _quantity(entry["quantity"])
+        except (KeyError, TypeError, ValueError):
+            raise DomainError(
+                "ALLOCATION_INVALID",
+                "Cada asignación exige `demand_item_id` y una cantidad entera mayor que cero.",
+                status_code=422,
+            ) from None
+        if demand_id in seen:
+            raise DomainError(
+                "DUPLICATE_ALLOCATION",
+                "Un reporte no puede aparecer dos veces en la misma línea.",
+                status_code=422,
+                details={"demand_item_id": str(demand_id)},
+            )
+        seen.add(demand_id)
+        demand = await _allocation_demand(session, org, demand_id)
+        if demand.quantity_unit != unit:
+            raise DomainError(
+                "UNIT_MISMATCH",
+                "La unidad del reporte no coincide con la unidad de la línea.",
+                status_code=422,
+                details={
+                    "demand_item_id": str(demand.id),
+                    "report_unit": demand.quantity_unit,
+                    "line_unit": unit,
+                },
+            )
+        total += quantity
+        out.append(
+            {
+                "demand": demand,
+                "quantity": quantity,
+                "coverage_relation": _relation_for(demand, item),
+            }
+        )
+    if total > line_quantity:
+        raise DomainError(
+            "ALLOCATION_EXCEEDS_LINE",
+            "La suma de asignaciones supera la cantidad de la línea.",
+            status_code=409,
+            details={"line_quantity": _qty(line_quantity), "allocated": _qty(total)},
+        )
+    return out
+
+
+async def _allocations_by_line(
+    session: AsyncSession, org: uuid.UUID, line_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[QuoteLineAllocation]]:
+    if not line_ids:
+        return {}
+    rows = (
+        (
+            await session.execute(
+                select(QuoteLineAllocation)
+                .where(
+                    QuoteLineAllocation.organization_id == org,
+                    QuoteLineAllocation.quote_line_id.in_(line_ids),
+                )
+                .order_by(QuoteLineAllocation.created_at, QuoteLineAllocation.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    out: dict[uuid.UUID, list[QuoteLineAllocation]] = {}
+    for row in rows:
+        out.setdefault(row.quote_line_id, []).append(row)
+    return out
+
+
+def _allocation_payload(row: QuoteLineAllocation) -> dict:
+    return {
+        "allocation_id": row.id,
+        "demand_item_id": row.demand_item_id,
+        "quantity": _qty(row.quantity),
+        "coverage_relation": row.coverage_relation,
+        "created_by": row.created_by,
+        "created_at": row.created_at,
+    }
+
+
+async def _add_allocations(
+    session: AsyncSession, actor: Actor, line: QuoteLine, allocations: list[dict[str, Any]]
+) -> None:
+    if not allocations:
+        return
+    now = _now()
+    for entry in allocations:
+        session.add(
+            QuoteLineAllocation(
+                id=uuid.uuid4(),
+                organization_id=actor.organization_id,
+                quote_line_id=line.id,
+                demand_item_id=entry["demand"].id,
+                quantity=entry["quantity"],
+                coverage_relation=entry["coverage_relation"],
+                created_by=actor.id,
+                created_at=now,
+            )
+        )
+    await session.flush()
+
+
+async def _allocations_equivalent(
+    session: AsyncSession, org: uuid.UUID, line: QuoteLine, allocations: list[dict[str, Any]]
+) -> bool:
+    rows = (
+        await session.execute(
+            select(QuoteLineAllocation).where(
+                QuoteLineAllocation.organization_id == org,
+                QuoteLineAllocation.quote_line_id == line.id,
+            )
+        )
+    ).scalars().all()
+    current = {(r.demand_item_id, r.quantity) for r in rows}
+    wanted = {(a["demand"].id, a["quantity"]) for a in allocations}
+    return current == wanted
+
+
+async def _assert_allocations_fit(
+    session: AsyncSession, org: uuid.UUID, line: QuoteLine, quantity: Decimal
+) -> None:
+    total = (
+        await session.execute(
+            select(func.coalesce(func.sum(QuoteLineAllocation.quantity), 0)).where(
+                QuoteLineAllocation.organization_id == org,
+                QuoteLineAllocation.quote_line_id == line.id,
+            )
+        )
+    ).scalar_one()
+    if Decimal(total) > quantity:
+        raise DomainError(
+            "ALLOCATION_EXCEEDS_LINE",
+            "La cantidad de la línea no puede quedar por debajo de lo asignado a sus reportes.",
+            status_code=409,
+            details={"allocated": _qty(Decimal(total)), "line_quantity": _qty(quantity)},
+        )
+
+
+async def _quote_allocation_issues(
+    session: AsyncSession, org: uuid.UUID, quote_id: uuid.UUID
+) -> list[dict]:
+    """Inconsistencias entre las asignaciones de la cotización y sus reportes (D-137).
+
+    Solo mira asignaciones vigentes (línea activa en carrito activo), igual que la cobertura. No
+    corrige nada: devuelve la lista para que la administración ajuste o quite las asignaciones.
+    """
+    rows = (
+        await session.execute(
+            select(QuoteLineAllocation, QuoteLine, DemandItem)
+            .join(QuoteLine, QuoteLine.id == QuoteLineAllocation.quote_line_id)
+            .join(QuoteCart, QuoteCart.id == QuoteLine.quote_cart_id)
+            .join(
+                DemandItem,
+                and_(
+                    DemandItem.id == QuoteLineAllocation.demand_item_id,
+                    DemandItem.organization_id == org,
+                ),
+            )
+            .where(
+                QuoteLineAllocation.organization_id == org,
+                QuoteCart.quote_id == quote_id,
+                QuoteLine.status == "active",
+                QuoteCart.status == "active",
+            )
+            .order_by(QuoteLineAllocation.quote_line_id, QuoteLineAllocation.demand_item_id)
+        )
+    ).all()
+    issues: list[dict] = []
+    per_line: dict[uuid.UUID, tuple[QuoteLine, Decimal]] = {}
+    for allocation, line, demand in rows:
+        previous = per_line.get(line.id)
+        total = (previous[1] if previous else ZERO) + allocation.quantity
+        per_line[line.id] = (line, total)
+        base = {
+            "quote_line_id": str(line.id),
+            "demand_item_id": str(demand.id),
+            "allocated": _qty(allocation.quantity),
+            "line_quantity": _qty(line.quantity),
+        }
+        if demand.status != "active":
+            issues.append(
+                {
+                    **base,
+                    "code": "REPORT_NOT_ACTIVE",
+                    "report_status": demand.status,
+                    "message": "El reporte asignado ya no está activo.",
+                }
+            )
+        elif demand.target_quantity is None:
+            issues.append(
+                {
+                    **base,
+                    "code": "REPORT_QUANTITY_UNKNOWN",
+                    "message": "El reporte asignado quedó sin cantidad pedida.",
+                }
+            )
+        elif allocation.quantity > demand.target_quantity:
+            issues.append(
+                {
+                    **base,
+                    "code": "ALLOCATION_EXCEEDS_REPORT",
+                    "report_quantity": _qty(demand.target_quantity),
+                    "message": "La línea asigna más cantidad de la que pide el reporte.",
+                }
+            )
+    for line, total in per_line.values():
+        if total > line.quantity:
+            issues.append(
+                {
+                    "code": "ALLOCATION_EXCEEDS_LINE",
+                    "quote_line_id": str(line.id),
+                    "allocated": _qty(total),
+                    "line_quantity": _qty(line.quantity),
+                    "message": "Las asignaciones de la línea superan su cantidad.",
+                }
+            )
+    return issues
+
+
+async def _replace_allocations(
+    session: AsyncSession,
+    actor: Actor,
+    org: uuid.UUID,
+    line: QuoteLine,
+    item: TradeItem,
+    raw: list[dict[str, Any]],
+) -> None:
+    """Reemplaza las asignaciones de una línea en borrador. Queda auditado el antes y el después."""
+    existing = (
+        await session.execute(
+            select(QuoteLineAllocation).where(
+                QuoteLineAllocation.organization_id == org,
+                QuoteLineAllocation.quote_line_id == line.id,
+            )
+        )
+    ).scalars().all()
+    before = [_allocation_payload(row) for row in existing]
+    # `PATCH` con lista vacía es la acción explícita de **quitar** todas las asignaciones (D-137).
+    # En el alta (`add_line`) la lista vacía sigue rechazándose: ahí no hay nada que quitar.
+    normalized = (
+        await _normalize_allocations(
+            session, org, line_quantity=line.quantity, unit=line.quantity_unit, item=item,
+            raw=raw, demand_item_id=None,
+        )
+        if raw
+        else []
+    )  # fmt: skip
+    for row in existing:
+        await session.delete(row)
+    await session.flush()
+    await _add_allocations(session, actor, line, normalized)
+    single = normalized[0] if len(normalized) == 1 else None
+    line.demand_item_id = single["demand"].id if single else None
+    line.coverage_relation = single["coverage_relation"] if single else None
+    after = [
+        {
+            "demand_item_id": str(a["demand"].id),
+            "quantity": _qty(a["quantity"]),
+            "coverage_relation": a["coverage_relation"],
+        }
+        for a in normalized
+    ]
+    _emit(
+        session,
+        org_id=org,
+        actor_id=actor.id,
+        action="quote.line.allocate",
+        entity_type="quote_line",
+        entity_id=line.id,
+        event_type="quote.line.allocations_replaced",
+        aggregate_version=line.version,
+        payload={"quote_line_id": str(line.id), "allocations": after},
+        before={"allocations": before},
+        after={"allocations": after},
+    )
+
+
 async def _prior_add(
     session: AsyncSession, org: uuid.UUID, key: str
 ) -> AuditEvent | None:
@@ -625,6 +984,7 @@ async def add_line(
     quantity: Any,
     quantity_unit: Any,
     demand_item_id: uuid.UUID | None = None,
+    demand_allocations: list[dict[str, Any]] | None = None,
     idempotency_key: str | None = None,
     request_hash: str | None = None,
 ) -> tuple[QuoteLine, QuoteCart, Quote, bool, list[str]]:
@@ -689,23 +1049,17 @@ async def add_line(
             status_code=409,
         )
 
-    demand: DemandItem | None = None
-    relation: str | None = None
     warnings: list[str] = []
-    if demand_item_id is not None:
-        demand = (
-            await session.execute(
-                select(DemandItem).where(
-                    DemandItem.id == demand_item_id,
-                    DemandItem.organization_id == org,
-                )
-            )
-        ).scalar_one_or_none()
-        if demand is None or demand.status != "active":
-            raise not_found("El faltante vigente")
-        relation = _relation_for(demand, item)
-        # C5-B comprobará aquí las compras vigentes del faltante y agregará
-        # `demand_already_purchased` a `warnings`; hoy la tabla de compras no existe.
+    allocations = await _normalize_allocations(
+        session, org, line_quantity=value, unit=unit, item=item,
+        raw=demand_allocations, demand_item_id=demand_item_id,
+    )  # fmt: skip
+    # Atajo compatible: con una sola asignación la línea conserva `demand_item_id`/relación.
+    single = allocations[0] if len(allocations) == 1 else None
+    demand: DemandItem | None = single["demand"] if single else None
+    relation: str | None = single["coverage_relation"] if single else None
+    # C5-B comprobará aquí las compras vigentes del reporte y agregará
+    # `demand_already_purchased` a `warnings`; hoy la tabla de compras no existe.
 
     if cart is None:
         cart = QuoteCart(
@@ -731,7 +1085,10 @@ async def add_line(
         )
     ).scalar_one_or_none()
     if existing is not None:
-        if existing.quantity == value:
+        if existing.quantity == value and (
+            not demand_allocations
+            or await _allocations_equivalent(session, org, existing, allocations)
+        ):
             return existing, cart, quote, True, []
         raise DomainError(
             "LINE_EXISTS",
@@ -761,6 +1118,7 @@ async def add_line(
     _touch_cart(cart, now)
     _touch_quote(quote, now)
     await session.flush()
+    await _add_allocations(session, actor, line, allocations)
     after = {
         "quote_id": str(quote.id),
         "line_id": str(line.id),
@@ -772,6 +1130,14 @@ async def add_line(
         "quantity_unit": unit,
         "demand_item_id": str(demand.id) if demand else None,
         "coverage_relation": relation,
+        "demand_allocations": [
+            {
+                "demand_item_id": str(a["demand"].id),
+                "quantity": _qty(a["quantity"]),
+                "coverage_relation": a["coverage_relation"],
+            }
+            for a in allocations
+        ],
     }
     if idempotency_key:
         # La clave se guarda en la auditoría de la misma transacción: no hay tabla nueva y el
@@ -809,6 +1175,7 @@ async def patch_line(
     expected_version: int | None,
     quantity: Any,
     quantity_unit: Any | None = None,
+    demand_allocations: list[dict[str, Any]] | None = None,
 ) -> tuple[QuoteLine, QuoteCart, Quote]:
     require_admin(actor.roles)
     org = actor.organization_id
@@ -818,6 +1185,13 @@ async def patch_line(
     _ensure_draft(quote)
     value = _quantity(quantity)
     unit = _unit(quantity_unit) if quantity_unit is not None else line.quantity_unit
+    if unit != line.quantity_unit and await _allocations_by_line(session, org, [line.id]):
+        raise DomainError(
+            "UNIT_MISMATCH",
+            "No se puede cambiar la unidad de una línea con reportes asignados; quita las "
+            "asignaciones primero.",
+            status_code=422,
+        )
     # C5-B: si hay compras vigentes, `value` no puede ser menor que lo comprado
     # (`409 QUANTITY_BELOW_PURCHASED`). Hoy no existe la tabla de compras.
     now = _now()
@@ -826,6 +1200,19 @@ async def patch_line(
     line.quantity_unit = unit
     line.version += 1
     line.updated_at = now
+    await session.flush()
+    await _assert_allocations_fit(session, org, line, value)
+    if demand_allocations is not None:
+        item = (
+            await session.execute(
+                select(TradeItem).where(
+                    TradeItem.id == line.trade_item_id, TradeItem.organization_id == org
+                )
+            )
+        ).scalar_one_or_none()
+        if item is None:
+            raise not_found("El artículo")
+        await _replace_allocations(session, actor, org, line, item, demand_allocations)
     _touch_cart(cart, now)
     _touch_quote(quote, now)
     _emit(
@@ -957,6 +1344,7 @@ async def move_line(
     quantity: Any,
     quantity_unit: Any | None = None,
     demand_item_id: uuid.UUID | None = None,
+    demand_allocations: list[dict[str, Any]] | None = None,
 ) -> tuple[QuoteLine, QuoteCart, Quote]:
     """Quita y agrega en una transacción. La línea nueva no arrastra el vínculo original."""
     require_admin(actor.roles)
@@ -1025,30 +1413,22 @@ async def move_line(
         session.add(target_cart)
         await session.flush()
 
-    demand: DemandItem | None = None
-    relation: str | None = None
-    if demand_item_id is not None:
-        demand = (
-            await session.execute(
-                select(DemandItem).where(
-                    DemandItem.id == demand_item_id,
-                    DemandItem.organization_id == org,
-                    DemandItem.status == "active",
-                )
+    item = (
+        await session.execute(
+            select(TradeItem).where(
+                TradeItem.id == target.trade_item_id, TradeItem.organization_id == org
             )
-        ).scalar_one_or_none()
-        if demand is None:
-            raise not_found("El faltante vigente")
-        item = (
-            await session.execute(
-                select(TradeItem).where(
-                    TradeItem.id == target.trade_item_id, TradeItem.organization_id == org
-                )
-            )
-        ).scalar_one_or_none()
-        if item is None:
-            raise not_found("El artículo")
-        relation = _relation_for(demand, item)
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        raise not_found("El artículo")
+    allocations = await _normalize_allocations(
+        session, org, line_quantity=value, unit=unit, item=item,
+        raw=demand_allocations, demand_item_id=demand_item_id,
+    )  # fmt: skip
+    single = allocations[0] if len(allocations) == 1 else None
+    demand: DemandItem | None = single["demand"] if single else None
+    relation: str | None = single["coverage_relation"] if single else None
 
     new_line = QuoteLine(
         id=uuid.uuid4(),
@@ -1068,6 +1448,8 @@ async def move_line(
         updated_at=now,
     )
     session.add(new_line)
+    await session.flush()
+    await _add_allocations(session, actor, new_line, allocations)
     _touch_cart(source_cart, now)
     if target_cart.id != source_cart.id:  # mismo proveedor: un solo toque de versión
         _touch_cart(target_cart, now)
@@ -1101,6 +1483,14 @@ async def move_line(
             "quantity": _qty(new_line.quantity),
             "quantity_unit": new_line.quantity_unit,
             "demand_item_id": str(new_line.demand_item_id) if new_line.demand_item_id else None,
+            "demand_allocations": [
+                {
+                    "demand_item_id": str(a["demand"].id),
+                    "quantity": _qty(a["quantity"]),
+                    "coverage_relation": a["coverage_relation"],
+                }
+                for a in allocations
+            ],
         },
     )
     return new_line, target_cart, quote
@@ -1161,7 +1551,11 @@ async def line_view(session: AsyncSession, actor: Actor, quote: Quote, line: Quo
     current = next(
         (o for o in latest.get(line.trade_item_id, []) if o.source_id == selected.source_id), None
     )
-    return _line_payload(line, quote, selected=selected, current=current, now=now)
+    allocations = await _allocations_by_line(session, actor.organization_id, [line.id])
+    return _line_payload(
+        line, quote, selected=selected, current=current, now=now,
+        allocations=allocations.get(line.id, []),
+    )  # fmt: skip
 
 
 async def cart_view(
@@ -1341,6 +1735,7 @@ async def quote_detail(session: AsyncSession, actor: Actor, quote_id: uuid.UUID)
     by_cart: dict[uuid.UUID, list[QuoteLine]] = {}
     for line in lines:
         by_cart.setdefault(line.quote_cart_id, []).append(line)
+    allocs = await _allocations_by_line(session, org, [line.id for line in lines])
 
     supplier_ids = {c.supplier_id for c in carts}
     suppliers = {
@@ -1410,6 +1805,7 @@ async def quote_detail(session: AsyncSession, actor: Actor, quote_id: uuid.UUID)
                     None,
                 ),
                 now=now,
+                allocations=allocs.get(line.id, []),
             )
             for line in cart_lines
         ]
@@ -1435,16 +1831,24 @@ async def quote_detail(session: AsyncSession, actor: Actor, quote_id: uuid.UUID)
 async def _quote_coverage(
     session: AsyncSession, org: uuid.UUID, lines: list[QuoteLine]
 ) -> list[dict]:
-    demand_ids = list({line.demand_item_id for line in lines if line.demand_item_id is not None})
+    """Cobertura por reporte desde las asignaciones, incluidos los de líneas ya retiradas.
+
+    Las líneas retiradas se informan con cobertura 0: el reporte sigue visible para que la
+    administración decida, y la cobertura la calcula el servicio, no este listado.
+    """
+    if not lines:
+        return []
+    allocs = await _allocations_by_line(session, org, [line.id for line in lines])
+    demand_ids = sorted({a.demand_item_id for rows in allocs.values() for a in rows}, key=str)
     if not demand_ids:
         return []
     data, items = await coverage_svc.coverage_for_ids(session, org, demand_ids)
     relations: dict[uuid.UUID, list[str]] = {}
-    for line in lines:
-        if line.demand_item_id is not None and line.coverage_relation is not None:
-            relations.setdefault(line.demand_item_id, [])
-            if line.coverage_relation not in relations[line.demand_item_id]:
-                relations[line.demand_item_id].append(line.coverage_relation)
+    for rows in allocs.values():
+        for alloc in rows:
+            relations.setdefault(alloc.demand_item_id, [])
+            if alloc.coverage_relation not in relations[alloc.demand_item_id]:
+                relations[alloc.demand_item_id].append(alloc.coverage_relation)
     out = []
     for demand_id in demand_ids:
         item = items.get(demand_id)

@@ -1,10 +1,11 @@
 """Cotizaciones, carritos por proveedor, líneas y observaciones comerciales (C5-A, E10 y O1).
 
-Cuatro tablas del cotizador:
+Cuatro tablas del cotizador más la asignación de líneas a reportes:
 
   * `quote`                    la cotización: `draft` o `closed`, sin archivo ni TTL.
   * `quote_cart`               un carrito por proveedor; nace con la primera línea.
   * `quote_line`               la oferta elegida y la cantidad; **no guarda precio**.
+  * `quote_line_allocation`    qué parte de la línea cubre cada reporte independiente (D-135).
   * `commercial_observation`   texto libre, inmutable y acumulativo (D-116/D-132).
 
 Reglas que la base impone y no se pueden eludir desde el servicio:
@@ -229,6 +230,47 @@ class QuoteLine(Base):
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
     version: Mapped[int] = mapped_column(Integer, server_default="1")
+
+
+class QuoteLineAllocation(Base):
+    """Parte de una línea comercial que cubre un reporte concreto (Modelo A, D-135).
+
+    Una línea de 20 puede cubrir dos reportes independientes de 10 mediante dos asignaciones
+    explícitas. La suma de asignaciones **nunca** supera la cantidad de la línea; la unidad es la de
+    la línea. La relación E1 se congela por asignación porque puede diferir entre reportes.
+    """
+
+    __tablename__ = "quote_line_allocation"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id"),
+        UniqueConstraint(
+            "quote_line_id", "demand_item_id", name="uq_quote_line_allocation_line_demand"
+        ),
+        ForeignKeyConstraint(
+            ["quote_line_id", "organization_id"],
+            ["quote_line.id", "quote_line.organization_id"],
+        ),
+        ForeignKeyConstraint(
+            ["demand_item_id", "organization_id"],
+            ["demand_item.id", "demand_item.organization_id"],
+        ),
+        ForeignKeyConstraint(
+            ["created_by", "organization_id"], ["app_user.id", "app_user.organization_id"]
+        ),
+        CheckConstraint("quantity > 0", name="cantidad_positiva"),
+        CheckConstraint("quantity = trunc(quantity)", name="cantidad_entera"),
+        CheckConstraint(f"coverage_relation IN ({RELATIONS})", name="relacion_valida"),
+        Index("ix_quote_line_allocation_demand", "organization_id", "demand_item_id"),
+    )  # fmt: skip
+    id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
+    organization_id: Mapped[uuid.UUID] = mapped_column()
+    quote_line_id: Mapped[uuid.UUID] = mapped_column()
+    demand_item_id: Mapped[uuid.UUID] = mapped_column()
+    quantity: Mapped[Decimal] = mapped_column(Numeric(12, 3))
+    # Clasificación E1 congelada para ESTE reporte; no se recalcula ni se comparte con otros.
+    coverage_relation: Mapped[str] = mapped_column(String(20))
+    created_by: Mapped[uuid.UUID] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
 
 
 class CommercialObservation(Base):

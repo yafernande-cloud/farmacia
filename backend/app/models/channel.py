@@ -141,13 +141,35 @@ class ChannelMessage(Base):
         ForeignKeyConstraint(["account_id", "organization_id"], ["telegram_account.id", "telegram_account.organization_id"]),
         CheckConstraint("data_origin IN ('simulated','captured','ai_derived','unclassified')", name="origen_dato_valido"),
         CheckConstraint("kind IN ('text','photo')", name="tipo_valido"),
-        CheckConstraint("attribution_status IN ('attributed','pending_attribution','discarded')", name="atribucion_valida"),
-        CheckConstraint("(attribution_status = 'attributed') = (author_id IS NOT NULL)", name="autor_coherente"),
+        CheckConstraint(
+            "attribution_status IN ('attributed','pending_attribution','pending_confirmation','discarded')",
+            name="atribucion_valida",
+        ),
+        # Un mensaje en confirmación ya tiene autor (se sabe quién lo envió); lo que falta es la
+        # decisión sobre el reporte, no la identidad.
+        CheckConstraint(
+            # Un mensaje descartado puede conservar a su autor para trazabilidad (D-135);
+            # todo lo demás sin autor sigue siendo `pending_attribution`.
+            "(attribution_status IN ('attributed','pending_confirmation')) = "
+            "(author_id IS NOT NULL) OR attribution_status = 'discarded'",
+            name="autor_coherente",
+        ),
+        CheckConstraint(
+            "confirmation_status IS NULL OR confirmation_status IN "
+            "('pending_other_report','pending_same_author_quantity','awaiting_quantity',"
+            "'resolved','cancelled')",
+            name="confirmacion_valida",
+        ),
+        CheckConstraint("jsonb_typeof(confirmation_data) = 'object'", name="confirmacion_datos_validos"),
         CheckConstraint(
             "attribution_basis IS NULL OR attribution_basis IN ('session_at_receipt','confirmed_after_identification','authorized_account')",
             name="base_valida",
         ),
         Index("ix_channel_message_pending", "channel_binding_id", "received_at", postgresql_where=text("attribution_status = 'pending_attribution'")),
+        Index(
+            "ix_channel_message_confirmation", "channel_binding_id", "received_at",
+            postgresql_where=text("attribution_status = 'pending_confirmation'"),
+        ),
     )  # fmt: skip
     id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
     organization_id: Mapped[uuid.UUID] = mapped_column()
@@ -175,6 +197,10 @@ class ChannelMessage(Base):
     attributed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     discarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     discard_reason: Mapped[str | None] = mapped_column(String(40))
+    # Confirmación pendiente de un reporte coincidente (D-135). El mensaje original se conserva
+    # íntegro; `confirmation_data` guarda la interpretación y la propuesta para resolver el botón.
+    confirmation_status: Mapped[str | None] = mapped_column(String(32))
+    confirmation_data: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=EMPTY_OBJ)
 
 
 class Attachment(Base):

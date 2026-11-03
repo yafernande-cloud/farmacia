@@ -71,6 +71,10 @@ class FakeTelegramAPI:
     def texts(self) -> list[str]:
         return [b["text"] for b in self.sent()]
 
+    def last_buttons(self) -> list[dict]:
+        rows = self.sent()[-1].get("reply_markup", {}).get("inline_keyboard", [])
+        return [b for row in rows for b in row]
+
     def _handle(self, req: httpx.Request) -> httpx.Response:
         path = req.url.path
         assert f"/bot{TOKEN}/" in path or f"/file/bot{TOKEN}/" in path, (

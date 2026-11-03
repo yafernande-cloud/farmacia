@@ -180,10 +180,13 @@ async def test_el_mismo_texto_en_ambas_organizaciones_crea_necesidades_separadas
     async with sessions() as s:
         orgs = dict((await s.execute(select(DemandItem.id, DemandItem.organization_id))).all())
     assert orgs[a.item.id] == seed["org"] and orgs[b.item.id] == real_seed["org"]
-    again = await real_ctx.report("luis", "no queda vitamina d 50000 ui")
-    assert (
-        again.outcome == "attached_existing" and again.item.id == b.item.id
-    )  # dentro de su organización sí se deduplica
+    # Dentro de la misma organización, cada autor conserva su reporte (Modelo A). La
+    # deduplicación es por autor: nunca se adjunta al reporte de otra persona.
+    own = await real_ctx.report("ana", "no queda vitamina d 50000 ui")
+    assert own.outcome == "attached_existing" and own.item.id == b.item.id
+    other = await real_ctx.report("luis", "no queda vitamina d 50000 ui")
+    assert other.outcome == "created_item" and other.item.id != b.item.id
+    assert other.item.organization_id == real_seed["org"]
 
 
 async def test_un_catalogo_de_simulacion_no_influye_en_los_avisos_reales(
