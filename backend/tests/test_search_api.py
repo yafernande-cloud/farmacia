@@ -5,7 +5,7 @@ conectores externos. Las ofertas sembradas son `fixture` del propio test.
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -30,7 +30,8 @@ from app.services.actors import load_actor
 
 pytestmark = pytest.mark.db
 
-NOW = datetime(2026, 11, 2, 15, 0, tzinfo=UTC)
+# Relativo al reloj de la corrida: la frescura de la fuente (24 h) se mide contra «ahora».
+NOW = datetime.now(UTC) - timedelta(minutes=5)
 
 
 def _attrs(

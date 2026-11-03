@@ -45,6 +45,18 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 from app.models.catalog import ORIGINS, UNITS
 
+# Clases que una interpretación puede retirar explícitamente (D-144). El precio distingue
+# `acceptable` de `maximum`; retirar una no retira la otra.
+RETIRED_SUBJECT_KINDS = (
+    "laboratory",
+    "brand",
+    "supplier",
+    "availability",
+    "price:acceptable",
+    "price:maximum",
+)
+RETIRED_SUBJECT_KINDS_JSON = "[" + ",".join(f'"{kind}"' for kind in RETIRED_SUBJECT_KINDS) + "]"
+
 UUID_PK = dict(primary_key=True, default=uuid.uuid4, server_default=func.gen_random_uuid())
 _NOW = dict(server_default=func.now())
 
@@ -279,6 +291,10 @@ class CommercialObservation(Base):
     __tablename__ = "commercial_observation"
     __table_args__ = (
         UniqueConstraint("id", "organization_id"),
+        # Alcance compuesto que las interpretaciones y preferencias heredan por FK.
+        UniqueConstraint(
+            "id", "trade_item_id", "organization_id", name="uq_commercial_observation_scope"
+        ),
         ForeignKeyConstraint(["organization_id"], ["organization.id"]),
         ForeignKeyConstraint(
             ["author_id", "organization_id"], ["app_user.id", "app_user.organization_id"]
@@ -329,3 +345,358 @@ class CommercialObservation(Base):
     # Etiquetas tal como se vieron (producto, presentación, marca, proveedor, oferta, cotización).
     context: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     data_origin: Mapped[str] = mapped_column(String(12), server_default="captured")
+
+
+class ObservationInterpretation(Base):
+    """Intento de interpretación de una observación comercial (O2–O4, D-136/D-138/D-141).
+
+    Una fila por llamada al modelo; el texto original nunca se reescribe. `suggested` y `confirmed`
+    pueden aplicarse; `rejected`, `failed`, `needs_review` y `no_preference` no. Un fallo se reintenta
+    creando otra fila, nunca editando la anterior. El contenido es inmutable: solo se revisan el
+    estado y sus datos de revisión. `retired_subject_kinds` expresa un retiro explícito por clase
+    (`laboratory`, `brand`, `supplier`, `availability`, `price:acceptable`, `price:maximum`); no se
+    simula con filas ficticias ni con `status='rejected'` (D-144).
+    """
+
+    __tablename__ = "observation_interpretation"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id"),
+        # Alcance compuesto: una preferencia no puede cruzar artículo u organización.
+        UniqueConstraint(
+            "id", "trade_item_id", "organization_id", name="uq_observation_interpretation_scope"
+        ),
+        ForeignKeyConstraint(["organization_id"], ["organization.id"]),
+        ForeignKeyConstraint(
+            ["observation_id", "trade_item_id", "organization_id"],
+            [
+                "commercial_observation.id",
+                "commercial_observation.trade_item_id",
+                "commercial_observation.organization_id",
+            ],
+        ),
+        ForeignKeyConstraint(
+            ["trade_item_id", "organization_id"], ["trade_item.id", "trade_item.organization_id"]
+        ),
+        ForeignKeyConstraint(
+            ["reviewed_by", "organization_id"], ["app_user.id", "app_user.organization_id"]
+        ),
+        CheckConstraint(
+            "status IN ('suggested','confirmed','rejected','failed','needs_review','no_preference')",
+            name="estado_valido",
+        ),
+        CheckConstraint("length(btrim(model)) > 0", name="modelo_no_vacio"),
+        CheckConstraint("length(btrim(prompt_version)) > 0", name="prompt_no_vacio"),
+        CheckConstraint("input_tokens IS NULL OR input_tokens >= 0", name="tokens_entrada_validos"),
+        CheckConstraint("output_tokens IS NULL OR output_tokens >= 0", name="tokens_salida_validos"),
+        CheckConstraint("latency_ms IS NULL OR latency_ms >= 0", name="latencia_valida"),
+        CheckConstraint("raw_output IS NULL OR jsonb_typeof(raw_output) = 'object'", name="salida_valida"),
+        # Un fallo siempre tiene código interno; el código solo acompaña fallos o revisión.
+        CheckConstraint("(status <> 'failed') OR (error_code IS NOT NULL)", name="fallo_con_codigo"),
+        CheckConstraint(
+            "(error_code IS NULL) OR (status IN ('failed','needs_review'))", name="codigo_solo_fallo"
+        ),
+        CheckConstraint(
+            "(reviewed_by IS NULL) = (reviewed_at IS NULL)", name="revision_coherente"
+        ),
+        CheckConstraint(
+            "review_note IS NULL OR reviewed_at IS NOT NULL", name="nota_con_revision"
+        ),
+        # Confirmar o rechazar exige una revisión humana; lo demás no la conserva.
+        CheckConstraint(
+            "(status IN ('confirmed','rejected')) = (reviewed_at IS NOT NULL)",
+            name="revision_obligatoria",
+        ),
+        CheckConstraint(f"data_origin IN ({ORIGINS})", name="origen_dato_valido"),
+        CheckConstraint(
+            "jsonb_typeof(retired_subject_kinds) = 'array'", name="retiros_validos"
+        ),
+        CheckConstraint(
+            f"retired_subject_kinds <@ '{RETIRED_SUBJECT_KINDS_JSON}'::jsonb",
+            name="retiros_permitidos",
+        ),
+        Index("ix_observation_interpretation_item", "organization_id", "trade_item_id", "created_at"),
+        Index("ix_observation_interpretation_observation", "observation_id", "created_at"),
+    )  # fmt: skip
+    id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
+    organization_id: Mapped[uuid.UUID] = mapped_column()
+    observation_id: Mapped[uuid.UUID] = mapped_column()
+    trade_item_id: Mapped[uuid.UUID] = mapped_column()
+    status: Mapped[str] = mapped_column(String(16), server_default="suggested")
+    model: Mapped[str] = mapped_column(String(80))
+    prompt_version: Mapped[str] = mapped_column(String(40))
+    # Retiro explícito por clase. Solo tiene efecto si la interpretación está `suggested` o
+    # `confirmed`; el resto de estados no modifica preferencias vigentes.
+    retired_subject_kinds: Mapped[list[str]] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb")
+    )
+    # Respuesta estructurada del proveedor, tal como llegó; nunca se ejecuta ni se muestra.
+    # `none_as_null` distingue «sin respuesta» (SQL NULL) de un JSON `null`.
+    raw_output: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    error_code: Mapped[str | None] = mapped_column(String(40))
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column()
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
+    data_origin: Mapped[str] = mapped_column(String(12), server_default="ai_derived")
+
+
+class CommercialPreference(Base):
+    """Preferencia comercial estructurada de un artículo concreto (O3/O4, D-136/D-138).
+
+    No es texto libre ni una puntuación. El motor determinista la usa para **ordenar** las ofertas
+    del producto; nunca cambia precios, stock, elegibilidad ni totales. `laboratory`/`brand`/
+    `supplier` aceptan una tolerancia (porcentaje relativo o monto absoluto) y una preferencia
+    negativa solo se expresa como `deprioritize`. `price` usa una referencia aceptable o máxima;
+    `availability` solo prefiere `in_stock`.
+    """
+
+    __tablename__ = "commercial_preference"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id"),
+        ForeignKeyConstraint(["organization_id"], ["organization.id"]),
+        # La preferencia hereda artículo y organización de su interpretación (FK compuesta).
+        ForeignKeyConstraint(
+            ["interpretation_id", "trade_item_id", "organization_id"],
+            [
+                "observation_interpretation.id",
+                "observation_interpretation.trade_item_id",
+                "observation_interpretation.organization_id",
+            ],
+        ),
+        ForeignKeyConstraint(
+            ["observation_id", "trade_item_id", "organization_id"],
+            [
+                "commercial_observation.id",
+                "commercial_observation.trade_item_id",
+                "commercial_observation.organization_id",
+            ],
+        ),
+        ForeignKeyConstraint(
+            ["trade_item_id", "organization_id"], ["trade_item.id", "trade_item.organization_id"]
+        ),
+        ForeignKeyConstraint(
+            ["subject_supplier_id", "organization_id"],
+            ["supplier.id", "supplier.organization_id"],
+        ),
+        CheckConstraint(
+            "subject_kind IN ('laboratory','brand','supplier','availability','price')",
+            name="sujeto_valido",
+        ),
+        CheckConstraint("effect IN ('prefer','deprioritize')", name="efecto_valido"),
+        CheckConstraint(
+            "status IN ('suggested','confirmed','rejected','needs_review')", name="estado_valido"
+        ),
+        CheckConstraint(f"data_origin IN ({ORIGINS})", name="origen_dato_valido"),
+        CheckConstraint(
+            "length(btrim(subject_key)) > 0 AND length(subject_key) <= 300",
+            name="clave_sujeto_valida",
+        ),
+        CheckConstraint(
+            "length(btrim(subject_label)) > 0 AND length(subject_label) <= 300",
+            name="etiqueta_sujeto_valida",
+        ),
+        CheckConstraint(
+            "(subject_kind = 'supplier') = (subject_supplier_id IS NOT NULL)",
+            name="proveedor_coherente",
+        ),
+        CheckConstraint(
+            "subject_kind <> 'availability' OR (effect = 'prefer' AND subject_key = 'in_stock')",
+            name="disponibilidad_valida",
+        ),
+        CheckConstraint("subject_kind <> 'price' OR effect = 'prefer'", name="precio_solo_prefiere"),
+        CheckConstraint("confidence >= 0 AND confidence <= 1", name="confianza_valida"),
+        # Tolerancias: solo tienen sentido al preferir un laboratorio, marca o proveedor.
+        CheckConstraint(
+            "tolerance_kind IN ('none','relative_percent','absolute_amount')",
+            name="tolerancia_valida",
+        ),
+        CheckConstraint(
+            "tolerance_origin IN ('not_applicable','implicit_default','explicit')",
+            name="origen_tolerancia_valido",
+        ),
+        CheckConstraint(
+            "(tolerance_kind = 'none') OR (subject_kind IN ('laboratory','brand','supplier')"
+            " AND effect = 'prefer')",
+            name="tolerancia_solo_preferencia",
+        ),
+        CheckConstraint(
+            "(tolerance_kind <> 'none') = (tolerance_origin <> 'not_applicable')",
+            name="origen_tolerancia_coherente",
+        ),
+        CheckConstraint(
+            "tolerance_kind <> 'relative_percent' OR (tolerance_percent > 0"
+            " AND tolerance_percent <= 100 AND tolerance_amount IS NULL"
+            " AND tolerance_currency IS NULL)",
+            name="tolerancia_relativa_valida",
+        ),
+        CheckConstraint(
+            "tolerance_kind <> 'absolute_amount' OR (tolerance_amount > 0"
+            " AND tolerance_currency IS NOT NULL AND tolerance_percent IS NULL"
+            " AND tolerance_origin = 'explicit')",
+            name="tolerancia_absoluta_valida",
+        ),
+        CheckConstraint(
+            "(tolerance_kind = 'none') = (tolerance_percent IS NULL AND tolerance_amount IS NULL"
+            " AND tolerance_currency IS NULL)",
+            name="tolerancia_nula_coherente",
+        ),
+        CheckConstraint(
+            "tolerance_currency IS NULL OR tolerance_currency ~ '^[A-Z]{3}$'",
+            name="moneda_tolerancia_valida",
+        ),
+        # Referencias de precio: aceptable o máximo, con su base explícita.
+        CheckConstraint(
+            "price_reference_kind IN ('none','acceptable','maximum')",
+            name="referencia_precio_valida",
+        ),
+        CheckConstraint(
+            "price_reference_basis IS NULL OR price_reference_basis IN"
+            " ('per_base_unit','per_commercial_unit','per_line_total')",
+            name="base_precio_valida",
+        ),
+        CheckConstraint(
+            "(subject_kind = 'price') = (price_reference_kind <> 'none')",
+            name="referencia_solo_precio",
+        ),
+        CheckConstraint("subject_kind <> 'price' OR tolerance_kind = 'none'", name="precio_sin_tolerancia"),
+        CheckConstraint(
+            "(price_reference_kind = 'none') = (price_reference_amount IS NULL"
+            " AND price_reference_currency IS NULL AND price_reference_basis IS NULL"
+            " AND price_reference_quantity IS NULL AND price_reference_quantity_unit IS NULL)",
+            name="referencia_nula_coherente",
+        ),
+        CheckConstraint(
+            "price_reference_kind = 'none' OR (price_reference_amount > 0"
+            " AND price_reference_currency IS NOT NULL AND price_reference_basis IS NOT NULL)",
+            name="referencia_completa",
+        ),
+        CheckConstraint(
+            "price_reference_currency IS NULL OR price_reference_currency ~ '^[A-Z]{3}$'",
+            name="moneda_referencia_valida",
+        ),
+        CheckConstraint(
+            "price_reference_quantity IS NULL OR price_reference_quantity > 0",
+            name="cantidad_referencia_positiva",
+        ),
+        CheckConstraint(
+            "price_reference_basis IS DISTINCT FROM 'per_line_total'"
+            " OR (price_reference_quantity IS NOT NULL"
+            " AND price_reference_quantity_unit IS NOT NULL)",
+            name="referencia_total_con_cantidad",
+        ),
+        CheckConstraint(
+            "price_reference_basis = 'per_line_total' OR (price_reference_quantity IS NULL"
+            " AND price_reference_quantity_unit IS NULL)",
+            name="referencia_unitaria_sin_cantidad",
+        ),
+        CheckConstraint(
+            "price_reference_quantity_unit IS NULL OR price_reference_quantity_unit IN"
+            " ('box','package','unit','bottle')",
+            name="unidad_referencia_valida",
+        ),
+        Index(
+            "ix_commercial_preference_item",
+            "organization_id",
+            "trade_item_id",
+            "subject_kind",
+            "created_at",
+        ),
+        Index("ix_commercial_preference_interpretation", "interpretation_id"),
+        Index("ix_commercial_preference_status", "organization_id", "trade_item_id", "status"),
+    )  # fmt: skip
+    id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
+    organization_id: Mapped[uuid.UUID] = mapped_column()
+    interpretation_id: Mapped[uuid.UUID] = mapped_column()
+    observation_id: Mapped[uuid.UUID] = mapped_column()
+    trade_item_id: Mapped[uuid.UUID] = mapped_column()
+    subject_kind: Mapped[str] = mapped_column(String(16))
+    # Clave normalizada para comparar (laboratorio/marca/proveedor/in_stock/price).
+    subject_key: Mapped[str] = mapped_column(String(300))
+    # Etiqueta legible tal como se interpretó; no se muestra como explicación de la IA.
+    subject_label: Mapped[str] = mapped_column(String(300))
+    subject_supplier_id: Mapped[uuid.UUID | None] = mapped_column()
+    effect: Mapped[str] = mapped_column(String(12))
+    tolerance_kind: Mapped[str] = mapped_column(String(24), server_default="none")
+    tolerance_percent: Mapped[Decimal | None] = mapped_column(Numeric(6, 3))
+    tolerance_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    tolerance_currency: Mapped[str | None] = mapped_column(String(3))
+    tolerance_origin: Mapped[str] = mapped_column(String(24), server_default="not_applicable")
+    price_reference_kind: Mapped[str] = mapped_column(String(16), server_default="none")
+    price_reference_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    price_reference_currency: Mapped[str | None] = mapped_column(String(3))
+    price_reference_basis: Mapped[str | None] = mapped_column(String(24))
+    price_reference_quantity: Mapped[Decimal | None] = mapped_column(Numeric(12, 3))
+    price_reference_quantity_unit: Mapped[str | None] = mapped_column(String(10))
+    confidence: Mapped[Decimal] = mapped_column(Numeric(3, 2))
+    status: Mapped[str] = mapped_column(String(16), server_default="suggested")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
+    data_origin: Mapped[str] = mapped_column(String(12), server_default="ai_derived")
+
+
+class PreferenceOrderTrace(Base):
+    """Traza interna del orden aplicado a las ofertas de un artículo (AC31/D-141).
+
+    No se muestra en el cotizador. Guarda qué interpretaciones y preferencias participaron, qué
+    clases se retiraron explícitamente (D-144) y el orden anterior y resultante. Es de solo
+    agregar: corregir el orden no reescribe la historia.
+    """
+
+    __tablename__ = "preference_order_trace"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id"),
+        ForeignKeyConstraint(["organization_id"], ["organization.id"]),
+        ForeignKeyConstraint(
+            ["trade_item_id", "organization_id"], ["trade_item.id", "trade_item.organization_id"]
+        ),
+        CheckConstraint("context IN ('article_detail','comparison')", name="contexto_valido"),
+        CheckConstraint("jsonb_typeof(interpretation_ids) = 'array'", name="interpretaciones_validas"),
+        CheckConstraint("jsonb_typeof(preference_ids) = 'array'", name="preferencias_validas"),
+        CheckConstraint("jsonb_typeof(applied_preferences) = 'array'", name="aplicadas_validas"),
+        CheckConstraint(
+            "jsonb_typeof(retired_subject_kinds) = 'array'", name="retiros_validos"
+        ),
+        CheckConstraint(
+            f"retired_subject_kinds <@ '{RETIRED_SUBJECT_KINDS_JSON}'::jsonb",
+            name="retiros_permitidos",
+        ),
+        CheckConstraint("jsonb_typeof(offer_ids_before) = 'array'", name="orden_previo_valido"),
+        CheckConstraint("jsonb_typeof(offer_ids_after) = 'array'", name="orden_nuevo_valido"),
+        CheckConstraint("length(offer_set_hash) = 64", name="hash_ofertas_valido"),
+        CheckConstraint("length(preference_fingerprint) = 64", name="huella_valida"),
+        UniqueConstraint(
+            "organization_id",
+            "trade_item_id",
+            "context",
+            "offer_set_hash",
+            "preference_fingerprint",
+            name="uq_preference_order_trace_estado",
+        ),
+        Index("ix_preference_order_trace_item", "organization_id", "trade_item_id", "created_at"),
+    )  # fmt: skip
+    id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
+    organization_id: Mapped[uuid.UUID] = mapped_column()
+    trade_item_id: Mapped[uuid.UUID] = mapped_column()
+    context: Mapped[str] = mapped_column(String(20))
+    interpretation_ids: Mapped[list[Any]] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb")
+    )
+    preference_ids: Mapped[list[Any]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
+    applied_preferences: Mapped[list[Any]] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb")
+    )
+    retired_subject_kinds: Mapped[list[str]] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb")
+    )
+    offer_ids_before: Mapped[list[Any]] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb")
+    )
+    offer_ids_after: Mapped[list[Any]] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb")
+    )
+    offer_set_hash: Mapped[str] = mapped_column(String(64))
+    preference_fingerprint: Mapped[str] = mapped_column(String(64))
+    correlation_id: Mapped[uuid.UUID] = mapped_column(server_default=func.gen_random_uuid())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)

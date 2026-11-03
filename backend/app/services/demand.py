@@ -794,7 +794,7 @@ async def active_allocations_for_item(
 
 
 async def _has_registered_purchase(session: AsyncSession, org: uuid.UUID, item_id: uuid.UUID) -> bool:
-    """C5-B (0018) conectará aquí `purchase_line_allocation`. Hoy no existe una compra registrada."""
+    """C5-B (0019) conectará aquí `purchase_line_allocation`. Hoy no existe una compra registrada."""
     return False
 
 

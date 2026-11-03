@@ -4,23 +4,31 @@
 del proyecto: queda en revisión hasta que lo apruebes expresamente. Registra lo ya acordado y su estado real, **no
 habilita implementación** de lo pendiente ni cambia decisiones por iniciativa propia.
 
-**Fecha:** 2026-11-02. **Rama:** `master` (sin commit, sin push, sin despliegue).
+**Fecha:** 2026-11-02 (A6 actualizado el 2026-11-03). **Rama:** `master` (sin commit, sin push, sin despliegue).
 **Fuentes:** `docs/Farmacia_Parque_Lantano_HLD_LLD.md` (sin editar), `docs/ARQUITECTURA.md`, `docs/ROADMAP.md`,
-`docs/contracts/cotizador-v0.2.md` (revisión 9 vigente; revisión 10 **propuesta** en
-`docs/contracts/cotizador-v0.2-rev10-propuesta.md`), `docs/decisions/0001-registro-de-decisiones.md` (D-015 a D-141),
-`CLAUDE.md` y el código y las pruebas de `backend/`.
+`docs/contracts/cotizador-v0.2.md` (revisión **10-A6**, aprobada el 2026-11-03 solo para A6; C9 y C11 siguen pendientes;
+texto de trabajo en `docs/contracts/cotizador-v0.2-rev10-propuesta.md`), `docs/decisions/0001-registro-de-decisiones.md`
+(D-015 a D-144), `CLAUDE.md` y el código y las pruebas de `backend/`.
 
 **Decisiones definitivas incorporadas el 2026-11-02:** **C7 → D-138** (preferencias independientes por producto, sin
 propagación), **C9 → D-139** (cerrar una cotización significa «preparada para comprar», no «comprada»), **C11 → D-140**
 (cantidades compradas sin asignación quedan como compra adicional para inventario) y **AC31 → D-141** (la trazabilidad
-de la IA es auditoría interna, no explicación visible). Estas cuatro decisiones **sustituyen** las observaciones que
-este documento mantenía abiertas; no se presentan como pendientes de definición. Su implementación sigue **sin
-autorizar** y la revisión 10 del contrato sigue **sin aprobar y sin aplicar**.
+de la IA es auditoría interna, no explicación visible). **El 2026-11-03, D-142 aprobó e incorporó A6** en el contrato
+(revisión 10-A6: O3, O4, §8.4, §8.6 y AC31). **D-144 (2026-11-03) aprobó el retiro explícito de preferencias**, que
+ocupa la migración **`0019`**; por tanto **C5-B pasa a `0020`, C5-C a `0021` y C5-D a `0022`**, sin renumerar las
+migraciones existentes. Estas decisiones **sustituyen** las observaciones que este documento mantenía abiertas. Las
+**fases 1, 2 y 3A de A6** (esquema, modelos, migración, pruebas, motor determinista con traza e interpretación interna
+con OpenAI) y el **retiro explícito** están implementados. **D-143 (2026-11-03)** precisa la interpretación: elegibilidad
+primero; estados no aplicados sin efecto ni retiro implícito; auditoría *best effort* en el detalle y obligatoria en
+comparación; traza con modelo, prompt y estado. **D-144** cierra el retiro que D-143 dejó propuesto. **D-145
+(2026-11-03)** implementa la Fase 3A: servicio de interpretación, adaptador de la Responses API, validación estricta de
+la salida y proveedor simulado en la suite; **sin migración, sin endpoints y sin Lovable**.
 
 **Regla de clasificación.** Un acuerdo solo se marca **implementado** si existe código que lo ejecuta y al menos una
 prueba automatizada que lo verifica. **Implementado en código no significa desplegado, aplicado a una base ni verificado
-con servicios reales.** Las migraciones `0016` y `0017` existen en el código y **no están aplicadas a ninguna base**
-(`farmacia`: 0008; `farmacia_demo`: 0015). El bot real de Telegram sigue sin verificar (H1-B.5).
+con servicios reales.** Las migraciones `0016`–`0019` existen en el código y **no están aplicadas** a `farmacia` (0008)
+ni a `farmacia_demo` (0015); solo `farmacia_test`, la base aislada de pruebas, está en head (`0019`). El bot real de
+Telegram sigue sin verificar (H1-B.5).
 
 Estados:
 
@@ -28,9 +36,10 @@ Estados:
 - **B — Aprobado, pendiente de implementación** (hay decisión, no hay código completo).
 - **C — Pendiente de decisión** (falta una regla o hay una contradicción sin resolver; no se implementa sin orden).
 
-**Ningún acuerdo queda en estado C.** C7, C9, C11 y AC31 fueron **decididos** el 2026-11-02 (D-138 a D-141). Lo que
-sigue abierto es su **implementación** (no autorizada) y las limitaciones materiales ya declaradas: conectores reales,
-credenciales, IA real, migraciones `0016`–`0017` no aplicadas y bot real sin verificar.
+**Ningún acuerdo queda en estado C.** C7, C9, C11 y AC31 fueron **decididos** el 2026-11-02 (D-138 a D-141) y A6 se
+incorporó el 2026-11-03 (D-142). Lo que sigue abierto es su **implementación** (endpoints de O2 y Lovable, además de
+C5-B, C9 y C11) y las limitaciones materiales ya declaradas: conectores reales, credenciales, IA real, migraciones
+`0016`–`0019` no aplicadas y bot real sin verificar.
 
 ---
 
@@ -42,12 +51,12 @@ credenciales, IA real, migraciones `0016`–`0017` no aplicadas y bot real sin v
 | A2 | Grandes cadenas con búsqueda bajo demanda de publicaciones públicas y precios reales | **B** | E15 responde, pero las tres cadenas están sin conector autorizado; no hay precios reales; sin conexión se muestra el estado, nunca datos ficticios |
 | A3 | Proveedores y cuentas configurables e independientes por organización | **B** (modelo base A; mantenedor y conexiones B) | `supplier` y `source` son por organización; no hay URL, contacto comercial, cuentas, credenciales, estado de conexión ni conectores |
 | A4 | Catálogos con ofertas reales y apoyo de IA cuando corresponda | **B** (importación A; ofertas reales e IA B) | `catalog-load`/`manual_import` funcionan; el catálogo de demo es ficticio y la IA es simulada |
-| A5 | Preferencias comerciales vía «Enseñar a la IA» interpretadas internamente, **solo para el producto específico** | **B** (O1 A; O2–O4 B) | La observación comercial se guarda sin IA; no hay interpretación, recuperación por producto ni orden (D-138) |
-| A6 | Preferencias **del producto específico** ordenan las ofertas; todas visibles; sin explicaciones ni puntuaciones de IA | **B** | Aprobado por **D-136** y precisado por **D-138**; depende de O2–O4 (`0019`). Hoy no existe el orden ni «Enseñar a la IA» |
+| A5 | Preferencias comerciales vía «Enseñar a la IA» interpretadas internamente, **solo para el producto específico** | **B** (O1 A; esquema, motor e interpretación A6 A; UI B) | La observación se guarda, el motor determinista ya ordena y el servicio interno interpreta con OpenAI (D-145); no hay llamada real en la suite ni UI conectada (D-142/D-143/D-144/D-145) |
+| A6 | Preferencias **del producto específico** ordenan las ofertas; todas visibles; sin explicaciones ni puntuaciones de IA | **A parcial** | Aprobado por **D-136/D-138**, actualizado por **D-142** y precisado por **D-143**; **retiro explícito implementado por D-144** (migración `0019`). Fases 1, 2 y 3A: modelos, migración `0018`, pruebas, motor determinista e interpretación interna con OpenAI (D-145). Endpoints y Lovable pendientes |
 | A7 | Telegram: reportes independientes, advertencia de coincidencias y confirmación explícita | **A** en código (migración `0016` no aplicada; bot real pendiente) | D-135; pruebas de canal y API citadas en §3.7 |
 | A8 | Cantidades sin consolidar, sumar ni modificar automáticamente | **A** | `SET`/`ADD`/`CLEAR` explícitos, idempotencia y cantidad desconocida como `NULL` |
 | A9 | Cotizar no cierra el faltante; **cerrar una cotización la deja preparada para comprar** | **A parcial**: cotizar no cierra (implementado); cobertura de `closed` y compra sin reabrir (**D-139, aprobado, no implementado**) | Hoy la cobertura solo cuenta `draft`; el comportamiento actual debe corregirse cuando se autorice (C9/D-139) |
-| A10 | Solo la compra confirmada y registrada cierra los reportes cubiertos | **B** | C5-B (`0018`) no existe: no hay tablas de compra ni cierre. **D-140:** la compra puede incluir cantidades sin asignación para inventario |
+| A10 | Solo la compra confirmada y registrada cierra los reportes cubiertos | **B** | C5-B (`0020`) no existe: no hay tablas de compra ni cierre. **D-140:** la compra puede incluir cantidades sin asignación para inventario |
 | A11 | Auditoría, permisos y aislamiento entre organizaciones | **A** (con brechas declaradas) | Matriz de permisos, auditoría+outbox en la misma transacción, pruebas de aislamiento y **traza interna de la IA (D-141)** |
 
 ---
@@ -56,7 +65,7 @@ credenciales, IA real, migraciones `0016`–`0017` no aplicadas y bot real sin v
 
 El flujo aprobado va desde el aviso de un auxiliar hasta el cierre del faltante por compra registrada. **Hoy solo
 funciona hasta la cotización en `draft`.** Las etapas 7 (cotización preparada), 8 (compra registrada) y 9 (cobertura y
-cierre) tienen decisiones aprobadas, pero **no** código que las ejecute; C5-B (`0018`) **no existe**.
+cierre) tienen decisiones aprobadas, pero **no** código que las ejecute; C5-B (`0020`) **no existe**.
 
 El flujo integral definitivo es:
 
@@ -72,14 +81,14 @@ faltantes.**
 | 2 | **Coincidencias** | Si otro auxiliar ya reportó el mismo producto, Telegram lo advierte y pide confirmación. Cada auxiliar conserva **su** reporte independiente: no hay consolidación ni suma automática. | **Implementado en código** (D-135; simulador) |
 | 3 | **Revisión administrativa** | Pao o la administradora autorizada revisa los reportes individuales y decide qué cantidades se cotizan. **La cantidad informada no se convierte automáticamente en cantidad de compra.** | **Implementado en código** para cantidades (`SET/ADD/CLEAR` con `admin` + `StrongActor`); las asignaciones explícitas dependen de `0017`, **no aplicada**. **La decisión comercial es humana** |
 | 4 | **Búsqueda de proveedores** | Se consultan, por separado, (a) el catálogo propio de la organización, (b) las ofertas de proveedores conectados y (c) la búsqueda pública en Cruz Verde, Salcobrand y Farmacias Ahumada. Solo se muestran datos reales de fuentes autorizadas; si una fuente no está conectada, se muestra su estado y **nunca** datos ficticios. | **Parcial:** búsqueda sobre catálogo local implementada (C2/C4); **no hay conectores de proveedor ni ofertas reales**. E15 de cadenas responde `not_configured` |
-| 5 | **Ordenamiento por preferencias específicas del producto** | Las observaciones comerciales de **ese producto** se interpretan y se usan para **ordenar** sus ofertas. No se aplican a otros productos del mismo laboratorio, marca o proveedor. Todas las ofertas siguen visibles, sin explicaciones ni puntuaciones de IA. | **No implementado** (O2–O4, `0019`; D-136 y D-138). Solo O1 guarda el texto |
+| 5 | **Ordenamiento por preferencias específicas del producto** | Las observaciones comerciales de **ese producto** se interpretan y se usan para **ordenar** sus ofertas. No se aplican a otros productos del mismo laboratorio, marca o proveedor. Todas las ofertas siguen visibles, sin explicaciones ni puntuaciones de IA. | **Fases 1, 2 y 3A implementadas** (esquema y migración `0018`, motor determinista e interpretación interna con OpenAI, D-142/D-145). Endpoints públicos y Lovable **pendientes** |
 | 6 | **Carrito** | Se eligen productos y cantidades. Una línea comercial puede asociarse explícitamente con varios reportes, sin duplicar cantidades. | **Implementado en código** (C5-A + D-135; `0015` aplicada solo a `farmacia_demo`, `0016`–`0017` no aplicadas) |
 | 7 | **Cotización preparada** | `draft` = en preparación. Al cerrar, la cotización queda **preparada para convertirse en compra**: conserva líneas, cantidades, proveedores y asignaciones, y **sigue aportando cobertura provisional**. Cerrar **no** registra una compra ni cierra reportes. Se puede comprar desde `closed` **sin reabrir**. | **`draft`/`closed` implementados; la cobertura desde `closed` y la compra sin reabrir están aprobadas (D-139) y NO implementadas.** Hoy el código solo cuenta `draft` y bloquea la compra con `409 QUOTE_CLOSED` |
-| 8 | **Compra registrada** | La administradora registra la compra de la selección **completa o no la registra**. Las asignaciones explícitas determinan qué cantidad cubre cada reporte; la cantidad comprada **puede superar** lo asignado y el excedente queda como **compra adicional para inventario**, sin asignación automática. | **No implementado** (C5-B, `0018`; D-139 y D-140) |
-| 9 | **Cobertura y cierre de faltantes** | Solo las compras registradas aportan cobertura **comprada**. Los reportes completamente cubiertos pasan a `fulfilled` y se liberan para un nuevo reporte; los parcialmente cubiertos conservan su cantidad pendiente. Cotizado y comprado nunca se suman dos veces. | **No implementado** (C5-B, `0018`). Hoy `fulfilled` no puede ocurrir |
+| 8 | **Compra registrada** | La administradora registra la compra de la selección **completa o no la registra**. Las asignaciones explícitas determinan qué cantidad cubre cada reporte; la cantidad comprada **puede superar** lo asignado y el excedente queda como **compra adicional para inventario**, sin asignación automática. | **No implementado** (C5-B, `0020`; D-139 y D-140) |
+| 9 | **Cobertura y cierre de faltantes** | Solo las compras registradas aportan cobertura **comprada**. Los reportes completamente cubiertos pasan a `fulfilled` y se liberan para un nuevo reporte; los parcialmente cubiertos conservan su cantidad pendiente. Cotizado y comprado nunca se suman dos veces. | **No implementado** (C5-B, `0020`). Hoy `fulfilled` no puede ocurrir |
 
-**No presentes este flujo como operativo.** Sin `0016`–`0017` aplicadas, ni siquiera las etapas 1, 2 y 6 corren en
-`farmacia` o `farmacia_demo` con el esquema nuevo; sin `0018` no hay compra ni cierre; y la semántica de `closed`
+**No presentes este flujo como operativo.** Sin `0016`–`0018` aplicadas, ni siquiera las etapas 1, 2 y 6 corren en
+`farmacia` o `farmacia_demo` con el esquema nuevo; sin `0020` no hay compra ni cierre; y la semántica de `closed`
 descrita en la etapa 7 **todavía no coincide con el código** (D-139).
 
 ### 2.2 Ejemplo con Juanito y María
@@ -248,24 +257,40 @@ La IA **no** es un chatbot visible: no hay conversación, no hay campo de chat y
 - No se supone equivalencia por compartir laboratorio, marca o proveedor.
 - Aplica también a cosmética, higiene, perfumería, veterinaria y cualquier otro producto comercializado.
 
-**Implementado (solo O1):**
+**Implementado (O1 y fases 1, 2 y 3A de O2–O4):**
 
 - `commercial_observation` guarda el texto libre, autor, fecha y contexto, de forma inmutable y **sin IA**
   (`tests/test_quotes_api.py::test_observacion_comercial_se_guarda_sin_ia_y_es_inmutable`).
 - La ruta es `/api/v1/commercial-observations`, separada de los avisos de faltante (D-129).
 - Cualquier `admin` puede registrar la observación, sin categorías ni formularios (D-132).
+- **Fase 1 de O2–O4 (2026-11-03):** `observation_interpretation`, `commercial_preference` y
+  `preference_order_trace` existen en modelos, migración `0018` y pruebas de esquema; `offer_snapshot` admite
+  `laboratory_as_published` y `brand_as_published` sin inferirlos.
+- **Fase 2:** el motor determinista (`app/services/preferences.py`) recupera solo el `trade_item_id` exacto, resuelve
+  precedencia por clase y aplica el orden dentro de la elegibilidad de E3/E5, con traza interna.
+- **D-144:** el retiro explícito (`retired_subject_kinds`, migración `0019`) compite temporalmente con las preferencias
+  de su clase y no afecta otras clases ni productos.
+- **Fase 3A (D-145):** el servicio `app/services/observation_ai.py` interpreta una observación **ya guardada** con el
+  contexto verificado del artículo, valida la salida estructurada todo o nada y persiste interpretación y preferencias
+  en la misma transacción. El adaptador `app/interpretation/openai_observations.py` usa la Responses API con
+  `store=false`, un reintento acotado y códigos internos; **la suite usa un doble y no consume cuota**.
 
 **No implementado:**
 
-- **O2** (interpretación con modelo), **O3** (recuperación por producto y precedencia) y **O4** (aplicación del orden)
-  **no existen en código**. No hay `observation_interpretation`, ni llamada a OpenAI, ni preferencias interpretadas.
+- **Los endpoints públicos de interpretación** y la conexión con Lovable: el servicio existe, pero no está expuesto en
+  la API ni hay interfaz «Enseñar a la IA».
 - La etiqueta «Enseñar a la IA» no está implementada en la interfaz ni en la API: hoy el botón es «Observación».
-- La observación **no afecta todavía** ninguna propuesta ni orden: solo se guarda y se muestra.
-- **No hay conexiones reales a proveedores ni IA real.** Cualquier demostración con simulador debe decir `simulated`.
+- No hay llamada real a OpenAI en la suite ni modelo elegido (`OPENAI_MODEL` no tiene valor por defecto) ni
+  presupuesto/tarifa aprobados.
+- **No hay conexiones reales a proveedores ni IA real verificada.** Cualquier demostración con simulador debe decir
+  `simulated`.
 
 ### A6 — Las preferencias del producto ordenan sus ofertas; la IA no muestra explicaciones, justificaciones ni puntuaciones
 
-**Estado: aprobado (D-136, precisado por D-138), pendiente de implementación (O2–O4).**
+**Estado: aprobado (D-136, precisado por D-138, desarrollado por D-142 y corregido por D-143; retiro explícito
+aprobado e implementado por D-144). Fases 1, 2 y 3A implementadas (modelos, migración `0018`, pruebas de esquema, motor
+determinista con traza interna, retiro explícito con migración `0019` e interpretación interna con OpenAI, D-145);
+endpoints públicos y Lovable pendientes.**
 
 Reglas definitivas:
 
@@ -281,6 +306,14 @@ Reglas definitivas:
 8. La IA **no modifica** precios, stock, cantidades ni decisiones de compra.
 9. La IA **no** se presenta como un chatbot visible.
 10. **No se construyen perfiles globales de reputación** de laboratorios, marcas o proveedores.
+11. **La elegibilidad de E5 manda:** las preferencias ordenan dentro de cada grupo de elegibilidad. Una oferta no
+    elegible no adelanta a una elegible aunque cumpla la preferencia (D-143).
+12. **`rejected`, `needs_review`, `no_preference` y `failed` no tienen efecto comercial** ni retiran una preferencia
+    vigente ni deshacen un retiro (D-143).
+13. **Retiro explícito (D-144):** una interpretación `suggested`/`confirmed` puede retirar una clase para su producto
+    mediante `retired_subject_kinds` (`laboratory`, `brand`, `supplier`, `availability`, `price:acceptable`,
+    `price:maximum`). No afecta otras clases ni productos, conserva historial y una preferencia posterior válida vuelve a
+    establecerla. No se usa `status='rejected'` ni se crean preferencias ficticias.
 
 **Relación con A4.** El orden es la **última** etapa: primero se recuperan ofertas reales (A4), después se ordenan por
 las preferencias **de ese producto** (A5/A6) y recién entonces se muestran. Si no hay ofertas, no hay nada que ordenar
@@ -290,10 +323,11 @@ y no se inventan.
 veterinaria y otros. Las preferencias pueden referirse a laboratorio, marca, precio, disponibilidad u otros criterios
 comerciales, **siempre dentro del producto específico**.
 
-**Contradicción documental.** El contrato vigente (revisión 9) todavía describe un `advice` **visible y explicable** y
-prohíbe «reordenar o destacar ofertas» (§8.4, §8.6). D-136 y D-138 lo sustituyen. La **revisión 10** está preparada
-como propuesta en `docs/contracts/cotizador-v0.2-rev10-propuesta.md`; no se aplicó. El HLD no se edita y AC31 se
-satisface con **auditoría interna** (D-141), no con una explicación visible.
+**Contradicción documental (resuelta para A6).** El contrato revisión 9 describía un `advice` **visible y explicable** y
+prohibía «reordenar o destacar ofertas» (§8.4, §8.6). D-136 y D-138 lo sustituyeron; la **revisión 10-A6**
+(`docs/contracts/cotizador-v0.2.md`) ya incorpora O3, O4, §8.4, §8.6 y AC31 y fue aprobada el 2026-11-03 (D-142).
+C9/D-139 y C11/D-140 siguen pendientes de incorporar en la misma revisión. El HLD no se edita y AC31 se satisface con
+**auditoría interna** (D-141), no con una explicación visible.
 
 ### A7 — Telegram: reportes independientes, advertencia de coincidencias y confirmación explícita
 
@@ -485,7 +519,7 @@ descarta y no cierra reportes.
 
 ### A10 — Solo la compra registrada cierra los reportes cubiertos; puede incluir compra adicional para inventario
 
-**No implementado.** C5-B (`0018`) no existe.
+**No implementado.** C5-B (`0020`) no existe.
 
 **Reglas aprobadas (D-127 enmendada, D-139 y D-140):**
 
@@ -534,7 +568,9 @@ descarta y no cierra reportes.
   aplicaron y qué versiones, modelo y criterios participaron en el ordenamiento. **No** se muestran explicaciones,
   recomendaciones textuales ni puntuaciones en las tarjetas. La traza es para revisión administrativa y auditoría, no
   para el usuario final. D-116, D-132, D-133 y AC31 se mantienen; D-141 precisa qué parte de AC31 queda satisfecha por
-  auditoría interna en lugar de por explicación visible.
+  auditoría interna en lugar de por explicación visible. **Fase 1 (D-142):** `preference_order_trace` ya existe como
+  tabla solo-agregar y `observation_interpretation` conserva modelo, `prompt_version`, salida cruda y error; todavía
+  **no se genera ninguna traza** porque faltan el motor y la interpretación.
 
 **Evidencia:** `tests/test_quotes_api.py::test_solo_admin_y_solo_su_organizacion`,
 `::test_el_evento_de_auditoria_y_el_outbox_se_escriben_juntos`,
@@ -558,16 +594,16 @@ descarta y no cierra reportes.
 
 | # | Tema | Estado |
 |---|---|---|
-| C1 | Preferencias ordenan ofertas y sin explicaciones visibles vs. contrato §8.4/§8.6, D-116, D-132, D-133 y AC31 | **Decidida** por D-136 y D-138; revisión 10 **propuesta** y no aplicada. No requiere nueva decisión funcional |
+| C1 | Preferencias ordenan ofertas y sin explicaciones visibles vs. contrato §8.4/§8.6, D-116, D-132, D-133 y AC31 | **Decidida** por D-136 y D-138; incorporada al contrato como **revisión 10-A6** (aprobada 2026-11-03, D-142). No requiere nueva decisión funcional |
 | C2 | HLD §7.3/§7.4: «misma necesidad compatible» / «se adjunta al existente» vs. D-135 | **Resuelta**: D-135 prevalece; constancia en D-135 y D-131. El HLD no se edita |
 | C3 | D-131, punto 3 y estado («solo documental, sin código») | **Resuelta**: nota de vigencia; punto 3 sustituido por D-135; estado corregido |
 | C4 | D-124 aprobada y no implementada, pero algunos textos la presentan como disponible | **Revisada**: sigue sin implementar; alcance y efecto documentados |
 | C5 | «Ofertas reales» vs. catálogo ficticio y ausencia de conectores | **Abierta como limitación**, no como contradicción: los fixtures están etiquetados |
 | C6 | Cierre de cotización sin validación de asignaciones | **Resuelta e implementada** por D-137 |
 | C7 | Alcance de las preferencias: ¿por producto o por organización? | **Resuelta por D-138**: solo el producto específico; sin propagación ni perfiles globales |
-| C8 | El contrato asigna O2–O4 a la migración `0016`; el roadmap y las decisiones fijan `0019` | **Corrección documental** en la revisión 10 propuesta; no requiere decisión funcional |
+| C8 | El contrato asignaba O2–O4 a la migración `0016`; el roadmap y las decisiones fijaban `0019` | **Resuelta documentalmente**: el contrato revisión 10-A6 fija A6 en `0018`; D-144 usa `0019` para el retiro explícito y desplaza C5-B a `0020`, C5-C a `0021` y C5-D a `0022` |
 | C9 | Cerrar una cotización quita su cobertura provisional y no se puede comprar sin reabrir | **Resuelta por D-139**: `closed` = preparada para comprar, conserva cobertura provisional y se compra sin reabrir. **El código actual la contradice; corrección no implementada** |
-| C10 | `advice` visible en `GET /quotes/{id}` y «no altera el orden» vs. D-136 | Forma parte de C1; se corrige en la revisión 10 propuesta |
+| C10 | `advice` visible en `GET /quotes/{id}` y «no altera el orden» vs. D-136 | Forma parte de C1; corregido en la revisión 10-A6 (aprobada 2026-11-03, D-142) |
 | C11 | Una línea de 20 asignada 10/6 deja 4 sin reporte: ¿qué cantidad registra la compra? | **Resuelta por D-140**: la compra registra las 20; 16 cubren reportes y 4 son compra adicional para inventario. No implementado |
 | C12 | AC31 exige ver reglas, ofertas y versiones que originaron una recomendación | **Resuelta por D-141**: se satisface con auditoría interna, no con explicación visible |
 
@@ -596,10 +632,10 @@ Reglas:
 10. La IA no modifica precios, stock, cantidades ni decisiones de compra.
 
 **Efecto documental:** se elimina toda referencia a **preferencias reutilizables de la organización** o a propagación
-automática entre productos en A5, A6, O2–O4 y la propuesta de revisión 10. La revisión 9 del contrato ya exigía
-observaciones por artículo exacto y prohibía aplicar una observación de marca o laboratorio a otro artículo; D-138
-**confirma** esa prohibición y elimina la ambigüedad que introducía la redacción anterior de A5/A6. Aplica también a
-cosmética, higiene, perfumería, veterinaria y otros productos.
+automática entre productos en A5, A6, O2–O4 y el contrato. La revisión 9 ya exigía observaciones por artículo exacto y
+prohibía aplicar una observación de marca o laboratorio a otro artículo; D-138 **confirma** esa prohibición y elimina la
+ambigüedad que introducía la redacción anterior de A5/A6. La revisión 10-A6 (aprobada 2026-11-03, D-142) recoge esa
+redacción en §8.4, §8.6 y AC31. Aplica también a cosmética, higiene, perfumería, veterinaria y otros productos.
 
 ### C4 — Revisión de D-124
 
@@ -673,7 +709,7 @@ Reglas:
 7. **No se cierran reportes** por cantidades no asignadas y compradas.
 8. Se conserva la **trazabilidad** de la compra, la línea, las asignaciones y el excedente de inventario.
 
-**Efecto técnico:** `purchase_line_allocation` (C5-B, `0018`) debe permitir que la suma asignada sea **menor** que la
+**Efecto técnico:** `purchase_line_allocation` (C5-B, `0020`) debe permitir que la suma asignada sea **menor** que la
 cantidad comprada y debe registrar el excedente sin asignación. No se implementa todavía. La compra sigue siendo
 **todo o nada** respecto de la selección: se registra completa —incluidas las unidades de inventario— o no se registra.
 
@@ -686,8 +722,8 @@ explicaciones, recomendaciones textuales ni puntuaciones en las tarjetas.
 - La traza es para revisión administrativa y auditoría; no es una explicación al usuario final.
 - D-116, D-132, D-133 y AC31 se mantienen vigentes.
 - Se deja constancia de qué reglas históricas quedaron sustituidas: el `advice` visible de D-116 y la prohibición de
-  reordenar del contrato §8.6 son sustituidos por D-136/D-138; AC31 se satisface por auditoría interna, no por
-  explicación visible.
+  reordenar del contrato §8.6 son sustituidos por D-136/D-138 (incorporados en la revisión 10-A6, D-142); AC31 se
+  satisface por auditoría interna, no por explicación visible.
 - El HLD no se edita.
 
 ---
@@ -703,7 +739,7 @@ explicaciones, recomendaciones textuales ni puntuaciones en las tarjetas.
 | 5 | Cancelar o modificar un reporte no permite cerrar una cotización con asignaciones inconsistentes | **Cumplido (D-137)** | `::test_cerrar_bloquea_asignaciones_a_reportes_cancelados_y_permite_corregir`; `::test_cerrar_bloquea_cantidades_de_reporte_que_ya_no_cubren_lo_asignado`; `::test_no_se_puede_bajar_la_cantidad_pedida_por_debajo_de_lo_asignado` | Cancelar un reporte de una cotización **ya cerrada** (hoy se permite; hay que reabrir y corregir); dos cotizaciones con el mismo reporte; reporte cancelado con carrito descartado |
 | 6 | Agregar al carrito o cotizar no cierra faltantes | **Cumplido** | `test_vinculo_congela_relacion_y_cubre_sin_cerrar`; `test_quitar_linea_resta_cobertura_sin_cerrar_la_cotizacion`; `test_agregar_linea_crea_carrito_y_nunca_suma` | **C9/D-139 aprobado y sin prueba:** una cotización `closed` debe seguir aportando cobertura provisional y poder comprarse sin reabrir. El código actual hace lo contrario; la prueba debe escribirse al implementar |
 | 7 | Permisos y separación entre organizaciones se mantienen | **Cumplido** | `test_solo_admin_y_solo_su_organizacion`; `test_aislamiento_entre_organizaciones_por_http`; `test_org_separation.py`; `permissions.py` | Asignación de un reporte de otra organización (hoy `404`, sin prueba dedicada); `admin` reportando por Telegram (bloqueado por D-124) |
-| 8 | Protecciones de C5-B identificadas y no presentadas como implementadas | **Cumplido como declaración** | `coverage._purchased_totals` devuelve `{}`; `demand._has_registered_purchase` devuelve `False`; no hay tablas de compra; `LINE_HAS_PURCHASES` y `QUANTITY_BELOW_PURCHASED` solo en comentarios | Implementar C5-B (`0018`) y probar compra todo o nada, cierre, liberación **y compra adicional para inventario (D-140)**: línea de 20, 16 asignadas y 4 sin reporte |
+| 8 | Protecciones de C5-B identificadas y no presentadas como implementadas | **Cumplido como declaración** | `coverage._purchased_totals` devuelve `{}`; `demand._has_registered_purchase` devuelve `False`; no hay tablas de compra; `LINE_HAS_PURCHASES` y `QUANTITY_BELOW_PURCHASED` solo en comentarios | Implementar C5-B (`0020`) y probar compra todo o nada, cierre, liberación **y compra adicional para inventario (D-140)**: línea de 20, 16 asignadas y 4 sin reporte |
 
 ### Escenario de Ana (punto 5), tal como quedó probado
 
@@ -731,7 +767,7 @@ explicaciones, recomendaciones textuales ni puntuaciones en las tarjetas.
 | Compra adicional para inventario (unidades sin asignación) | D-140; `purchase_line_allocation` | **No implementado** |
 | Liberación del producto para un nuevo reporte tras la compra | D-131/D-135 | **No implementado** |
 | `purchase_line_allocation` y sustitución de la cobertura de cotización | Contrato §6.1 y §12.3 | **No implementado** |
-| Traza interna de la IA (observación, interpretación, versión y criterios de orden) | D-141/AC31 | **No implementado**: O1 guarda el texto, pero no hay interpretación ni orden que auditar |
+| Traza interna de la IA (observación, interpretación, versión y criterios de orden) | D-141/AC31 | **Esquema listo (D-142)**: `preference_order_trace` y `observation_interpretation` existen con migración `0018`; **no se genera traza** porque aún no hay interpretación ni orden que auditar |
 | Mantenedor de proveedores, cuentas, credenciales y conexiones | A3 | **No implementado** |
 
 Ninguna de estas filas debe presentarse como una garantía del sistema actual.
@@ -800,32 +836,34 @@ despliegue.
 
 ---
 
-## 8. Matriz de impacto técnico previsto (no implementado)
+## 8. Matriz de impacto técnico (Fase 1 de A6 implementada; resto previsto)
 
 Esta matriz identifica qué cambiaría **cuando se autorice** implementar C7/D-138, C9/D-139, C11/D-140 y AC31/D-141.
-**No se modificó código, no se crearon migraciones nuevas y no se aplicó ninguna migración** al preparar este
-documento.
+La **Fase 1 de A6** ya está implementada (modelos, migración `0018` y pruebas de esquema, D-142); el resto **no**. No se
+aplicó ninguna migración a una base fuera de `farmacia_test`.
 
 | Decisión | Archivo / módulo | Cambio previsto | Migración | Pruebas que se agregarán o ajustarán |
 |---|---|---|---|---|
-| **C7/D-138** | `backend/app/models/quote.py` | `observation_interpretation` guarda la interpretación ligada al **producto exacto** (`trade_item_id`), con modelo, prompt, versión, tokens, costo y latencia; **sin** tabla de preferencias globales por organización | `0019` | `test_la_interpretacion_queda_ligada_al_producto`; `test_no_existe_preferencia_global_por_laboratorio` |
+| **C7/D-138** | `backend/app/models/quote.py` | `observation_interpretation` guarda la interpretación ligada al **producto exacto** (`trade_item_id`), con modelo, prompt, versión, tokens y latencia; **sin** tabla de preferencias globales por organización | `0018` **hecho (esquema)** | `test_la_interpretacion_queda_ligada_al_producto`; `test_no_existe_preferencia_global_por_laboratorio` |
 | **C7/D-138** | `backend/app/services/interpretation.py` y un servicio nuevo de preferencias comerciales | Interpretar el texto **en el contexto del producto**; recuperar solo observaciones de ese `trade_item_id`; precedencia de la más reciente para la misma clase; ninguna propagación | — | `test_preferencia_de_losartan_no_afecta_otro_producto_del_mismo_laboratorio`; `test_preferencia_de_marca_no_se_propaga_a_otro_producto`; `test_dos_observaciones_del_mismo_producto_usan_la_mas_reciente` |
 | **C7/D-138** | `backend/app/services/search.py`, `backend/app/services/queries.py`, `backend/app/services/quotes.py` | Ordenar las ofertas del producto según sus preferencias; **no** cambiar el conjunto, precios, stock, elegibilidad ni totales; sin campo de explicación ni puntuación | — | `test_orden_no_oculta_ofertas_ni_cambia_precios_ni_stock`; `test_sin_preferencias_el_orden_es_el_determinista_de_e5` |
 | **C7/D-138** | `backend/app/api/v1/search.py`, `backend/app/api/v1/quotes.py`, `backend/app/api/v1/schemas.py` | Exponer las ofertas ordenadas; **no** devolver `advice`, `stance`, `based_on`, `supersedes` ni puntuaciones | — | `test_la_respuesta_no_expone_explicaciones_ni_puntuaciones` |
 | **C9/D-139** | `backend/app/services/coverage.py` | Contar cobertura provisional de cotizaciones **`draft` y `closed`** en `quoted_totals_subquery` y `_quoted_totals`; al existir compra registrada, esta sustituye la cobertura cotizada sin doble conteo | — | `test_cotizacion_cerrada_sigue_cubriendo_sin_cerrar_el_reporte`; `test_compra_registrada_sustituye_la_cobertura_cotizada_sin_sumar_dos_veces` |
-| **C9/D-139** | `backend/app/services/quotes.py` | `_ensure_draft()` deja de bloquear la **compra** sobre `closed`; se mantiene para editar la preparación. El registro de compra se permite desde `closed` sin reabrir | `0018` (compras) | `test_se_compra_desde_cotizacion_cerrada_sin_reabrir`; `test_editar_una_cotizacion_cerrada_sigue_dando_quote_closed` |
+| **C9/D-139** | `backend/app/services/quotes.py` | `_ensure_draft()` deja de bloquear la **compra** sobre `closed`; se mantiene para editar la preparación. El registro de compra se permite desde `closed` sin reabrir | `0020` (compras) | `test_se_compra_desde_cotizacion_cerrada_sin_reabrir`; `test_editar_una_cotizacion_cerrada_sigue_dando_quote_closed` |
 | **C9/D-139** | `backend/app/api/v1/quotes.py`, `backend/app/api/v1/schemas.py` | Distinguir en la respuesta **«Cotización preparada»** (`closed` sin compra) de **«Compra registrada»**; conservar `closed_without_purchase` como estado derivado, sin llamarlo «comprada» | — | `test_etiqueta_cotizacion_preparada_no_es_compra_registrada` |
-| **C9/D-139** | `docs/contracts/cotizador-v0.2.md` §6, §12.3 | Revisión 10 propuesta: cobertura desde `draft` y `closed`; compra sin reabrir; cierre solo por compra registrada | — | Revisión documental; no aplicada |
-| **C11/D-140** | `backend/app/models/purchase.py` (nuevo) y `backend/migrations/versions/0018_*` | `purchase`, `purchase_line` y `purchase_line_allocation`; la suma asignada puede ser **menor** que la cantidad comprada; el excedente queda sin asignación (inventario) | `0018` | `test_modelos_y_migracion_estan_sincronizados`; `test_asignaciones_no_superan_la_cantidad_comprada` |
-| **C11/D-140** | `backend/app/services/purchases.py` (nuevo) | Registrar la compra completa o nada; asignaciones explícitas; no asignar automáticamente; no crear reportes; no cerrar reportes por unidades no asignadas; conservar trazabilidad del excedente | `0018` | `test_compra_de_20_con_16_asignadas_deja_4_de_inventario`; `test_compra_adicional_no_cierra_ni_crea_reportes`; `test_compra_parcial_de_la_seleccion_se_rechaza` |
-| **C11/D-140** | `backend/app/services/coverage.py`, `backend/app/services/demand.py` | `_purchased_totals` real; cierre `fulfilled` solo por compra asignada que cubra la cantidad pedida; reporte parcialmente cubierto sigue activo | `0018` | `test_reporte_parcialmente_cubierto_sigue_activo`; `test_reporte_completamente_cubierto_pasa_a_fulfilled`; `test_unidades_de_inventario_no_cierran_reportes` |
-| **C11/D-140** | `backend/app/api/v1/purchases.py` (nuevo), `backend/app/api/v1/schemas.py` | Endpoint de registro de compra con `admin` + `StrongActor`, idempotencia, versión y montos `Decimal` | `0018` | `test_compra_exige_admin_y_strong_actor`; `test_compra_es_idempotente`; `test_compra_no_acepta_float_ni_cantidades_negativas` |
-| **AC31/D-141** | `backend/app/models/quote.py`, `backend/app/services/interpretation.py`, auditoría | Guardar traza interna: observación, interpretación, modelo, versión del prompt, criterios y orden aplicado; **no** exponerla en la API pública | `0019` | `test_la_traza_interna_registra_interpretacion_y_orden`; `test_la_traza_no_se_expone_en_la_respuesta_de_ofertas` |
+| **C9/D-139** | `docs/contracts/cotizador-v0.2.md` §6, §12.3 | Revisión 10 (C9): cobertura desde `draft` y `closed`; compra sin reabrir; cierre solo por compra registrada | — | Revisión documental; pendiente de aprobación junto con C11 |
+| **C11/D-140** | `backend/app/models/purchase.py` (nuevo) y `backend/migrations/versions/0020_*` | `purchase`, `purchase_line` y `purchase_line_allocation`; la suma asignada puede ser **menor** que la cantidad comprada; el excedente queda sin asignación (inventario) | `0020` | `test_modelos_y_migracion_estan_sincronizados`; `test_asignaciones_no_superan_la_cantidad_comprada` |
+| **C11/D-140** | `backend/app/services/purchases.py` (nuevo) | Registrar la compra completa o nada; asignaciones explícitas; no asignar automáticamente; no crear reportes; no cerrar reportes por unidades no asignadas; conservar trazabilidad del excedente | `0020` | `test_compra_de_20_con_16_asignadas_deja_4_de_inventario`; `test_compra_adicional_no_cierra_ni_crea_reportes`; `test_compra_parcial_de_la_seleccion_se_rechaza` |
+| **C11/D-140** | `backend/app/services/coverage.py`, `backend/app/services/demand.py` | `_purchased_totals` real; cierre `fulfilled` solo por compra asignada que cubra la cantidad pedida; reporte parcialmente cubierto sigue activo | `0020` | `test_reporte_parcialmente_cubierto_sigue_activo`; `test_reporte_completamente_cubierto_pasa_a_fulfilled`; `test_unidades_de_inventario_no_cierran_reportes` |
+| **C11/D-140** | `backend/app/api/v1/purchases.py` (nuevo), `backend/app/api/v1/schemas.py` | Endpoint de registro de compra con `admin` + `StrongActor`, idempotencia, versión y montos `Decimal` | `0020` | `test_compra_exige_admin_y_strong_actor`; `test_compra_es_idempotente`; `test_compra_no_acepta_float_ni_cantidades_negativas` |
+| **AC31/D-141** | `backend/app/services/preferences.py`, `backend/app/services/observation_ai.py`, `backend/app/interpretation/commercial.py` | Guardar traza interna: observación, interpretación, modelo, versión del prompt, criterios y orden aplicado; **no** exponerla en la API pública. Las fases 1, 2 y 3A ya existen (`0018`/`0019`, D-145) | `0018` | `test_la_traza_interna_registra_interpretacion_y_orden`; `test_la_traza_no_se_expone_en_la_respuesta_de_ofertas`; pruebas de `observation_ai` |
 | **AC31/D-141** | Frontend Lovable | Mostrar solo el orden; sin explicaciones, justificaciones, recomendaciones textuales ni puntuaciones | — | Verificación visual/manual; no hay prueba automatizada de frontend en este repositorio |
 
-**Orden de implementación previsto, si se autoriza:** `0018` (C5-B con C9 y C11, porque la compra y la cobertura
-dependen de la misma semántica) → `0019` (O2–O4 con C7 y AC31) → `0020` (C5-C) → `0021` (C5-D, bloqueado). La
-migración `0016`–`0017` sigue pendiente de aplicación y es requisito para probar el flujo completo.
+**Orden de implementación previsto, si se autoriza:** `0018` (A6: O2–O4 con C7 y AC31) **Fase 1 hecha** → `0019`
+(retiro explícito de preferencias, **D-144, hecho**) → **A6 Fase 3A** (interpretación interna con OpenAI, **D-145,
+hecha, sin migración**) → `0020` (C5-B con C9 y C11, porque la compra y la cobertura
+dependen de la misma semántica) → `0021` (C5-C) → `0022` (C5-D, bloqueado). La migración `0016`–`0019` sigue pendiente
+de aplicación y es requisito para probar el flujo completo.
 
 **Riesgos declarados:**
 
@@ -837,17 +875,23 @@ migración `0016`–`0017` sigue pendiente de aplicación y es requisito para pr
    construya para ordenar **incumple D-138**.
 4. **AC31 no autoriza explicaciones visibles.** La traza interna es para auditoría; la interfaz no la muestra como
    justificación.
-5. **Nada de esto es código hoy.** No debe declararse implementado, probado con proveedores reales ni desplegado.
+5. **Las fases 1, 2 y 3A de A6 y el retiro de D-144 son código hoy** (esquema, modelos, migraciones `0018`/`0019`,
+   pruebas, motor, traza e interpretación interna con proveedor simulado). Nada de C5-B/C9/C11, endpoints públicos de
+   O2 ni despliegues debe declararse implementado, probado con proveedores reales ni desplegado.
 
 ---
 
 ## 9. Lo que este documento no hace
 
-- No implementa A1–A6 ni A10 ni el mantenedor de proveedores.
-- No implementa C7/D-138, C9/D-139, C11/D-140 ni AC31/D-141.
-- No aplica `0016`–`0017`.
-- No modifica el HLD. D-131 y D-124 quedaron anotadas en el registro de decisiones; el contrato sigue en revisión 9 y la
-  revisión 10 está **propuesta**, no aplicada.
-- No inicia C5-B (`0018`), O2–O4 (`0019`), C5-C (`0020`) ni C5-D (`0021`).
+- No implementa A1–A6 salvo las fases 1, 2 y 3A de A6 (esquema, motor determinista, traza, retiro explícito e
+  interpretación interna con OpenAI, D-145), ni A10, ni el mantenedor de proveedores.
+- No implementa C9/D-139 ni C11/D-140; el motor de C7/D-138, la traza de AC31/D-141, el retiro de D-144 y la
+  interpretación interna de O2 **sí** están implementados en código (esquema `0018` y `0019`, D-145).
+- No aplica `0016`–`0019`.
+- No modifica el HLD. D-131 y D-124 quedaron anotadas en el registro de decisiones; el contrato está en **revisión
+  10-A6**, aprobada el 2026-11-03 solo para A6 (O3, O4, §8.4, §8.6 y AC31), precisada por D-143 y D-144. C9 y C11
+  siguen sin incorporar.
+- No expone endpoints públicos de interpretación ni inicia la UI de interpretación, C5-B (`0020`), C5-C (`0021`) ni
+  C5-D (`0022`).
 - No declara probado con Telegram real ni con proveedores reales lo que solo se probó con simuladores.
 - No se declara aprobado como documento de referencia hasta que lo apruebes expresamente.

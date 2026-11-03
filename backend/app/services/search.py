@@ -49,6 +49,7 @@ from app.models import (
     TradeItem,
     TradeItemAlias,
 )
+from app.services import preferences as preferences_svc
 from app.services import sources as sources_svc
 from app.services.actors import Actor
 from app.services.provenance import org_kind, origin_for
@@ -735,6 +736,28 @@ async def article_detail(
         key=lambda o: (o.observed_at, str(o.id)),
         reverse=True,
     )
+    # El orden por preferencias comerciales del producto (A6/O4) se aplica sobre el listado
+    # completo y conserva el orden anterior como desempate estable. Todas las ofertas siguen
+    # visibles: nada se filtra, oculta ni recalcula.
+    item_prefs = (
+        await preferences_svc.load_item_preferences(session, actor.organization_id, [item.id])
+    ).get(item.id, preferences_svc.EMPTY)
+    if item_prefs.has_effects and item_offers:
+        ranks = preferences_svc.rank_offers(
+            item_prefs, [preferences_svc.offer_view(o) for o in item_offers]
+        )
+        before = [o.id for o in item_offers]
+        item_offers = sorted(item_offers, key=lambda o: ranks[o.id])
+        await preferences_svc.record_trace_best_effort(
+            session,
+            organization_id=actor.organization_id,
+            trade_item_id=item.id,
+            context="article_detail",
+            prefs=item_prefs,
+            offer_ids_before=before,
+            offer_ids_after=[o.id for o in item_offers],
+            now=now,
+        )
     start = 0
     if cursor:
         start = decode_result_cursor(cursor)

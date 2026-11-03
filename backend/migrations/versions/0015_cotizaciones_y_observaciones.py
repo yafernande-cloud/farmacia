@@ -17,7 +17,7 @@ Integridad que impone la base:
   * `commercial_observation` es inmutable: el gatillo `forbid_mutation()` (creado en la 0001)
     rechaza UPDATE y DELETE.
 
-No se crean tablas de compras, recepción ni interpretación de IA: C5-B usa la 0017 y O2–O4 la 0016,
+No se crean tablas de compras, recepción ni interpretación de IA: A6 (Fase 1) usa la 0018 y C5-B la 0019,
 y la recepción física está fuera del MVP (D-126).
 """
 import sqlalchemy as sa

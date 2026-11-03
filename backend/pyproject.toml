@@ -19,6 +19,9 @@ dependencies = [
     "defusedxml>=0.7,<1",
     # Parseo del `multipart/form-data` del endpoint E8 (`POST /api/v1/imports`).
     "python-multipart>=0.0.9,<1",
+    # Llamadas HTTP del adaptador de OpenAI (Responses API). Sin SDK: el proveedor queda detrás
+    # de `ObservationModel` y las pruebas usan un doble sin red (contrato §8.5).
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]

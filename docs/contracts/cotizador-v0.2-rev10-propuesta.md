@@ -1,9 +1,10 @@
 # Propuesta de revisión 10 — Contrato del cotizador v0.2
 
-**Estado: propuesta, no aprobada y no aplicada.** El contrato vigente sigue siendo la **revisión 9**
-(`docs/contracts/cotizador-v0.2.md`). Este documento describe, de forma identificable, qué cambiaría en la revisión 10
-para alinear §4.2, §5.1, §6, §8.3–§8.7 y §12.3 con **D-136, D-138, D-139, D-140 y D-141**. **No se editó el contrato,
-no se implementó O2–O4 ni C5-B, no se modificó el HLD y no se aplicó ninguna migración.**
+**Estado: propuesta parcialmente superada (2026-11-03).** La parte **A6** (D-136, D-138 y D-141: §8.3–§8.7 y la
+migración `0018`) fue **aprobada e incorporada** al contrato como **revisión 10-A6** (`docs/contracts/cotizador-v0.2.md`)
+y se implementó en su fase 1 (esquema, modelos y migración). **C9/D-139 y C11/D-140** (§6, §12.3 y la parte de compras
+de §16) **siguen como propuesta, no aprobadas**. Este documento se conserva como antecedente del texto propuesto; la
+fuente vigente es el contrato. **No se modificó el HLD y no se aplicó ninguna migración a una base.**
 
 **Fecha:** 2026-11-02. **Base:** contrato v0.2 revisión 9. **Decisiones involucradas:** D-116, D-132, D-133, D-136,
 D-137, D-138 (C7), D-139 (C9), D-140 (C11) y D-141 (AC31). **Aprobación requerida:** tuya, expresa, antes de aplicar la
@@ -29,9 +30,9 @@ revisión 10.
 | 12 | §6.1 / §12.3 | La compra puede incluir cantidades **sin asignación**; quedan como **compra adicional para inventario** y no cierran reportes | D-140 (C11) |
 | 13 | §8.4 | AC31 se satisface con **traza interna** de observación, interpretación, modelo, versión y criterios; no con explicación visible | D-141 (AC31) |
 
-**Sin cambios de esquema por esta revisión documental.** O2–O4 siguen reservadas a la migración `0019`. Las compras y
-`purchase_line_allocation` pertenecen a C5-B (`0018`), que tampoco se implementa aquí. Esta propuesta no crea tablas,
-columnas ni campos de respuesta.
+**Sin cambios de esquema por esta revisión documental.** A6 se implementó en su fase 1 con la migración `0018`. Las
+compras y `purchase_line_allocation` pertenecen a C5-B (`0019`), que tampoco se implementa aquí. Esta propuesta no crea
+tablas, columnas ni campos de respuesta.
 
 ---
 
@@ -53,7 +54,7 @@ columnas ni campos de respuesta.
 | Etapa | Qué hace | Dónde |
 |---|---|---|
 | **O1 — Persistencia** | Guardar la observación con autor, fecha, texto original y contexto **del producto específico**; mostrarla siempre. **Ya implementado** | C5-A, migración 0015 (`commercial_observation`) |
-| **O2 — Interpretación** | Enviar el texto a un modelo y guardar una interpretación estructurada **en el contexto de ese producto**: laboratorio, marca, precio, disponibilidad u otro criterio comercial expresado por el administrador. Es una sugerencia interna ligada al producto, no un consejo visible ni una preferencia global | O2–O4, migración **0019** (`observation_interpretation`) |
+| **O2 — Interpretación** | Enviar el texto a un modelo y guardar una interpretación estructurada **en el contexto de ese producto**: laboratorio, marca, precio, disponibilidad u otro criterio comercial expresado por el administrador. Es una sugerencia interna ligada al producto, no un consejo visible ni una preferencia global | O2–O4, migración **0018** (`observation_interpretation`) |
 | **O3 — Recuperación y precedencia** | Recuperar **solo** las interpretaciones del `trade_item_id` exacto consultado; nunca por nombre, marca o laboratorio parecido. La más reciente para el mismo producto y clase de preferencia gana; las anteriores no se borran y quedan solo en la traza de auditoría | En vivo, sin tabla nueva |
 | **O4 — Orden interno** | Aplicar las preferencias **de ese producto** para **ordenar** sus ofertas recuperadas: primero las que mejor cumplen. **Todas las ofertas siguen visibles.** No se devuelve explicación, justificación ni puntuación | En vivo, dentro de la búsqueda y la cotización |
 
@@ -211,6 +212,10 @@ ordenamiento es por producto específico.
 confirmación) y la `0017` es de asignaciones; la numeración vigente está ratificada en el roadmap y en las decisiones.
 No se renumera nada en silencio: esta propuesta deja constancia del cambio.
 
+**Actualización 2026-11-03:** al aprobar solo A6 se reservó **0018** para O2–O4/A6 y C5-B pasó a **0019**, C5-C a
+**0020** y C5-D a **0021**. La referencia `0019` de este párrafo queda como antecedente de la propuesta original, no
+como numeración vigente.
+
 ### 2.8 §12.3 — cobertura cotizada con cotizaciones cerradas (C9/D-139)
 
 **Vigente (revisión 9), en lo pertinente:**
@@ -304,15 +309,16 @@ cláusulas quedan sustituidas y por qué.
 
 ## 4. Lo que esta propuesta no hace
 
-- No modifica `docs/contracts/cotizador-v0.2.md` (sigue en revisión 9).
+- No modifica `docs/contracts/cotizador-v0.2.md` más allá de la parte A6 ya incorporada como revisión 10-A6; el resto
+  (C9 y C11) sigue como propuesta y el contrato conserva ahí el texto de la revisión 9.
 - No modifica el HLD ni borra decisiones.
-- No implementa O2–O4, «Enseñar a la IA», orden por preferencias ni mantenedor de proveedores.
+- No implementa el motor de O2–O4 (solo la Fase 1 de esquema), «Enseñar a la IA» visible, orden aplicado por
+  preferencias ni mantenedor de proveedores.
 - No implementa C9/D-139 ni C11/D-140: no cambia `coverage.py`, no permite comprar desde `closed` y no crea tablas de
   compra.
-- No cambia el esquema ni crea la migración `0019`.
-- No crea la migración `0018` de compras.
-- No inicia C5-B, O2–O4, C5-C ni C5-D.
-- No declara aprobada la revisión 10 hasta que la apruebes.
+- No crea la migración `0019` de compras.
+- No inicia el motor de O2–O4, C5-B, C5-C ni C5-D.
+- No declara aprobada la revisión 10 completa hasta que la apruebes.
 
 ---
 
@@ -322,7 +328,7 @@ cláusulas quedan sustituidas y por qué.
    aprobación expresa del texto contractual que los incorpora.
 2. **Almacenamiento de secretos de proveedores (A3).** Sigue pendiente como decisión **técnica**: cifrado en reposo o
    gestor de secretos. No afecta el texto de esta revisión y no se implementa sin definirlo.
-3. **Oportunidad de implementación.** Autorizar o no C5-B (`0018`), O2–O4 (`0019`) y la aplicación de `0016`–`0017` en
-   `farmacia_demo`. El contenido funcional ya está decidido; la oportunidad es tuya.
+3. **Oportunidad de implementación.** Autorizar o no el motor O2–O4 (sin migración; usa `0018`), C5-B (`0019`) y la
+   aplicación de `0016`–`0018` en `farmacia_demo`. El contenido funcional ya está decidido; la oportunidad es tuya.
 
 Nada de esto se implementa sin tu orden expresa.

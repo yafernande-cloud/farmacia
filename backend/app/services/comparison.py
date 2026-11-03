@@ -40,6 +40,7 @@ from app.models import (
     TradeItem,
 )
 from app.services import criteria as criteria_svc
+from app.services import preferences as preferences_svc
 from app.services import sources as sources_svc
 from app.services.actors import Actor
 from app.services.provenance import org_kind, origin_for
@@ -829,6 +830,8 @@ async def run_comparison(
         if exists is None:
             raise not_found("La búsqueda")
 
+    # Preferencias del producto exacto (A6/O4): dos consultas para todas las líneas, sin N+1.
+    prefs_by_item = await preferences_svc.load_item_preferences(session, org, article_ids)
     offers_by_item = await _latest_offers(session, org, article_ids, now=now)
     effective: dict[int, list[OfferSnapshot]] = {}
     if offer_overrides:
@@ -1085,14 +1088,68 @@ async def run_comparison(
                     row, calc.supplier, line_row, annotations=annotations, notes=notes
                 )
             )
-        entries.sort(
-            key=lambda p: (
-                {"eligible": 0, "needs_review": 1, "ineligible": 2}[p["eligibility"]],
+        def _entry_order(p: dict[str, Any]) -> tuple:
+            """Orden determinista anterior: elegibilidad, pagable y oferta."""
+            return (
+                ELIGIBILITY_ORDER[p["eligibility"]],
                 p["line_payable"] is None,
                 Decimal(p["line_payable"]["amount"]) if p["line_payable"] else ZERO,
                 p["offer_id"].hex,
             )
-        )
+
+        entries.sort(key=_entry_order)
+        # Preferencias del producto: dentro de **cada grupo de elegibilidad** y conservando el
+        # orden anterior como desempate estable. Una oferta no elegible nunca adelanta a una
+        # elegible, aunque cumpla la preferencia. No quitan ofertas ni cambian ningún número.
+        item_prefs = prefs_by_item.get(item.id, preferences_svc.EMPTY)
+        if item_prefs.has_effects and entries:
+            offers_by_id = {o.id: o for o in effective.get(index, [])}
+            payable = {
+                c.offer.id: c.values["line_payable"] for c in calcs if c.line_index == index
+            }
+            views = [
+                (
+                    p,
+                    preferences_svc.offer_view(
+                        offers_by_id[p["offer_id"]], line_payable=payable.get(p["offer_id"])
+                    ),
+                )
+                for p in entries
+                if p["offer_id"] in offers_by_id
+            ]
+            # Se calcula por grupo de elegibilidad para que una oferta no elegible tampoco influya
+            # en las tolerancias relativas de las elegibles (la preferencia nunca cruza el grupo).
+            ranks: dict[uuid.UUID, tuple[int, ...]] = {}
+            for eligibility in ELIGIBILITY_ORDER:
+                group_views = [view for p, view in views if p["eligibility"] == eligibility]
+                if group_views:
+                    ranks.update(
+                        preferences_svc.rank_offers(
+                            item_prefs,
+                            group_views,
+                            quantity=line_row.quantity_value,
+                            unit=line_row.quantity_unit,
+                        )
+                    )
+            before = [p["offer_id"] for p in entries]
+            entries.sort(
+                key=lambda p: (
+                    ELIGIBILITY_ORDER[p["eligibility"]],
+                    ranks.get(p["offer_id"], preferences_svc.ZERO_RANKS),
+                    _entry_order(p)[1:],
+                )
+            )
+            if persist:
+                await preferences_svc.record_trace(
+                    session,
+                    organization_id=org,
+                    trade_item_id=item.id,
+                    context="comparison",
+                    prefs=item_prefs,
+                    offer_ids_before=before,
+                    offer_ids_after=[p["offer_id"] for p in entries],
+                    now=now,
+                )
         payload_lines.append(
             {
                 "line_id": line_row.id,

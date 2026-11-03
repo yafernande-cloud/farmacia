@@ -1,16 +1,27 @@
 # Contrato del cotizador — v0.2 (cotizaciones, compras, historial, observaciones, accesos y precios públicos)
 
-**Estado: aprobado conceptualmente, 2026-10-30 (revisión 9, 2026-11-02).** **Parcialmente implementado en código**:
-E10 y O1 (C5-A), los reportes independientes y las asignaciones (D-135) y la integridad de asignaciones (D-137). Siguen
-**sin implementar** las compras registradas y su cierre, el historial, la búsqueda de cadenas E15 y O2–O4. Nada de esto
-está aplicado a `farmacia` (sigue en `0008`), las migraciones `0016`–`0017` **no están aplicadas a ninguna base** y
-A6/D-136 —precisada por **D-138** (preferencias independientes por producto)—, **D-139** (cotización cerrada
-preparada para comprar), **D-140** (compra adicional para inventario) y **D-141** (AC31 como auditoría interna)
-esperan la **revisión 10**, todavía no aplicada. El texto propuesto está en
-`docs/contracts/cotizador-v0.2-rev10-propuesta.md`. La revisión 5 se aprobó en el cierre de
-D0; este encabezado corrige la contradicción que la llamaba «borrador no aprobado» (**C-0**, resuelta en D-128). Este
-documento **no modifica C0** (`docs/contracts/cotizador-v0.md`, congelado por D-093): lo **amplía** y declara cada
-ampliación de forma explícita. Ninguna de sus operaciones corre en el sistema mientras no se implemente.
+**Estado: revisión 10-A6 aprobada el 2026-11-03.** Esta revisión aprueba **solo A6** («Enseñar a la IA», D-136
+precisada por D-138, D-141, D-143 y D-144): interpretación estructurada **por producto**, preferencias comerciales y **orden
+determinista de sus ofertas**, sin ocultar ninguna, sin explicaciones ni puntuaciones visibles y con traza interna.
+La revisión 10 **completa sigue pendiente**: **D-139** (C9, cotización cerrada preparada para comprar) y **D-140**
+(C11, compra adicional para inventario) **no están aprobadas aquí** y conservan el texto histórico de la revisión 9.
+El texto propuesto para esa parte sigue en `docs/contracts/cotizador-v0.2-rev10-propuesta.md`.
+
+**Implementación real (2026-11-03).** E10 y O1 (C5-A), D-135 y D-137 están implementados en código. De A6 se
+implementaron el **esquema y los modelos** (`observation_interpretation`, `commercial_preference`,
+`preference_order_trace` y las columnas opcionales `offer_snapshot.laboratory_as_published` y
+`brand_as_published`, migración `0018`), el **motor determinista de orden y traza** (D-143) y el **retiro explícito**
+(`retired_subject_kinds`, migración `0019`, D-144). La **Fase 3A (D-145)** implementó además la **interpretación
+interna con OpenAI**: el servicio `app/services/observation_ai.py`, el adaptador sin SDK
+`app/interpretation/openai_observations.py` y la validación estricta de la salida en
+`app/interpretation/commercial.py`. La suite usa un doble del proveedor: **ninguna prueba hace llamadas reales**.
+Los **endpoints de interpretación y la conexión con Lovable todavía no existen** y se implementan en fases posteriores.
+Nada de esto está aplicado a `farmacia` (sigue en `0008`) ni a `farmacia_demo` (sigue en `0015`); `0018` y `0019` solo
+se aplicaron en `farmacia_test`, la base aislada que las pruebas recrean. Las migraciones
+`0016`–`0017` tampoco están aplicadas a `farmacia` ni `farmacia_demo`. Las compras registradas y su cierre, el historial y la búsqueda de cadenas E15
+siguen sin implementar. La revisión 5 se aprobó en el cierre de D0; este encabezado corrige la contradicción que la
+llamaba «borrador no aprobado» (**C-0**, resuelta en D-128). Este documento **no modifica C0**
+(`docs/contracts/cotizador-v0.md`, congelado por D-093): lo **amplía** y declara cada ampliación de forma explícita.
 
 **Revisión 3 (fase D0, 2026-10-30):** consolidó **D-113** (búsqueda de precios públicos de cadenas) y **D-115 a
 D-120** (mecanismo y captura por cadena; observaciones y aprendizaje con OpenAI; acceso web con Google; control
@@ -70,14 +81,33 @@ administración ajusta o quita las asignaciones: en `PATCH` una lista vacía **q
 alta la lista vacía sigue rechazándose. Nada se reasigna ni se corrige solo. No agrega tablas ni
 columnas; las migraciones siguen siendo `0016` y `0017`.
 
-> **Aviso de revisión 10 (propuesta, 2026-11-02; D-136 y D-138 a D-141):** el texto de §8.3, §8.4, §8.6 y §8.7 sobre
-> el consejo `advice` visible, la prohibición de reordenar ofertas y el alcance de las preferencias está **pendiente de
-> sustitución** por D-136 y **D-138** (preferencias independientes por producto, sin propagación). También están
-> pendientes de sustitución §6 y §12.3 por **D-139** (cotización cerrada preparada para comprar, con cobertura
-> provisional y compra sin reabrir), **D-140** (compra adicional para inventario) y **D-141** (AC31 como auditoría
-> interna). La propuesta de revisión 10, con el texto exacto de los cambios, está en
-> `docs/contracts/cotizador-v0.2-rev10-propuesta.md` y **no se aplicó**. Mientras no se apruebe, rigen D-136 y D-138 a
-> D-141 como decisiones y el contrato conserva este texto histórico.
+**Revisión 10-A6 (aprobada, 2026-11-03; D-136, D-138 y D-141):** sustituye en §1.3, §2.8, §4.2, §5.1, §8.3, §8.4,
+§8.5, §8.6, §8.7, §16 y §17 el consejo `advice` visible y la prohibición absoluta de reordenar. Las observaciones
+comerciales se interpretan **solo para el `trade_item_id` exacto**, se guardan como preferencias estructuradas y se
+aplican mediante un **orden determinista** de las ofertas de ese producto. Todas las ofertas siguen visibles; no se
+modifican precios, stock, cantidades, descuentos, impuestos, totales ni elegibilidad; no se muestran explicaciones,
+justificaciones ni puntuaciones; la trazabilidad queda en `preference_order_trace` para auditoría interna. La
+preferencia más reciente de la misma clase gana; una interpretación `rejected` no reactiva una anterior **ni desactiva la
+vigente**; solo `suggested` y `confirmed` participan de la precedencia. Sin preferencias aplicables, el orden es
+exactamente el determinista vigente. **C9/D-139 y C11/D-140 no forman parte de esta aprobación** y siguen como
+propuesta en §6 y §12.3.
+
+**Corrección de interpretación (2026-11-03; D-143):** precisa la revisión 10-A6. La elegibilidad de E5 siempre va
+primero y las preferencias solo ordenan **dentro de cada grupo de elegibilidad**. `rejected`, `needs_review`,
+`no_preference` y `failed` no generan efectos comerciales ni desactivan una preferencia vigente. La traza interna
+completa modelo, versión del prompt y estado en `applied_preferences`, distingue interpretaciones consultadas de
+aplicadas y su fallo no interrumpe `GET /articles/{id}`; en la comparación la auditoría sigue siendo obligatoria. D-143
+**no implementó** el retiro de una preferencia vigente; lo incorpora D-144 (párrafo siguiente).
+
+**Retiro explícito de preferencias (2026-11-03; D-144):** representa el retiro con
+`observation_interpretation.retired_subject_kinds`, una lista de clases (`laboratory`, `brand`, `supplier`,
+`availability`, `price:acceptable`, `price:maximum`). Una interpretación `suggested` o `confirmed` retira solo la clase
+indicada **para su `trade_item_id` y organización**; no borra historial, no reactiva preferencias anteriores, no afecta
+otras clases ni otros productos, y una preferencia posterior válida puede volver a establecerla. El retiro no se simula
+con `status='rejected'`, no crea preferencias ficticias ni copia sujetos. `rejected`, `needs_review`, `failed` y
+`no_preference` no retiran ni deshacen un retiro. El precio distingue `price:acceptable` de `price:maximum`. La traza
+interna conserva las clases retiradas en `preference_order_trace.retired_subject_kinds`; esa información no se expone
+en la API pública.
 
 **Corrección de alcance (2026-11-02; enmienda a D-127):** para la demo, la compra es **todo o nada**. Se registra
 completa —todos los productos y cantidades seleccionados— o no se registra; al registrarse, los faltantes cubiertos se
@@ -139,7 +169,8 @@ separada del MVP (§15).
 - C0-07 sigue vigente: **lo parcial no tiene `total`**. v0.2 no agrega un total a un proveedor parcial; agrega un
   objeto distinto, más estricto, para la cotización completa (§5.6).
 - **La IA no decide dinero, cantidades, permisos, precios, stock ni visibilidad de ofertas.** Solo interpreta texto
-  libre de observaciones y produce una recomendación explicada (§8).
+  libre de observaciones **del producto exacto** y, con una interpretación aplicable, **ordena** sus ofertas sin
+  ocultar ninguna, sin explicar ni puntuar (§8).
 - La compra real sigue **bloqueada**; registrar una compra no la ejecuta ni la autoriza.
 
 ### 1.3 Cuatro planos separados
@@ -149,12 +180,14 @@ separada del MVP (§15).
 | **Cálculo comercial** | E5 determinista | Se calcula en vivo; no se guarda |
 | **Selección** | Pao (persona) | `quote_line` (oferta + cantidad) |
 | **Hecho de compra** | Registro manual posterior | `purchase` + `purchase_line` (inmutable) |
-| **Observación y consejo** | Pao escribe; la IA solo sugiere | `commercial_observation` + `observation_interpretation` |
+| **Observación y preferencia** | Pao escribe; la IA solo interpreta; el backend valida | `commercial_observation` + `observation_interpretation` + `commercial_preference` |
+| **Orden de ofertas** | Motor determinista del backend | Se calcula en vivo; la traza queda en `preference_order_trace` |
 
 Ningún plano escribe en otro. El carrito no copia precios; la compra copia todo porque debe sobrevivir sola; una
-observación **nunca** altera precios, stock, condiciones, cantidades ni el orden de las ofertas. **Compra no es
-recepción** (V-33): el MVP no registra llegada física; una compra confirmada marca el término del proceso
-administrado, no la entrada de mercadería (§4.2, §12.6).
+observación **nunca** altera precios, stock, condiciones, cantidades, elegibilidad ni la **visibilidad** de las
+ofertas. La preferencia interpretada **puede ordenar** las ofertas del producto exacto; no las crea, quita, oculta ni
+modifica. **Compra no es recepción** (V-33): el MVP no registra llegada física; una compra confirmada marca el término
+del proceso administrado, no la entrada de mercadería (§4.2, §12.6).
 
 ### 1.4 Ampliaciones aditivas de las revisiones 3 y 5
 
@@ -163,14 +196,15 @@ administrado, no la entrada de mercadería (§4.2, §12.6).
 | A1 | Cotizaciones, carritos y líneas | E10 | D-114 |
 | A2 | Compras registradas | E11 | D-114 |
 | A3 | Historial comercial | E12 | D-114 |
-| A4 | Observaciones comerciales e interpretación con IA | E13 | D-116 |
+| A4 | Observaciones comerciales e interpretación con IA **que ordena las ofertas del producto** | E13 | D-116, D-136, D-138, D-141 |
 | A5 | Acceso web con Google, solicitudes y superadministradora | E14 | D-117, D-119 |
-| A6 | Control individual de Telegram | T1 (reusa API existente) | D-118 |
+| A6 | Control individual de Telegram (no confundir con **A6 de `ACUERDOS_FUNCIONALES`**, «Enseñar a la IA») | T1 (reusa API existente) | D-118 |
 | A7 | Búsqueda de precios públicos de cadenas | E15 | D-113, D-115 |
 | A8 | `relation` en E1 y `coverage_relation` en E10 | Campo aditivo + columna | D-120 |
 | A9 | Cobertura de faltantes con compras vigentes, sin doble conteo | E10, campos aditivos de `GET /demand-items` | D-121, cierre por D-127 |
 | A10 | ~~Recepción física, parcial y con diferencias~~ | **Retirada del MVP** | D-122, retirada por **D-126** |
 | A11 | Estado por Telegram, sin duplicar necesidades; `admin` puede informar | Mensajes del bot + permiso | D-123, D-124 |
+| A12 | Preferencias comerciales por producto que ordenan sus ofertas, sin explicación visible | E13, campos aditivos de oferta | D-136, D-138, D-141 |
 
 Ninguna de estas ampliaciones cambia la forma congelada de E1–E9. E1 recibe **un campo aditivo** (`relation`); las
 demás son contratos nuevos, subrecursos o reutilización de endpoints existentes. A9 y A11 agregan **campos aditivos**
@@ -230,12 +264,15 @@ Paleta: verde `#17845F`, azul petróleo `#27718A`, fondos claros; **sin tema osc
 Todas las tablas: `organization_id` con FK compuesta, `data_origin` (`simulated|captured|ai_derived`), sin borrado
 físico desde la API, y auditoría en `audit_event` dentro de la misma transacción.
 
-**v0.2 completa 9 tablas:** las 6 de la revisión 2 (`quote`, `quote_cart`, `quote_line`, `purchase`, `purchase_line`,
-`purchase_index`) y 3 de la revisión 3 (`commercial_observation`, `observation_interpretation`,
-`web_access_request`). **Columnas nuevas respecto del esquema actual: 7**: `quote_line.demand_item_id` (ya prevista en
-la revisión 2), `quote_line.coverage_relation` (nueva en la revisión 3) y cinco en `app_user` (§2.10). **6 son nuevas
-en la revisión 3; las revisiones 4, 5 y 6 no agregan columnas.** La revisión 5 no agrega tablas: retira las dos de
-recepción que proponía la revisión 4 (D-126). Las revisiones 6 y 7 tampoco agregan tablas ni columnas (D-128/D-130).
+**v0.2 completa 11 tablas:** las 6 de la revisión 2 (`quote`, `quote_cart`, `quote_line`, `purchase`, `purchase_line`,
+`purchase_index`), 3 de la revisión 3 (`commercial_observation`, `observation_interpretation`,
+`web_access_request`) y **2 de A6/revisión 10-A6** (`commercial_preference`, `preference_order_trace`).
+**Columnas nuevas respecto del esquema actual: 9**: `quote_line.demand_item_id` (ya prevista en la revisión 2),
+`quote_line.coverage_relation` (nueva en la revisión 3), cinco en `app_user` (§2.10) y las dos columnas opcionales de
+`offer_snapshot` (`laboratory_as_published`, `brand_as_published`, §2.7 bis). Las revisiones 4 a 7 no agregan columnas;
+A6 agrega las dos de oferta. La revisión 5 no agrega tablas: retira las dos de recepción que proponía la revisión 4
+(D-126). La revisión 10-A6 reemplaza la forma de `observation_interpretation` y agrega las dos tablas de preferencias y
+traza.
 
 ### 2.1 `quote` — cotización general
 
@@ -413,34 +450,141 @@ Reglas:
    `trade_item_id` exacto (§8.4).
 4. El contexto guarda lo que se vio, no una interpretación: `laboratory_as_published` ≠ laboratorio confirmado.
 
-### 2.8 `observation_interpretation` — interpretación sugerida por IA
+### 2.7 bis Columnas de oferta publicadas por la fuente
+
+`offer_snapshot` agrega dos columnas **opcionales**:
+
+| Columna | Tipo | Notas |
+|---|---|---|
+| `laboratory_as_published` | varchar(200) NULL | Laboratorio **tal como lo publica la fuente**; NULL = no informado |
+| `brand_as_published` | varchar(200) NULL | Marca **tal como la publica la fuente**; NULL = no informado |
+
+Nunca se deducen del nombre del producto, de `trade_item.laboratory` ni de `trade_item.brand`. No cambian el modelo
+conceptual de un producto con varias ofertas y laboratorios: cada oferta conserva lo que su fuente publicó, y el
+producto conserva sus atributos propios. Si la fuente no lo informa, queda NULL y el motor no inventa una coincidencia.
+
+### 2.8 `observation_interpretation` — interpretación de una observación
+
+Una fila por **llamada o intento** de interpretación. Varias filas por observación son válidas (otro modelo, otra
+versión de prompt o un reintento). El texto original no se reescribe.
 
 | Columna | Tipo | Notas |
 |---|---|---|
 | `id` | uuid PK | |
-| `organization_id`, `observation_id` | uuid | FK compuesta; **varias interpretaciones por observación** |
-| `stance` | varchar(10) | `favor` \| `caution` \| `neutral` |
-| `subject_kind` | varchar(12) | `article` \| `brand` \| `supplier` |
-| `subject_label` | text | Etiqueta **tal como apareció** en la observación |
-| `temporality` | varchar(10) | `past` \| `present` \| `unknown` |
-| `confidence` | numeric(4,3) | 0–1; sugerencia, no verdad |
-| `model`, `prompt_version` | text | Trazabilidad del proveedor |
-| `input_tokens`, `output_tokens` | integer | Consumo real informado por el proveedor |
-| `estimated_cost_usd` | numeric(12,6) | Calculado con tarifa configurable; **no es un cobro** |
-| `latency_ms` | integer | |
-| `data_origin` | varchar(12) | `ai_derived` |
-| `status` | varchar(10) | `suggested` \| `confirmed` \| `rejected` |
+| `organization_id`, `observation_id`, `trade_item_id` | uuid | FK compuesta a `commercial_observation(id, trade_item_id, organization_id)`; **el alcance es el artículo exacto** |
+| `status` | varchar(16) | `suggested` \| `confirmed` \| `rejected` \| `failed` \| `needs_review` \| `no_preference` |
+| `model`, `prompt_version` | varchar(80), varchar(40) | Trazabilidad del proveedor y del prompt |
+| `raw_output` | jsonb NULL | Respuesta estructurada tal como llegó; **nunca se ejecuta ni se muestra** |
+| `input_tokens`, `output_tokens`, `latency_ms` | integer NULL | Consumo y latencia informados |
+| `error_code` | varchar(40) NULL | Código **interno** (`quota`, `rate_limit`, `timeout`, `unavailable`, `invalid_response`, …); nunca se muestra al usuario |
 | `reviewed_by`, `reviewed_at`, `review_note` | | Solo tras revisión humana |
+| `retired_subject_kinds` | jsonb | Clases que esta interpretación **retira** para su artículo: `laboratory`, `brand`, `supplier`, `availability`, `price:acceptable` o `price:maximum`; `[]` si no retira ninguna (D-144) |
+| `data_origin` | varchar(12) | `ai_derived` |
 | `created_at` | timestamptz | |
 
-**Contradicción resuelta (D0).** La tabla se describía como inmutable pero tenía `status` mutable. Regla final:
+**Estados y aplicación.**
 
-- **El contenido es inmutable**: `stance`, `subject_*`, `temporality`, `confidence`, `model`, `prompt_version`,
-  tokens, costo y latencia no se editan ni se borran.
-- Solo los **campos de revisión** (`status`, `reviewed_by`, `reviewed_at`, `review_note`) cambian, mediante una
-  función restringida y auditada con transición **`suggested → confirmed | rejected`, sin retorno**.
-- Varias interpretaciones por observación son válidas (otro modelo, otra versión de prompt). **La más reciente
-  revisada gana**; las anteriores se muestran como «superadas», nunca se ocultan ni se borran.
+1. `suggested` y `confirmed` **pueden aplicarse automáticamente** al orden del producto.
+2. `rejected`, `failed`, `needs_review` y `no_preference` **no se aplican**. Tampoco generan ningún efecto comercial:
+   no ordenan, no desactivan una preferencia vigente ni la reactivan. La ausencia de preferencia no es un retiro.
+3. Un fallo **exige** `error_code`; el código solo acompaña `failed` o `needs_review`.
+4. Confirmar o rechazar exige `reviewed_by` y `reviewed_at`. `suggested → confirmed | rejected | needs_review`;
+   `needs_review → confirmed | rejected`. Los estados terminales (`confirmed`, `rejected`, `failed`, `no_preference`)
+   no vuelven atrás.
+5. El **contenido es inmutable** (observación, artículo, modelo, prompt, salida, tokens, latencia, error, origen y
+   fecha). Solo cambian el estado y los campos de revisión; `DELETE` está prohibido. Reintentar crea otra fila.
+6. Si el modelo no entiende o hay ambigüedad relevante, se guarda `needs_review` o `no_preference` y **no se inventa
+   una regla**.
+7. **Retiro explícito (D-144).** Una interpretación `suggested` o `confirmed` puede retirar una o varias clases mediante
+   `retired_subject_kinds`; el retiro vale solo para el `trade_item_id` de la interpretación. Es un evento más de la
+   secuencia de la clase: un retiro posterior a una preferencia vigente la deja sin efecto y una preferencia posterior
+   válida vuelve a establecerla. El estado de la interpretación sigue gobernando: una fila `rejected`, `needs_review`,
+   `failed` o `no_preference` no retira, no reactiva y no deshace un retiro. Retirar una clase **no** borra las
+   preferencias históricas, que se conservan como tal. Si una misma interpretación retira y establece la misma clase,
+   prevalece el retiro.
+
+### 2.8.1 `commercial_preference` — preferencia estructurada por producto
+
+Una fila por preferencia extraída. No es texto libre ni una puntuación: es la estructura que el motor determinista
+puede aplicar sin volver a llamar a la IA.
+
+| Columna | Tipo | Notas |
+|---|---|---|
+| `id` | uuid PK | |
+| `organization_id`, `interpretation_id`, `observation_id`, `trade_item_id` | uuid | FKs compuestas; la preferencia **hereda** artículo y organización de su interpretación y observación |
+| `subject_kind` | varchar(16) | `laboratory` \| `brand` \| `supplier` \| `availability` \| `price` |
+| `subject_key` | varchar(300) | Clave normalizada para comparar; en disponibilidad es `in_stock` |
+| `subject_label` | varchar(300) | Etiqueta legible de lo interpretado |
+| `subject_supplier_id` | uuid NULL | Obligatorio **si y solo si** `subject_kind = 'supplier'` |
+| `effect` | varchar(12) | `prefer` \| `deprioritize` |
+| `tolerance_kind` | varchar(24) | `none` \| `relative_percent` \| `absolute_amount` |
+| `tolerance_percent`, `tolerance_amount`, `tolerance_currency` | numeric / char(3) NULL | Coherentes con `tolerance_kind`; moneda ISO de 3 letras |
+| `tolerance_origin` | varchar(24) | `not_applicable` \| `implicit_default` \| `explicit` |
+| `price_reference_kind` | varchar(16) | `none` \| `acceptable` \| `maximum` |
+| `price_reference_amount`, `price_reference_currency`, `price_reference_basis` | numeric / char(3) / varchar(24) NULL | Base: `per_base_unit` \| `per_commercial_unit` \| `per_line_total` |
+| `price_reference_quantity`, `price_reference_quantity_unit` | numeric / varchar(10) NULL | Obligatorias solo para `per_line_total`; unidad del dominio |
+| `confidence` | numeric(3,2) | 0–1; sugerencia, no verdad |
+| `status` | varchar(16) | `suggested` \| `confirmed` \| `rejected` \| `needs_review` |
+| `data_origin` | varchar(12) | `ai_derived` |
+| `created_at` | timestamptz | |
+
+**Coherencia que impone la base.**
+
+1. `supplier` exige `subject_supplier_id`; los demás sujetos lo prohíben.
+2. Solo `prefer` admite tolerancia; una preferencia negativa se expresa como `deprioritize` sin tolerancia.
+3. `relative_percent` exige porcentaje > 0 y ≤ 100, sin monto ni moneda; `absolute_amount` exige monto > 0 y moneda,
+   sin porcentaje. Ambos exigen origen `explicit` o, solo el porcentaje implícito, `implicit_default`.
+4. `price` solo usa `prefer`, exige una referencia `acceptable` o `maximum` y no lleva tolerancia.
+5. `per_line_total` exige cantidad y unidad; las bases unitarias las prohíben. Una referencia de precio no se mezcla
+   con un sujeto que no sea `price`.
+6. `availability` solo admite `in_stock` y `prefer`.
+7. La preferencia es inmutable en contenido; solo cambia `status` y `DELETE` está prohibido.
+8. **El retiro no se guarda como preferencia.** Borrar o no emitir filas no retira una preferencia vigente: la última
+   interpretación aplicada de la clase sigue gobernando. El retiro es una clase de la **interpretación**
+   (`retired_subject_kinds`, D-144), no una fila ficticia ni un `status='rejected'`; así no se inventan sujetos ni se
+   copia el historial.
+
+**Formas comerciales que la estructura debe representar** (el prompt las interpreta; el backend valida y nunca deja
+texto libre para ejecutar):
+
+| Forma | Ejemplo | Representación |
+|---|---|---|
+| Laboratorio | «Prefiero Laboratorio Chile» | `laboratory` + `prefer`, tolerancia `none` |
+| Tolerancia implícita | «…aunque sea un poco más caro» | `relative_percent` 10, `implicit_default` |
+| Porcentaje explícito | «…hasta un 15 % más» | `relative_percent` 15, `explicit` |
+| Monto adicional | «Pagaría hasta $500 más» | `absolute_amount` 500 CLP, `explicit` |
+| Precio aceptable | «Si vale $9.990 me parece bien» | `price` + `acceptable`, base explícita |
+| Precio máximo | «No quiero pagar más de $9.990» | `price` + `maximum`, base explícita |
+| Preferencia negativa | «No me gusta este proveedor para este producto» | `supplier` + `deprioritize`, sin exclusión |
+| Disponibilidad | «Prefiero proveedores que tengan stock» | `availability` + `in_stock` |
+
+**Reglas monetarias.** Se usa `Decimal`/NUMERIC, nunca `float`. Se respeta la moneda y la base de precio; no se
+comparan precio unitario con precio de caja ni con total de línea. Si la expresión monetaria es ambigua y el contexto
+del producto/oferta no la resuelve con seguridad, se guarda `needs_review` y **no se aplica** una interpretación
+inventada.
+
+### 2.8.2 `preference_order_trace` — traza interna del orden
+
+| Columna | Tipo | Notas |
+|---|---|---|
+| `id` | uuid PK | |
+| `organization_id`, `trade_item_id` | uuid | Artículo exacto |
+| `context` | varchar(20) | `article_detail` \| `comparison` |
+| `interpretation_ids`, `preference_ids` | jsonb | Interpretaciones **consultadas** para el artículo (incluye las no aplicadas, excepto `failed`) y preferencias vigentes |
+| `applied_preferences` | jsonb | Solo preferencias aplicadas: estructura, `interpretation_status`, `preference_status`, `observation_id`, `model` y `prompt_version` congelados al aplicar; sin texto libre ejecutable |
+| `retired_subject_kinds` | jsonb | Clases **retiradas vigentes** en el momento de aplicar el orden (D-144); vacío si no hay retiro |
+| `offer_ids_before`, `offer_ids_after` | jsonb | Orden anterior y resultante |
+| `offer_set_hash`, `preference_fingerprint` | varchar(64) | Identifican el estado; únicos por organización, artículo y contexto |
+| `correlation_id` | uuid | Correlación con la petición |
+| `created_at` | timestamptz | |
+
+Es **interna y de solo agregar** (trigger rechaza `UPDATE` y `DELETE`). No se devuelve en la API pública ni se muestra
+en las tarjetas. Su único fin es la auditoría AC31/D-141. Repetir la misma aplicación (mismo conjunto de ofertas y mismo
+fingerprint de preferencias aplicadas **y de clases retiradas**) no duplica la fila. También se escribe cuando el único
+efecto es un retiro: `preference_ids` y `applied_preferences` quedan vacíos y `retired_subject_kinds` registra la clase.
+En `article_detail` la escritura es *best effort*: si falla,
+se revierte solo la traza, se registra el incidente internamente y la consulta sigue; en `comparison` es obligatoria y
+su fallo revierte la corrida completa (D-143).
 
 ### 2.9 `web_access_request` — solicitud de acceso web
 
@@ -571,7 +715,7 @@ pendiente no altera la cantidad cotizada ni la compra histórica.
 | Compra | existe o no un registro que la sustituya | `current` \| `superseded` (más `is_annulment`) |
 | Faltante cubierto | líneas activas de cotizaciones `draft` **más compras vigentes del faltante**, sin doble conteo | `covered` \| `pending_quantity` \| `pending_purchase_quantity` \| `is_pending` (§12.3) |
 | Estado de reposición de un faltante | cobertura, compras y `demand_item.status` | `pending` \| `in_quote` \| `purchased` \| `fulfilled` \| `cancelled` (§12.6) |
-| Consejo de una línea | observaciones del artículo + interpretaciones revisadas | `advice` (§8.4) |
+| Orden de ofertas | observaciones e interpretaciones **del artículo exacto** + preferencias aplicables + orden determinista de E5 | sin campo visible; el orden no se explica ni se puntúa (§8.4) |
 
 - `exceeded`: se compró más de lo cotizado. **No se bloquea**; se advierte y se conservan ambas cantidades (§6.4).
 - **Compra todo o nada (enmienda a D-127, 2026-11-02):** el flujo de compra de la demo no produce
@@ -616,7 +760,7 @@ futura: G1 y el Cotizador no la implementan y no modifican ningún control de se
 |---|---|
 | `POST /api/v1/quotes` | Crear cotización. Cuerpo: `{ "title": "Reposición semanal" }` |
 | `GET /api/v1/quotes` | «Mis cotizaciones». Filtros: `status`, `updated_from`, `updated_to`, `q` (título), paginación |
-| `GET /api/v1/quotes/{quote_id}` | Detalle completo: carritos, líneas, evaluación E5 por carrito, total estimado, cobertura de faltantes y `advice` |
+| `GET /api/v1/quotes/{quote_id}` | Detalle completo: carritos, líneas, evaluación E5 por carrito, total estimado y cobertura de faltantes. Las ofertas llegan **ordenadas** por las preferencias del producto; no incluye `advice` ni explicación del orden |
 | `GET /api/v1/quotes/{quote_id}/summary` | Sección integrada del cotizador: por proveedor, nº de productos, subtotal o causa, estado. Sin detalle de líneas |
 | `PATCH /api/v1/quotes/{quote_id}` | `title`, `status: "closed"` o `"draft"` (reabrir). Requiere `version`. Cerrar exige asignaciones consistentes (`409 QUOTE_HAS_INCONSISTENT_ALLOCATIONS`, D-137); reabrir no cambia asignaciones |
 
@@ -826,7 +970,7 @@ IDEMPOTENCY_KEY_REUSED`.
   la suma de compras confirmadas de ese faltante alcanza su cantidad pedida conocida, la compra lo pasa a `fulfilled`
   y el producto queda **liberado** para un nuevo reporte (§12.3). Si no la alcanza, el faltante no se cierra ni se
   libera. La respuesta incluye el faltante afectado y su `replenishment_state` resultante.
-- **Asignación por reporte (D-135).** Cuando C5-B se implemente (`0018`), cada línea de compra asignará explícitamente
+- **Asignación por reporte (D-135).** Cuando C5-B se implemente (`0020`), cada línea de compra asignará explícitamente
   a uno o varios reportes con `purchase_line_allocation`, igual que la cotización. Una línea con compra vigente usa esa
   asignación y **nunca** suma su asignación de cotización (§12.3). No hay reparto automático ni consolidación entre
   reportes de distintas personas.
@@ -975,7 +1119,7 @@ superen los 6 meses.
   `purchase_index` (§2.6), **sin abrir el almacén externo**.
 - El bundle se abre **solo al abrir un registro**.
 - La búsqueda de texto usa `pg_trgm` + `unaccent` sobre `search_text`. **`pg_trgm` y `unaccent` son DDL**: no pueden
-  crearse «sin migración». Requieren su **propia migración** (C5-C, 0018) y la verificación previa de disponibilidad
+  crearse «sin migración». Requieren su **propia migración** (C5-C, 0021) y la verificación previa de disponibilidad
   en el PostgreSQL de destino, con autorización explícita (F-2).
 - Si alguna no estuviera disponible, la alternativa es búsqueda por prefijo con `lower()` —más limitada— y requiere
   tu decisión. No se instala ninguna extensión sin autorización.
@@ -1005,18 +1149,20 @@ superen los 6 meses.
 
 ### 8.1 Principio
 
-**Cualquier `admin`** escribe observaciones libres sobre un producto, una marca o un proveedor («este medicamento no
-me gusta por el laboratorio», «este proveedor despacha tarde», «nos fue mal en ventas», «prefiero Laboratorio Chile»,
-«no volver a sugerir este laboratorio»). El sistema las **guarda siempre** y la IA **solo sugiere** una interpretación
-y un consejo. **La observación es de la persona; el consejo es una sugerencia marcada como tal.**
+**Cualquier `admin`** escribe observaciones libres sobre **un producto concreto** («este medicamento no me gusta por
+el laboratorio», «este proveedor despacha tarde», «prefiero Laboratorio Chile», «no me gusta este proveedor para este
+producto»). El sistema las **guarda siempre**; la IA interpreta la intención comercial y el backend valida una
+**preferencia estructurada**. La observación es de la persona; la interpretación es una sugerencia interna y el
+**orden de ofertas** es el único efecto visible (§8.4).
 
-Las observaciones **persisten** y **afectan las propuestas futuras de la IA** (§8.4). No se exige explicar cada
-recomendación, ni un formulario técnico, ni un paso adicional de confirmación: botón «Observación», texto libre,
-Guardar/Cancelar (D-132).
+Las observaciones **persisten** y **afectan el orden futuro de las ofertas de ese producto** (§8.4). No se exige
+explicar cada orden, ni un formulario técnico, ni un paso adicional de confirmación: botón «Enseñar a la IA», texto
+libre, Guardar/Cancelar (D-132). El botón vive en la tarjeta de un producto ya elegido; el backend obtiene y valida el
+contexto real por `trade_item_id` y los identificadores de oferta, no solo por el texto que envía el frontend.
 
-No se reemplaza el aprendizaje por un conjunto de reglas presentado como IA. Si no hay proveedor de IA configurado o
-falla, la observación se guarda igual y el consejo dice **«sin interpretación»**; no se inventa una recomendación ni
-se simula una interpretación real.
+No se reemplaza el aprendizaje por un conjunto de reglas presentado como IA. Si no hay proveedor configurado o falla,
+**la observación se guarda igual**, el orden se mantiene en el determinista de E5 y se informa un estado recuperable;
+no se inventa una preferencia ni se simula una interpretación real.
 
 ### 8.2 Por qué no un `note_text` único
 
@@ -1034,12 +1180,14 @@ Por eso cada observación es una fila independiente, inmutable y acumulativa (§
 
 | Método y ruta | Para qué |
 |---|---|
-| `POST /api/v1/commercial-observations` | Registrar observación **sin línea**, desde la tarjeta de una oferta o una ficha: `{ "text": "...", "trade_item_id": "uuid", "supplier_id": "uuid?", "offer_snapshot_id": "uuid?", "quote_id": "uuid?" }`. Es la ruta que usa el botón «Observación» del buscador. Responde `201` |
-| `POST /api/v1/quotes/{quote_id}/lines/{line_id}/observations` | Atajo para registrar la observación ya asociada a una línea de cotización. Cuerpo: `{ "text": "..." }`. Sin categorías ni selectores. Responde `201` con la observación y, si la IA está habilitada, con `interpretation_status` |
+| `POST /api/v1/commercial-observations` | Registrar observación **sin línea**, desde la tarjeta de un producto ya elegido: `{ "text": "...", "trade_item_id": "uuid", "supplier_id": "uuid?", "offer_snapshot_id": "uuid?", "quote_id": "uuid?" }`. Responde `201` con la observación y un `interpretation_status` (`applied`, `pending`, `failed`, `no_preference`, `needs_review`). **La observación se guarda aunque OpenAI falle** |
+| `POST /api/v1/quotes/{quote_id}/lines/{line_id}/observations` | Atajo para registrar la observación ya asociada a una línea de cotización. Cuerpo: `{ "text": "..." }`. Sin categorías ni selectores. Responde `201` con la observación y su estado de interpretación |
+| `POST /api/v1/commercial-observations/{id}/interpretations` | **Reintentar** la interpretación de una observación existente. Crea una interpretación nueva; **no duplica la observación**. Solo si no hay una interpretación aplicable vigente o si la anterior falló. Responde `202`/`200` con el estado recuperable |
 | `GET /api/v1/quotes/{quote_id}/lines/{line_id}/observations` | Observaciones de la línea, más recientes primero, con sus interpretaciones y estado de revisión |
 | `GET /api/v1/commercial-observations?trade_item_id=...` | Historial de observaciones **del artículo exacto**, para la vista de producto |
 | `POST /api/v1/observation-interpretations/{id}/review` | Revisión humana: `{ "decision": "confirm" \| "reject", "note": "..." }`. Solo `admin` + `StrongActor`. Transición sin retorno; auditada. **Sigue siendo solo de `admin`** (P-7), que es el único perfil web (D-130) |
-| `GET /api/v1/quotes/{quote_id}` | Incluye `advice` por línea (§8.4) |
+| `GET /api/v1/articles/{id}` | Detalle E3 con las ofertas **ordenadas** por las preferencias aplicables del artículo; mismo conjunto, mismos precios, stock y elegibilidad. **Sin** `advice`, explicación ni puntuación |
+| `POST /api/v1/comparisons` | Candidatos por producto ordenados por las preferencias aplicables; el conjunto no cambia. No se llama a OpenAI para abrir o comparar |
 
 `/api/v1/observations` **no** es esta ruta: es el registro y la bandeja de observaciones de **faltantes** (D-129).
 Las observaciones comerciales viven en `/api/v1/commercial-observations` y las rutas de faltantes no cambian.
@@ -1051,95 +1199,206 @@ selectores, etiquetas predefinidas ni formularios adicionales.
 
 | Etapa | Qué hace | Dónde |
 |---|---|---|
-| **O1 — Persistencia** | Guardar la observación con autor, fecha, texto original y contexto; mostrarla siempre | C5-A, migración 0015 (`commercial_observation`) |
-| **O2 — Interpretación** | Enviar el texto a un modelo y guardar una interpretación estructurada como sugerencia | O2–O4, migración 0016 (`observation_interpretation`) |
-| **O3 — Recuperación y precedencia** | Para un artículo, recuperar **solo** sus observaciones (nunca por nombre, marca o laboratorio parecido); la más reciente para el mismo sujeto y clase de consejo gana; las anteriores se muestran como superadas | En vivo, sin tabla nueva |
-| **O4 — Consejo explicado** | Devolver un objeto `advice` que cita las observaciones en que se basa y las que supera | En vivo, dentro de la cotización |
+| **O1 — Persistencia** | Guardar la observación con autor, fecha, texto original y contexto **del producto específico**; mostrarla siempre. **Implementado** | C5-A, migración 0015 (`commercial_observation`) |
+| **O2 — Interpretación** | Enviar el texto a un modelo y guardar una interpretación estructurada **en el contexto del producto**: laboratorio, marca, proveedor, precio, disponibilidad u otro criterio comercial. Es una sugerencia interna ligada al producto, no un consejo visible ni una preferencia global. **Implementado internamente (D-145)**: servicio, adaptador de OpenAI y validación estricta; **faltan los endpoints públicos** | A6, migración **0018** (`observation_interpretation`); `app/services/observation_ai.py` |
+| **O3 — Recuperación y precedencia** | Recuperar **solo** las interpretaciones del `trade_item_id` exacto; nunca por nombre, marca o laboratorio parecido. La más reciente de la misma clase para ese producto gana; las anteriores no se borran y quedan en la traza | En vivo, con `commercial_preference` |
+| **O4 — Orden interno** | Aplicar las preferencias **de ese producto** para **ordenar** sus ofertas recuperadas; todas siguen visibles. No se devuelve explicación, justificación ni puntuación | En vivo, con `preference_order_trace` |
+
+**Flujo obligatorio:**
+
+1. El administrador registra una observación desde la tarjeta de un producto ya elegido.
+2. OpenAI interpreta la intención comercial en el contexto del producto.
+3. El backend valida la estructura, el alcance y los datos; **OpenAI no escribe datos comerciales**.
+4. Se guarda la interpretación y, si corresponde, una o más `commercial_preference`.
+5. Un **motor determinista** aplica las preferencias al orden de las ofertas.
+6. Lovable muestra el orden que devuelve la API. No calcula, no reordena y no explica.
+
+No se llama a OpenAI al abrir un artículo ni al comparar. La llamada ocurre al guardar una observación o al
+reintentar una interpretación. El orden se aplica en `GET /api/v1/articles/{id}` y en `POST /api/v1/comparisons`
+(sobre los candidatos de cada producto). **No** se modifica el ranking global de productos ni los totales de una
+cotización.
 
 **Precedencia (O3), exacta:**
 
-1. Solo observaciones con `trade_item_id` **exacto** al artículo consultado.
-2. Para el mismo `subject_kind` y la misma clase de consejo, **gana la más reciente** (`created_at`, desempate por
-   `id`).
-3. Las anteriores **no se borran**: se devuelven en `supersedes[]` y se muestran como «superada por la observación
-   del …».
-4. Una observación de marca o proveedor **no se aplica** a otro artículo de la misma marca.
-5. Si no hay observaciones, `advice` es `null`; no se rellena con texto genérico.
+1. **Alcance por producto.** Solo cuentan observaciones, interpretaciones y preferencias con el `trade_item_id`
+   exacto. Una de laboratorio, marca o proveedor **no se aplica** a otro producto de ese mismo laboratorio, marca o
+   proveedor.
+2. **Sin perfiles globales.** No hay preferencias de organización, índices de reputación ni puntuaciones acumuladas.
+3. **Clase de preferencia.** Para laboratorio, marca, proveedor y disponibilidad, la clase es el `subject_kind`. Para
+   precio, la clase distingue `acceptable` de `maximum` (`subject_kind='price'` + `price_reference_kind`).
+4. **La más reciente de la clase gana** (`created_at`, desempate por `id`). Las anteriores no se borran; quedan en el
+   historial y en la traza.
+5. **Solo las interpretaciones aplicadas compiten por su clase.** Una interpretación `rejected`, `needs_review` o
+   `no_preference` no se aplica, no reactiva una anterior **ni desactiva la vigente**; la última `suggested`/`confirmed`
+   de la clase sigue gobernando. Un intento `failed` no es una interpretación semántica y no desplaza nada. Por eso una
+   ambigüedad o un rechazo nunca tienen efecto comercial.
+6. **Solo se aplican** interpretaciones y preferencias en estado `suggested` o `confirmed`. `rejected`, `failed`,
+   `needs_review` y `no_preference` no se aplican.
+7. **Sin preferencia aplicable**, el orden es exactamente el determinista vigente de E5. No se rellena con una
+   prioridad inventada.
+8. **Retiro explícito (D-144).** Una interpretación `suggested`/`confirmed` puede retirar una clase mediante
+   `retired_subject_kinds`. El retiro compite en la misma secuencia temporal que las preferencias de esa clase: el
+   evento aplicado más reciente (preferencia o retiro) gana, con desempate por `id`. Retirar no reactiva un historial
+   anterior, no afecta otras clases ni otros productos, y una preferencia posterior válida vuelve a establecerla. Una
+   interpretación sin filas de la clase **no** la retira; solo lo hace un retiro explícito. `rejected`, `needs_review`,
+   `failed` y `no_preference` no retiran ni deshacen un retiro. Una misma interpretación puede retirar una clase y
+   establecer otra; si retira y establece la misma, prevalece el retiro.
 
-**Objeto `advice`:**
+**Orden determinista (O4).** Es lexicográfico, sin puntuaciones ni “relevancia”:
 
-```json
-{
-  "advice": {
-    "stance": "caution",
-    "text": "La observación más reciente sobre este artículo advierte sobre el laboratorio.",
-    "based_on": [
-      { "observation_id": "uuid", "created_at": "2026-10-29T10:00:00Z", "quote_id": "uuid" }
-    ],
-    "supersedes": [
-      { "observation_id": "uuid", "created_at": "2026-09-15T10:00:00Z" }
-    ],
-    "interpretation_status": "confirmed"
-  }
-}
-```
+1. Se conserva primero la elegibilidad de E5; una preferencia **nunca** vuelve elegible una oferta ni hace inelegible
+   una que ya lo era. Las preferencias ordenan **dentro de cada grupo de elegibilidad** (`eligible`, `needs_review`,
+   `ineligible`): una oferta no elegible que cumple la preferencia no adelanta a una elegible que no la cumple.
+2. Las clases se aplican en este orden: **precio → proveedor → laboratorio → marca → disponibilidad**. El precio va
+   primero porque expresa un límite comercial explícito; luego la relación comercial, los atributos del producto y la
+   disponibilidad.
+3. Dentro de cada clase se forma un grupo que cumple (`prefer`) o que queda al final (`deprioritize`); no se asigna un
+   número a la oferta.
+4. Si dos ofertas empatan en todas las clases, se conserva el orden determinista anterior (desempate estable por
+   `offer_id`), de modo que el resultado es reproducible.
+5. **Todas las ofertas siguen visibles**; el orden no cambia el conjunto, los precios, el stock, las cantidades, los
+   descuentos, los impuestos, los totales ni la elegibilidad.
+6. **Tolerancia.** Una preferencia de laboratorio, marca o proveedor puede llevar una tolerancia relativa (porcentaje)
+   o absoluta (monto en la moneda de la oferta). Sirve para decidir si una oferta que **no** cumple la preferencia
+   puede quedar por delante cuando la diferencia de precio es pequeña. Sin tolerancia, el grupo que cumple va primero.
+   La comparación usa la misma base de precio, la misma moneda y valores equivalentes; nunca compara precio unitario
+   con total de línea.
+7. **Precio.** `acceptable` y `maximum` se aplican sobre la base declarada (`per_base_unit`, `per_commercial_unit` o
+   `per_line_total`). `maximum` no hace inelegible ni oculta una oferta que lo supera: solo la coloca después.
+   `acceptable` no prohíbe precios mayores: es una referencia de conveniencia, no un límite duro.
+8. **Disponibilidad.** Se usa la disponibilidad **informada** dentro de las reglas de elegibilidad existentes; una
+   cantidad desconocida no se trata como cero ni como stock seguro.
+9. **Preferencia negativa.** `deprioritize` coloca al final las ofertas del proveedor o atributo indicado; **no las
+   excluye** y no impide seleccionarlas manualmente.
 
-- `stance`: `favor` \| `caution` \| `neutral`.
-- `text`: redactado a partir de las observaciones citadas; **no** afirma un hecho objetivo ni una equivalencia.
-- `based_on` y `supersedes` permiten auditar el consejo sin abrir la IA.
-- `interpretation_status`: `suggested` \| `confirmed` \| `rejected` \| `sin_interpretacion`.
-- `advice` **no** es un criterio comercial de E9, **no** entra en E5 y **no** altera precios, stock, condiciones,
-  cantidades, elegibilidad ni el orden de las ofertas. Es información adicional, visible y explicable.
+**Auditoría interna.** Cada aplicación deja una fila en `preference_order_trace` con producto, contexto,
+interpretaciones **consultadas**, preferencias **aplicadas** (incluidos el estado, el modelo y la versión del prompt
+vigentes al aplicar), ofertas consideradas y orden anterior/resultante. No se muestra en el cotizador ni se devuelve en
+la API pública (AC31/D-141). El detalle de artículo registra la traza en modo *best effort*: un fallo de auditoría se
+revierte solo (savepoint) y se registra internamente, sin interrumpir ni ocultar la lectura. La comparación mantiene la
+traza dentro de su transacción: si falla, no queda una corrida a medias. Sin colas ni procesos en segundo plano (D-143).
 
 ### 8.5 Integración con OpenAI
 
-**Responses API, invocada solo desde el backend.** Lovable nunca ve la clave ni llama al proveedor.
+**Responses API, invocada solo desde el backend y detrás de un adaptador desacoplado del proveedor.** Lovable nunca ve
+la clave ni llama al proveedor. La salida del modelo es una **propuesta estructurada**; el backend la valida antes de
+guardar o aplicar cualquier cosa.
 
 | Configuración | Tipo | Regla |
 |---|---|---|
-| `OPENAI_API_KEY` | `SecretStr` | Obligatoria para O2–O4; si falta, O1 sigue operativo y el consejo dice «sin interpretación» |
-| `OPENAI_MODEL` | texto | **Sin valor por defecto inventado**; si está vacío, O2–O4 quedan deshabilitados |
+| `OPENAI_API_KEY` | `SecretStr` | Requerida solo si A6 está habilitado; si falta, la observación se guarda y el orden queda sin cambios |
+| `OPENAI_MODEL` | texto | **Sin valor por defecto inventado**; si está vacío, A6 queda deshabilitado y se informa el estado recuperable |
 | `OBSERVATION_AI_ENABLED` | booleano | Interruptor de despliegue; por defecto `false` |
 | `OPENAI_MAX_OUTPUT_TOKENS` | entero | Cota por solicitud |
-| `OPENAI_TIMEOUT_SECONDS` | entero | Tiempo máximo; al vencer, la observación se guarda sin interpretación |
-| `OPENAI_MONTHLY_BUDGET_USD` | decimal | Tope de gasto mensual; al alcanzarlo se deja de llamar y se informa |
+| `OPENAI_TIMEOUT_SECONDS` | entero | Tiempo máximo; al vencer, la observación se guarda y el estado queda recuperable |
 | `OPENAI_PROMPT_VERSION` | texto | Versión del prompt, guardada en cada interpretación |
-| `OPENAI_INPUT_USD_PER_1M`, `OPENAI_OUTPUT_USD_PER_1M` | decimal | Tarifa configurable para **estimar** el costo; no se hardcodea un precio |
+| `OPENAI_MAX_CALLS_PER_MINUTE` | entero | Protección básica contra llamadas excesivas; no bloquea la operación normal de la demo |
+
+**Diferido, no aprobado en esta revisión:** presupuesto mensual, tarifa por token, auditoría financiera del consumo y
+reportes de costo. No se inventan valores ni se calculan cargos. La protección básica de llamadas no sustituye un
+presupuesto.
 
 Reglas de llamada:
 
-1. **Salida estructurada** validada contra un JSON Schema estricto (Pydantic). Si no valida, se descarta y se registra
-   el fallo; no se guarda una interpretación inventada.
-2. Se guardan `model`, `prompt_version`, tokens de entrada/salida, costo estimado y latencia (§2.8).
+1. **Salida estructurada** validada contra un esquema estricto (Pydantic). Si no valida, se registra `invalid_response`
+   y **no** se guarda una interpretación ni una preferencia inventada.
+2. Se guardan `model`, `prompt_version`, `raw_output`, tokens informados y `latency_ms` (§2.8). La salida cruda es
+   interna y no se devuelve al frontend.
 3. **Timeout y reintento acotado** (máximo un reintento). Sin bucles ni llamadas en segundo plano.
-4. **Presupuesto mensual y tope por lote**: antes de cada llamada se verifica el acumulado; si se agotó, no se llama
-   y el consejo queda «sin interpretación».
-5. **Fallo del proveedor**: la observación se guarda igual; la respuesta incluye `advice_status: "sin_interpretacion"`
-   y un motivo visible; nunca se sustituye por una regla fingida.
-6. **La clave vive en `backend/.env`** (fuera de git), la carga `core/config.py` y **nunca** se escribe en logs,
-   respuestas, auditoría ni frontend. Los errores del proveedor se registran sin la clave ni el texto completo.
-7. **Costo y proveedor no están aprobados todavía** (§17). Sin autorización, O2–O4 no se activan.
+4. **La observación se guarda primero**, antes de llamar al modelo. Un fallo del proveedor no pierde texto, autor,
+   fecha ni contexto.
+5. **Errores internos distintos:** `quota_exceeded`, `rate_limit`, `timeout`, `unavailable`, `invalid_response` y
+   `validation_error`. Se registran en la interpretación y en auditoría; nunca se muestran códigos, claves, trazas ni
+   detalles del proveedor al usuario.
+6. **Sin interpretación aplicable**, el orden es el determinista de E5 y la interfaz informa que la observación quedó
+   guardada pero la preferencia no se aplicó.
+7. **Reintento:** `POST /commercial-observations/{id}/interpretations` crea un intento nuevo; **no** duplica la
+   observación ni la preferencia. La observación conserva su historia.
+8. **La clave vive en `backend/.env`** (fuera de git), la carga `core/config.py` y **nunca** se escribe en logs,
+   respuestas, auditoría ni frontend. Los errores se registran sin la clave ni el texto completo de la observación.
+9. **Pruebas automatizadas sin llamadas reales:** el adaptador se sustituye por un doble; ninguna prueba usa la clave,
+   la red ni consume cuota.
+
+**Estado de implementación (Fase 3A, D-145).** El servicio `app/services/observation_ai.py` implementa el flujo
+completo sobre una observación **ya guardada**: carga el contexto verificado del artículo, arma el prompt, llama al
+proveedor detrás de `ObservationModel` y valida la propuesta con `app/interpretation/commercial.py`. El adaptador
+`app/interpretation/openai_observations.py` usa la **Responses API** con `json_schema` estricto, `store=false`, un
+único reintento para fallos transitorios y un límite local de llamadas por minuto; traduce los fallos a los códigos
+internos del punto 5 sin exponer cuerpos ni credenciales. La configuración vive en `core/config.py` con
+`OBSERVATION_AI_ENABLED=false` por defecto y `OPENAI_MODEL` **sin valor por defecto**: sin interruptor o sin
+credenciales no hay llamada; con el interruptor encendido y configuración incompleta se registra un intento `failed`
+recuperable (`unavailable`) y la observación permanece intacta. Con una propuesta válida, la interpretación
+`suggested` y **todas** sus `commercial_preference` se escriben en la misma transacción; con retiros no se crean
+preferencias y solo se registra `retired_subject_kinds`. Una interpretación ya aplicable se **reutiliza** (sin nueva
+fila) y un intento fallido puede reintentarse sin duplicar la observación ni las preferencias. No se ordena ninguna
+oferta en este servicio: el motor determinista sigue siendo el único que ordena E3/E5. **Los endpoints de
+interpretación, Lovable y cualquier llamada real desde la suite siguen pendientes.**
+
+**Mensaje amable sugerido ante un fallo del proveedor** (sin detalles técnicos):
+
+> «No pudimos procesar tu preferencia. Tu observación quedó guardada, pero el servicio de inteligencia artificial no
+> está disponible en este momento. Puedes seguir utilizando el cotizador y volver a intentarlo más tarde».
+
+No se afirma que la preferencia fue aplicada si solo se guardó la observación.
 
 ### 8.6 Prohibiciones de la IA
 
 La interpretación **no puede**:
 
-- modificar precio, stock, condiciones, cantidad, moneda, totales ni elegibilidad;
-- crear, quitar, ocultar, reordenar o destacar ofertas;
+- modificar precio, stock, condiciones, cantidad, moneda, descuentos, impuestos, totales ni elegibilidad;
+- **crear, quitar u ocultar** ofertas;
+- alterar el **conjunto** de ofertas recuperadas: el orden por preferencias no descarta ninguna;
+- aplicar una preferencia a otro producto por compartir laboratorio, marca o proveedor, ni por parecido de nombre;
+- construir perfiles globales de reputación de laboratorios, marcas o proveedores;
 - otorgar o quitar permisos, roles o accesos;
 - afirmar equivalencia farmacológica, dosis equivalente o sustitución;
-- aplicar una observación a otro artículo por parecido de nombre, marca o laboratorio;
-- borrar, editar o «resumir definitivamente» una observación.
+- inventar ofertas, precios, stock, cantidades o condiciones comerciales;
+- mostrarse como chatbot, explicación, justificación, recomendación textual o puntuación al usuario;
+- borrar, editar o «resumir definitivamente» una observación;
+- ejecutar una compra, aprobar un acceso o modificar datos comerciales.
+
+**Sí puede**, y es su función aprobada: **ordenar** las ofertas recuperadas **de un producto** según las preferencias
+comerciales aprendidas **de ese producto**, manteniendo visibles todas las demás. El backend —no el modelo— determina
+el alcance, valida el dinero y aplica el orden.
 
 ### 8.7 Aceptación de la demostración
 
-1. Dos observaciones contradictorias sobre el mismo artículo, en fechas distintas.
-2. La cotización posterior muestra un consejo que cita **la más reciente** y marca la anterior como **superada**, sin
-   borrarla.
-3. El consejo explica el motivo con el **texto original visible**.
-4. La cotización devuelve **exactamente las mismas ofertas, precios, stock y totales** que sin observaciones.
-5. Una observación sobre un artículo **no** se aplica a otro artículo de la misma marca.
-6. Si la IA está deshabilitada o falla, la observación sigue guardada y el consejo dice «sin interpretación».
+1. La interpretación se aplica **solo al producto seleccionado**; no alcanza a otros productos ni a la organización.
+2. «Prefiero Laboratorio Chile» en el Losartán **no** cambia el orden de otro producto del mismo laboratorio, marca o
+   proveedor. La demo muestra el contraejemplo.
+3. La tolerancia implícita (10 %) se aplica de forma determinista y configurable.
+4. Un porcentaje explícito (15 %) **reemplaza** la tolerancia implícita; no se mezcla con el valor por defecto.
+5. Un monto adicional en CLP se interpreta con la moneda y la base correctas.
+6. «Si vale $9.990 me parece bien» y «No quiero pagar más de $9.990» producen referencias distintas (`acceptable` y
+   `maximum`) y no se confunden.
+7. Una preferencia negativa **desprioriza pero no oculta** ni excluye al proveedor.
+8. La elegibilidad E5 se conserva exactamente: ninguna preferencia vuelve elegible una oferta inelegible ni al revés.
+9. Precios, stock, cantidades, descuentos, impuestos y totales permanecen **idénticos**; solo cambia el orden.
+10. Una interpretación ambigua o no comprensible **no se aplica**: queda `needs_review` o `no_preference`, sin efecto
+    comercial ni retiro implícito de una preferencia vigente.
+11. Sin preferencias aplicables, el orden es **exactamente el determinista actual**, con el mismo desempate.
+12. La preferencia más reciente de la misma clase reemplaza a la anterior según §8.4. Un **retiro explícito**
+    posterior la deja sin efecto, y una preferencia posterior válida vuelve a establecerla; el retiro no afecta otras
+    clases, otros productos ni el historial (D-144).
+13. Una interpretación `rejected` **no reactiva** una anterior **ni desactiva la vigente**.
+14. Las preferencias ordenan **dentro de cada grupo de elegibilidad**; una oferta no elegible no adelanta a una
+    elegible aunque cumpla la preferencia.
+15. Un fallo de OpenAI **no pierde** la observación; queda guardada y el estado es recuperable.
+16. El agotamiento de cuota produce un estado recuperable y un mensaje amable, sin detalles técnicos.
+17. Reintentar **no duplica** la observación ni crea preferencias duplicadas.
+18. Ninguna respuesta, log, auditoría ni pantalla expone la clave, la salida cruda del modelo ni sus internals.
+19. Las pruebas automatizadas **no hacen llamadas reales** a OpenAI.
+20. Lovable conserva tarjetas, estilos, colores, disposición, botón «Enseñar a la IA», modal y flujo de
+    búsqueda/comparación/carrito; no se muestran puntuaciones ni explicaciones.
+20. El flujo completo es demostrable de extremo a extremo con datos de demo, incluido un producto no farmacéutico.
+
+**Estado de implementación:** la fase 1 implementó el esquema, los modelos, la migración `0018` y las pruebas de
+esquema; las fases 2 y 3 implementaron el motor determinista, la traza explicable (D-143), el retiro explícito
+(migración `0019`, D-144) y la **interpretación interna con OpenAI** (Fase 3A, D-145, con proveedor simulado en las
+pruebas). Los criterios de orden, tolerancias, retiro, inmutabilidad, errores del proveedor, no invención, aislamiento
+por producto y traza tienen prueba automatizada. **Ninguno de los 20 se declara cumplido de extremo a extremo:** faltan
+los **endpoints** (criterios 1, 2, 12 y 17 en su forma pública), la **demo con Lovable y el proveedor real**
+(criterios 15–20); la suite nunca consume cuota ni usa la clave.
 
 ---
 
@@ -1586,7 +1845,7 @@ cierra el ciclo. Lo **comprado** es el único hecho que cierra, y solo cuando la
 ```
 cover_of_allocation(a) =
     CASE
-      WHEN EXISTS (purchase_line_allocation pa vigente de a.quote_line) THEN pa.quantity   -- C5-B, 0018
+      WHEN EXISTS (purchase_line_allocation pa vigente de a.quote_line) THEN pa.quantity   -- C5-B, 0020
       WHEN l.status = 'active' AND c.status = 'active' AND q.status = 'draft'
            AND item.status = 'active' THEN a.quantity
       ELSE 0
@@ -1868,7 +2127,7 @@ viaja en `warnings[]`; nunca bloquea ni recorta cantidades. **Los códigos de re
 | V-17 | La purga del detalle exige archivo verificado y restauración probada, y está deshabilitada hasta nueva autorización |
 | V-18 | La cotización nunca se archiva ni se elimina por antigüedad |
 | V-19 | Desistir del pendiente o cerrar la cotización no cambia `quantity` ni crea, edita ni anula compras: solo mueve un derivado (`remainder`) |
-| V-20 | Las observaciones son independientes, inmutables y acumulativas; el consejo nunca altera precios, stock, condiciones, cantidades, elegibilidad ni visibilidad |
+| V-20 | Las observaciones son independientes, inmutables y acumulativas; una preferencia puede **ordenar** las ofertas del producto exacto, pero nunca altera precios, stock, condiciones, cantidades, elegibilidad ni visibilidad |
 | V-21 | La cobertura de un faltante es derivada y nunca almacenada; no se escribe en `demand_item` ni se borra el historial original de Telegram |
 | V-22 | Sin equivalencia automática: `coverage_relation` queda visible; `combined` nunca se presenta como equivalente |
 | V-23 | Autenticación web ≠ permiso de Telegram; ningún plano otorga el otro |
@@ -1876,7 +2135,7 @@ viaja en `warnings[]`; nunca bloquea ni recorta cantidades. **Los códigos de re
 | V-25 | La búsqueda de cadenas no persiste, no usa datos ficticios y nunca presenta un precio anterior como actual |
 | V-26 | `relation` es aditivo; `match.level` se conserva y ningún resultado se oculta por su clasificación |
 | V-27 | Aprobar una solicitud de acceso otorga **solo** el perfil `admin` (D-130): nunca `is_superadmin` ni acceso a Telegram |
-| V-28 | La IA nunca decide dinero, cantidades, permisos ni visibilidad; la clave de OpenAI vive solo en el backend |
+| V-28 | La IA nunca decide dinero, cantidades, permisos, elegibilidad ni visibilidad; solo interpreta y el motor determinista ordena; la clave de OpenAI vive solo en el backend |
 | V-29 | Las columnas de archivo de `purchase` solo se escriben por función restringida; el encabezado nunca se elimina |
 | V-30 | Un carrito `dismissed` no se evalúa, no suma al total y no cubre faltantes |
 | V-31 | No se purga nada hasta que exista archivo verificado, restauración probada y autorización explícita |
@@ -1919,14 +2178,15 @@ recepción errónea. Nada de esto se implementa en el MVP ni se promete en la in
 
 ---
 
-## 16. Roadmap y migraciones (propuesta, sin ejecutar)
+## 16. Roadmap y migraciones (vigente; `0018` creada en código, no aplicada)
 
 La numeración sigue el **orden de ejecución** acordado en D0 y **queda ratificada** (D-125): **C4 = 0013** y
 **C3 = 0014**. Sustituye la propuesta anterior de D-112/D-114 (C3 = 0012, C4 = 0013), que no contaba con G1 ni con el
 head actual del código (0011).
 
 Las tablas de **0013** (búsqueda) y **0014** (comparación) provienen del diseño ya aprobado de C4 y C3, no de §2:
-las **9 tablas** de §2 son solo las que agrega v0.2. Ninguna de estas migraciones está autorizada todavía.
+las **11 tablas** de §2 son solo las que agrega v0.2. La migración **0018** fue autorizada el 2026-11-03 **solo para
+desarrollo y pruebas aisladas**; no se aplica a `farmacia` ni a `farmacia_demo`. Las demás siguen sin autorización.
 
 **Las tres tablas de búsqueda (C4).** C0 nombra dos (`search_run`, `search_source_result`) al describir la búsqueda;
 el diseño aprobado de C4 usa **tres**, y la tercera no contradice C0, lo **amplía**:
@@ -1947,10 +2207,12 @@ Las tres se crean en la misma migración **0013**; ninguna se implementa en D0.
 | **C4** | E1 con `relation` y `attributes.ingredients[]` (E3 conserva su forma); búsqueda de cadenas E15 (sin persistencia) | **0013** (3 tablas de búsqueda) |
 | **C3** | Comparación E5 | **0014** (5 tablas) |
 | **C5-A + F1** | Cotizaciones, carritos, líneas, vínculo a faltante, grilla y «Buscar»; observaciones O1 | **0015** (`quote`, `quote_cart`, `quote_line`, `commercial_observation`; 2 columnas de `quote_line`: `demand_item_id`, ya previsto en rev2, y `coverage_relation`) |
-| **O1–O4** | Interpretación, recuperación, precedencia y consejo con OpenAI | **0016** (`observation_interpretation`) |
-| **C5-B** | Compras registradas, inmutabilidad, correcciones, anulación y `purchase_index` | **0017** (`purchase`, `purchase_line`, `purchase_index`; función de archivo). **La recepción física no forma parte del MVP (D-126).** |
-| **C5-C** | Historial operativo: búsqueda por índice | **0018** (`pg_trgm`/`unaccent` e índices; verificación previa) |
-| **C5-D** | Archivo externo y purga controlada: diseño cerrado, **ejecución bloqueada** | **0019** (función y permisos; requiere proveedor aprobado y pruebas) |
+| **D-135** | Reportes independientes, cancelación lógica, confirmación en Telegram y asignaciones | **0016–0017** (columnas de reportes y `quote_line_allocation`) |
+| **O2–O4 / A6** | Interpretación estructurada por producto, preferencias comerciales y orden determinista con traza interna | **0018** (`observation_interpretation`, `commercial_preference`, `preference_order_trace`; 2 columnas opcionales de `offer_snapshot`) |
+| **D-144** | Retiro explícito de preferencias por clase | **0019** (`retired_subject_kinds` en `observation_interpretation` y `preference_order_trace`, con `CHECK` y guardián de inmutabilidad) |
+| **C5-B** | Compras registradas, inmutabilidad, correcciones, anulación y `purchase_index`; cobertura con `closed` y compra adicional para inventario (D-139/D-140, propuesta) | **0020** (`purchase`, `purchase_line`, `purchase_index` y `purchase_line_allocation`; función de archivo). **La recepción física no forma parte del MVP (D-126).** |
+| **C5-C** | Historial operativo: búsqueda por índice | **0021** (`pg_trgm`/`unaccent` e índices; verificación previa) |
+| **C5-D** | Archivo externo y purga controlada: diseño cerrado, **ejecución bloqueada** | **0022** (función y permisos; requiere proveedor aprobado y pruebas) |
 | **C5-E** | Enganche de navegación: Mis cotizaciones, Historial, Proveedores (E6) | — |
 | **C6a** | Cadenas reales: solo con autorización A1/A2 por cadena | — |
 | **T1** | Pantalla «Configuración de Telegram» (control individual) | — |
@@ -1969,8 +2231,9 @@ Las tres se crean en la misma migración **0013**; ninguna se implementa en D0.
 orden acordado es C4 → C3; por eso se asigna **C4 = 0013** y **C3 = 0014**, confirmado el 2026-10-30. Conservar
 C3 = 0013 queda descartado porque invertiría el orden de ejecución (§17).
 
-`farmacia` sigue en **0008** (32 tablas). El código tiene hasta **0011** (C2 implementado, no aplicado a `farmacia`).
-Ninguna migración nueva se aplica sin autorización explícita.
+`farmacia` sigue en **0008** (32 tablas). El código tiene hasta **0018** (A6, fase 1), pero `0018` no está aplicada a
+ninguna base; `farmacia_demo` sigue en `0015` y `0016`–`0018` no se aplican sin autorización explícita. Ninguna
+migración nueva se aplica sin autorización explícita.
 
 ---
 
@@ -1982,8 +2245,8 @@ alcance del MVP** (D-126); **cierre exclusivamente por compra confirmada** que c
 **todo o nada** de la demo (enmienda a D-127, 2026-11-02; sin compras parciales por productos ni cantidades); estado
 por Telegram sin duplicar necesidades; `admin` puede informar por Telegram si su
 cuenta está autorizada; `relation` junto a `match.level`; OpenAI por Responses API desde el backend; separación de
-permisos web/Telegram; superadministradora global limitada a metadatos; control individual de Telegram; **nueve
-tablas** y siete columnas (seis nuevas en la revisión 3); numeración **C4 = 0013 / C3 = 0014** ratificada; revisión
+permisos web/Telegram; superadministradora global limitada a metadatos; control individual de Telegram; **once
+tablas** y nueve columnas (A6 suma dos tablas y dos columnas); numeración **C4 = 0013 / C3 = 0014** ratificada; revisión
 **6** con aprobación que otorga `purchasing` y Cotizador para `admin` o `purchasing` (**D-128**, superada por la
 revisión **7**: perfil único `admin`, **D-130**).
 
@@ -1991,8 +2254,11 @@ revisión **7**: perfil único `admin`, **D-130**).
 
 1. Mantener X1 y X2 como las únicas excepciones a C0-10; la recepción **no** entra como excepción porque está fuera
    del MVP (§1.1, §15).
-2. Aprobar las **9 tablas**, las **7 columnas** (6 nuevas en la revisión 3) y las migraciones **0012–0019** (§2, §16).
-   **0017 tiene 3 tablas**: `purchase`, `purchase_line` y `purchase_index`.
+2. Aprobar el conjunto completo de **11 tablas**, **9 columnas** y migraciones **0012–0022** (§2, §16). La parte A6
+   (`0018`: `observation_interpretation`, `commercial_preference`, `preference_order_trace` y 2 columnas de
+   `offer_snapshot`) ya fue aprobada el 2026-11-03, y el retiro explícito (`0019`: `retired_subject_kinds`) quedó
+   aprobado por D-144. Sigue pendiente C5-B (`0020`: `purchase`, `purchase_line`,
+   `purchase_index` y `purchase_line_allocation`), junto con C5-C (`0021`) y C5-D (`0022`).
 3. Aprobar E10–E15 y los códigos nuevos de §13 como adición a C0.
 4. Confirmar el alcance de la superadministradora: **solo metadatos administrativos**; ampliar a datos operativos
    exige decisión nueva (§9.7).
@@ -2007,8 +2273,11 @@ revisión **7**: perfil único `admin`, **D-130**).
 
 7. **Captura por cadena:** A1 (autorización escrita/API) o A2 (decisión de riesgo registrada) para Farmacias Ahumada;
    ninguna cadena está habilitada hoy (§11.6, §11.7).
-8. **OpenAI:** clave, modelo, presupuesto mensual, tarifa y autorización de costo. Sin ellos, O2–O4 quedan
-   deshabilitados; O1 sigue operativo (§8.5).
+8. **OpenAI:** la clave ya existe en `backend/.env`; el adaptador HTTP ya está implementado sin SDK (D-145), pero
+   falta definir el **modelo** (`OPENAI_MODEL`, sin valor por defecto) y hacer una prueba real autorizada antes de
+   activar llamadas. El **presupuesto mensual, la tarifa por token, la auditoría financiera y los
+   reportes de costo quedan diferidos** y no bloquean la demo; se mantiene una protección básica contra llamadas
+   excesivas. Sin configuración completa, A6 se deshabilita y O1 sigue operativo (§8.5).
 9. **Archivo externo:** proveedor, costos, credenciales y política de retención. Sin ellos, C5-D sigue bloqueado
    (§7.2, §7.4).
 10. **`pg_trgm`/`unaccent`:** verificar disponibilidad en el PostgreSQL de destino y autorizar su instalación antes de

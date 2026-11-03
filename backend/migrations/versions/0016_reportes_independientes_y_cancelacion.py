@@ -29,7 +29,7 @@ de la 0016 se crearon reportes activos del mismo producto por personas distintas
 **no puede** recrear el índice antiguo. En ese caso se detiene con un mensaje explícito para que se
 cancelen, archiven o fusionen esos reportes antes de revertir; no borra datos por su cuenta.
 
-No se crean tablas de compras: C5-B usa la 0018.
+No se crean tablas de compras: C5-B usa la 0019.
 """
 import sqlalchemy as sa
 from alembic import op

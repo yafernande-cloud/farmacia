@@ -5,7 +5,7 @@ Suma dos fuentes sin contar dos veces la misma línea:
   1. lo **cotizado** en líneas activas de carritos activos de cotizaciones `draft`;
   2. lo **comprado** en compras `current` no anuladas.
 
-C5-A implementa la primera fuente. Las compras llegan con C5-B (migración 0018): hasta entonces
+C5-A implementa la primera fuente. Las compras llegan con C5-B (migración 0019): hasta entonces
 `purchased` es 0 porque la tabla no existe, no porque se asuma que no se compró. La consulta de
 compras se añade en `_purchased_totals` sin cambiar la forma de este módulo ni la de la respuesta.
 
@@ -91,7 +91,7 @@ async def _quoted_totals(
 async def _purchased_totals(
     session: AsyncSession, org: uuid.UUID, item_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, Decimal]:
-    """Compras `current` no anuladas vinculadas al faltante. C5-B (0018) completa esta lectura."""
+    """Compras `current` no anuladas vinculadas al faltante. C5-B (0019) completa esta lectura."""
     return {}
 
 

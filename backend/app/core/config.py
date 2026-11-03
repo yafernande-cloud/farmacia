@@ -6,6 +6,7 @@ debe quedar deshabilitada, no inventada.
 
 import re
 import uuid
+from decimal import Decimal
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
@@ -72,6 +73,25 @@ class Settings(BaseSettings):
     # Habilita cadenas por nombre. Hoy NO existe conector autorizado para ninguna: aunque se listen
     # aquí, la búsqueda las informa `not_configured` y no se inventan resultados (contrato §11.6/§11.7).
     chain_search_enabled: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # ---- Interpretación de observaciones comerciales (A6 Fase 3 / O2, contrato §8.5)
+    # Interruptor de despliegue: apagado por defecto. Apagado, la observación se guarda y la
+    # interpretación queda pendiente; nunca se simula una respuesta real.
+    observation_ai_enabled: bool = False
+    # Sin `OPENAI_MODEL` la interpretación queda deshabilitada: no hay valor por defecto inventado.
+    openai_model: str | None = None
+    openai_api_key: SecretStr | None = None
+    # Base de la API (permite un proxy propio). La clave nunca sale del backend.
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_max_output_tokens: int = Field(default=800, ge=64, le=4000)
+    openai_timeout_seconds: int = Field(default=20, ge=1, le=120)
+    openai_prompt_version: str = "a6-observations-v1"
+    # Protección básica contra llamadas excesivas; no sustituye un presupuesto (D-142 §8.5).
+    openai_max_calls_per_minute: int = Field(default=30, ge=1, le=600)
+    # Tolerancia implícita cuando la persona dice «aunque sea un poco más caro», sin porcentaje
+    # (contrato §8.7.3–4). Un porcentaje explícito la reemplaza; nunca se suman.
+    observation_implicit_tolerance_percent: Decimal = Field(
+        default=Decimal("10"), gt=0, le=100
+    )
 
     @field_validator("cors_origins", "chain_search_enabled", mode="before")
     @classmethod
@@ -92,6 +112,13 @@ class Settings(BaseSettings):
                 + " (válidas: cruz_verde, salcobrand, ahumada)"
             )
         return v
+
+    @field_validator("openai_model", "openai_prompt_version", "openai_base_url")
+    @classmethod
+    def _texto_openai_no_vacio(cls, v: str | None):
+        if v is not None and not v.strip():
+            raise ValueError("La configuración de OpenAI no admite valores vacíos.")
+        return v.strip() if isinstance(v, str) else v
 
     @field_validator("database_url", "test_database_url", mode="before")
     @classmethod

@@ -20,7 +20,7 @@ atajo `quote_line.demand_item_id` y **se pierden** las asignaciones múltiples (
 a dos reportes no puede representarse en el esquema anterior). Antes de revertir hay que respaldar o
 exportar las asignaciones; la migración no intenta reconstruirlas ni repartirlas.
 
-No se crean tablas de compras: C5-B usa la 0018.
+No se crean tablas de compras: C5-B usa la 0019.
 """
 import sqlalchemy as sa
 from alembic import op

@@ -899,12 +899,16 @@ en E10/E11/E12; purga diseñada y **deshabilitada** hasta que exista almacenamie
 **cotizar**) y el derivado `pending_purchase_quantity` (falta **comprar**), sin tabla ni endpoint nuevos. La distinción aviso repetido / ciclo nuevo depende del **ciclo** (`active` vs. `fulfilled`), no de un plazo ni de la recepción. Cantidad desconocida: no se cierra automáticamente; sale del ciclo solo por `ADD`/`SET` explícito que declare la cantidad o por anulación con motivo, nunca inventando una cantidad ni una confirmación de recepción. Sin migración ni código. |
 | D-125 | Tomada (2026-10-30) | **Tres tablas de búsqueda en C4 y numeración definitiva.** C0 nombra dos tablas (`search_run`, `search_source_result`); el diseño aprobado usa tres: se agrega `search_result` (filas de resultado por producto) como **ampliación aditiva**, sin editar C0. Las tres se crean en la migración **0013**. Se ratifica **C4 = 0013** y **C3 = 0014**; no se invierte el orden. |
 
-| D-136 | Tomada (2026-11-02); **precisada por D-138** | **Las preferencias comerciales se interpretan internamente y ordenan las ofertas; la IA no muestra explicaciones, justificaciones ni puntuaciones.** Los administradores escriben comentarios en lenguaje natural con «Enseñar a la IA»; la IA los interpreta como preferencias y el sistema las usa para ordenar las ofertas recuperadas de los proveedores: primero las que mejor cumplen, manteniendo **visibles todas** las demás. La IA no inventa precios, stock ni productos, y no modifica cantidades de compra. Sustituye en esta materia al `advice` visible de D-116, a la prohibición de reordenar del contrato §8.6 y a la «no fricción» de D-132 en lo que respecta a mostrar justificaciones; **no implementada** (O2–O4). **D-138 precisa que el alcance es el producto específico y que no hay preferencias de organización ni propagación por laboratorio, marca o proveedor.** |
+| D-136 | Tomada (2026-11-02); **precisada por D-138**; **Fase 1 implementada (2026-11-03, D-142)** | **Las preferencias comerciales se interpretan internamente y ordenan las ofertas; la IA no muestra explicaciones, justificaciones ni puntuaciones.** Los administradores escriben comentarios en lenguaje natural con «Enseñar a la IA»; la IA los interpreta como preferencias y el sistema las usa para ordenar las ofertas recuperadas de los proveedores: primero las que mejor cumplen, manteniendo **visibles todas** las demás. La IA no inventa precios, stock ni productos, y no modifica cantidades de compra. Sustituye en esta materia al `advice` visible de D-116, a la prohibición de reordenar del contrato §8.6 y a la «no fricción» de D-132 en lo que respecta a mostrar justificaciones; **Fase 1 implementada (esquema y migración `0018`); motor O2–O4 pendiente**. **D-138 precisa que el alcance es el producto específico y que no hay preferencias de organización ni propagación por laboratorio, marca o proveedor.** |
 | D-137 | Tomada (2026-11-02); **implementada en código** | **Integridad de las asignaciones de cotización.** (a) Una cotización no se cierra si alguna asignación vigente apunta a un reporte cancelado, sin cantidad o con cantidad menor a lo asignado, ni si la suma asignada supera la cantidad de la línea (`409 QUOTE_HAS_INCONSISTENT_ALLOCATIONS` con `details.issues[]`). (b) La cantidad pedida no baja por debajo de lo asignado (`409 QUANTITY_BELOW_ALLOCATED`), no queda sin definir (`409 REPORT_HAS_ALLOCATIONS`) y no cambia de unidad (`422 UNIT_MISMATCH`) mientras haya asignaciones vigentes. (c) La cancelación sigue siendo lógica; las asignaciones se corrigen a mano y `PATCH demand_allocations: []` las quita todas. Nada se reasigna ni se corrige solo. Sin migración nueva. |
-| D-138 | Tomada (2026-11-02); **no implementada** | **Preferencias independientes por producto (C7).** Cada observación comercial se aplica **únicamente al producto específico** al que se refiere. Una preferencia negativa sobre el Losartán de un laboratorio **no** perjudica a ese laboratorio en otro medicamento, y una positiva **no** lo favorece en otro producto. No se propagan preferencias por laboratorio, marca o proveedor; **no se construyen perfiles globales de reputación**. Se conservan texto original, autor, fecha y contexto; varias observaciones del mismo producto usan precedencia por la más reciente para la misma clase. La IA puede ordenar las ofertas de ese producto, todas siguen visibles, sin explicaciones, justificaciones, recomendaciones textuales ni puntuaciones, y sin modificar precios, stock, cantidades ni decisiones de compra. Aplica a cualquier producto comercializado, incluidos cosmética, higiene, perfumería y veterinaria. **Sustituye toda referencia a «preferencias reutilizables de la organización» en A5/A6, O2–O4 y la propuesta de revisión 10.** |
+| D-138 | Tomada (2026-11-02); **Fase 1 implementada (2026-11-03, D-142)** | **Preferencias independientes por producto (C7).** Cada observación comercial se aplica **únicamente al producto específico** al que se refiere. Una preferencia negativa sobre el Losartán de un laboratorio **no** perjudica a ese laboratorio en otro medicamento, y una positiva **no** lo favorece en otro producto. No se propagan preferencias por laboratorio, marca o proveedor; **no se construyen perfiles globales de reputación**. Se conservan texto original, autor, fecha y contexto; varias observaciones del mismo producto usan precedencia por la más reciente para la misma clase. La IA puede ordenar las ofertas de ese producto, todas siguen visibles, sin explicaciones, justificaciones, recomendaciones textuales ni puntuaciones, y sin modificar precios, stock, cantidades ni decisiones de compra. Aplica a cualquier producto comercializado, incluidos cosmética, higiene, perfumería y veterinaria. **Sustituye toda referencia a «preferencias reutilizables de la organización» en A5/A6, O2–O4 y la propuesta de revisión 10.** |
 | D-139 | Tomada (2026-11-02); **no implementada** | **Cierre de cotización (C9).** Cerrar una cotización significa que **terminó de prepararse y puede convertirse posteriormente en una compra**; no significa comprada, descartada ni anulada. `draft` = en preparación; `closed` = preparada y disponible para compra. Cerrar **no** registra compra y conserva líneas, cantidades, proveedores y asignaciones. **No se debe reabrir para comprar.** Las asignaciones de cotizaciones `draft` **y `closed`** cuentan para cobertura provisional, sin duplicar; una cotización anulada o descartada no aporta. La cobertura comprada proviene solo de compras registradas; no se cuenta dos veces cotizado y comprado. Los reportes se cierran solo por compra registrada que cubra sus cantidades; los parcialmente cubiertos conservan pendiente. Las cotizaciones cerradas sin compra permanecen en el historial. El frontend distingue **«Cotización preparada»** de **«Compra registrada»**. **El código actual contradice esta decisión** (`coverage.py` solo cuenta `draft`; `_ensure_draft` bloquea comprar sin reabrir); la corrección pertenece a C5-B y no se hizo. |
-| D-140 | Tomada (2026-11-02); **no implementada** | **Cantidades compradas sin asignación (C11).** La compra puede **superar** lo requerido. No es obligatorio asignar toda la línea: las asignaciones son explícitas, su suma **≤ cantidad comprada**, y las unidades sin asignar quedan como **compra adicional para inventario**. No se asignan automáticamente, no crean reportes ficticios, no cierran reportes y no modifican la cantidad de ningún reporte. Se conserva la trazabilidad de compra, línea, asignación y excedente. La compra sigue siendo **todo o nada respecto de la selección**: se registra completa —incluidas las unidades de inventario— o no se registra. Afecta `purchase_line_allocation` y C5-B (`0018`), no implementados. |
-| D-141 | Tomada (2026-11-02); **no implementada** | **Auditoría interna de la IA (AC31).** La trazabilidad de la IA se conserva **internamente**: qué observaciones se interpretaron, cuáles se aplicaron y qué versiones, modelo y criterios participaron en el ordenamiento. **No** se muestran explicaciones, recomendaciones textuales ni puntuaciones en las tarjetas ni en la API pública. La traza es para revisión administrativa y auditoría. Se mantienen D-116, D-132, D-133 y AC31; se deja constancia de que el `advice` visible de D-116 y la prohibición de reordenar del contrato §8.6 quedan sustituidos por D-136/D-138, y de que AC31 se satisface por auditoría interna, no por explicación visible. El HLD no se edita. |
+| D-140 | Tomada (2026-11-02); **no implementada** | **Cantidades compradas sin asignación (C11).** La compra puede **superar** lo requerido. No es obligatorio asignar toda la línea: las asignaciones son explícitas, su suma **≤ cantidad comprada**, y las unidades sin asignar quedan como **compra adicional para inventario**. No se asignan automáticamente, no crean reportes ficticios, no cierran reportes y no modifican la cantidad de ningún reporte. Se conserva la trazabilidad de compra, línea, asignación y excedente. La compra sigue siendo **todo o nada respecto de la selección**: se registra completa —incluidas las unidades de inventario— o no se registra. Afecta `purchase_line_allocation` y C5-B (`0020`), no implementados. |
+| D-141 | Tomada (2026-11-02); **esquema implementado (2026-11-03, D-142)** | **Auditoría interna de la IA (AC31).** La trazabilidad de la IA se conserva **internamente**: qué observaciones se interpretaron, cuáles se aplicaron y qué versiones, modelo y criterios participaron en el ordenamiento. **No** se muestran explicaciones, recomendaciones textuales ni puntuaciones en las tarjetas ni en la API pública. La traza es para revisión administrativa y auditoría. Se mantienen D-116, D-132, D-133 y AC31; se deja constancia de que el `advice` visible de D-116 y la prohibición de reordenar del contrato §8.6 quedan sustituidos por D-136/D-138, y de que AC31 se satisface por auditoría interna, no por explicación visible. El HLD no se edita. |
+| D-142 | Tomada (2026-11-03); **Fase 1 implementada en código**; **precisada por D-143** | **A6 aprobada (O3, O4, §8.4, §8.6 y AC31).** Preferencias comerciales **por producto** interpretadas internamente: OpenAI interpreta, el backend valida alcance, moneda y base de precio, y un motor determinista **ordena** las ofertas del producto exacto. Todas siguen visibles; no cambian precios, stock, cantidades, elegibilidad ni totales. Se aplican `suggested` y `confirmed`; `rejected`, `failed`, `needs_review` y `no_preference` no. La más reciente de la misma clase gana; una rechazada no reactiva una anterior. Sin preferencias, se conserva el orden actual. El orden se aplica en `GET /articles/{id}` y `POST /comparisons`; sin explicaciones ni puntuaciones visibles; traza interna en `preference_order_trace`. Migración **0018**; la numeración de las fases siguientes se ajusta en **D-144** (C5-B **0020**, C5-C **0021**, C5-D **0022**). **No aprueba C9/D-139 ni C11/D-140.** |
+| D-143 | Tomada (2026-11-03); **implementada en código** | **Corrección de interpretación de A6 antes de Fase 3.** (1) La elegibilidad de E5 siempre va primero; las preferencias ordenan dentro de cada grupo de elegibilidad y una oferta no elegible no adelanta a una elegible aunque cumpla la preferencia. (2) `rejected`, `needs_review`, `no_preference` y `failed` no generan efectos comerciales ni desactivan una preferencia vigente; solo `suggested`/`confirmed` compiten por clase. (3) La traza registra interpretaciones consultadas y, en `applied_preferences`, estado, modelo y versión del prompt congelados, sin migración. (4) En `GET /articles/{id}` la auditoría es *best effort* (savepoint, log interno); en `POST /comparisons` sigue siendo obligatoria y transaccional. (5) El **retiro** de una preferencia no se representa en esta corrección: queda propuesto para decisión, **cerrado después por D-144**; no se aprueba `status='rejected'` como marcador. **No aprueba Fase 3, OpenAI real, endpoints ni frontend.** |
+| D-144 | Tomada (2026-11-03); **implementada en código** | **Retiro explícito de preferencias (cierre de D-143 §5).** Se aprueba la opción recomendada: `retired_subject_kinds jsonb` en `observation_interpretation` con las clases `laboratory`, `brand`, `supplier`, `availability`, `price:acceptable` y `price:maximum`. Una interpretación `suggested`/`confirmed` retira solo esa clase para su `trade_item_id` y organización; el motor resuelve la secuencia temporal de nuevas preferencias, reemplazos y retiros por clase (`created_at`, desempate por `id`) y una preferencia posterior válida vuelve a establecerla. El retiro no reactiva historial, no afecta otras clases ni productos, conserva historial y no se simula con `status='rejected'`, preferencias ficticias ni copia de sujetos; `rejected`, `needs_review`, `failed` y `no_preference` no retiran ni deshacen un retiro. La traza conserva `retired_subject_kinds` internamente y no se expone en la API pública. La cadena real llega solo a `0018`, por lo que la migración es **`0019`** (sin renumerar ni tocar las anteriores): **C5-B pasa a `0020`, C5-C a `0021` y C5-D a `0022`**. **No aprueba Fase 3, OpenAI real, endpoints ni frontend.** |
+| D-145 | Tomada (2026-11-03); **implementada en código** | **A6 Fase 3A: interpretación de observaciones con OpenAI (O2).** Se implementa el servicio interno que interpreta una observación **ya guardada** con el contexto verificado del artículo, un adaptador de la Responses API (salida estructurada estricta, `store=false`, un reintento acotado, códigos internos, sin SDK) y la validación de la propuesta antes de persistir. Todo o nada: una propuesta inválida no crea preferencias; una interpretación aplicable se reutiliza; los retiros usan `retired_subject_kinds`; el servicio **no ordena** ofertas (lo hace el motor determinista). Sin migración, sin endpoints, sin Lovable y sin llamadas reales en la suite. |
 
 ### D-115 — Consulta por cadena, captura y vigencia (2026-10-30)
 
@@ -1932,19 +1936,20 @@ proveedores**:
 No cambia: la IA sigue sin decidir dinero, cantidades, permisos ni elegibilidad; E5 sigue siendo determinista; las
 observaciones siguen siendo inmutables y auditables; O1 sigue implementado y O2–O4 siguen pendientes.
 
-**Correcciones documentales propuestas (no aplicadas todavía):** contrato **revisión 10** con §8.4 reescrito (orden
-interno y sin `advice` visible), §8.6 ajustado (se permite ordenar, nunca inventar ni ocultar), O3/O4 redefinidos como
-uso interno y traza de auditoría, y una nota de superación en AC31 registrada aquí (el HLD no se edita). Sin cambios de
-esquema: las tablas de O2–O4 siguen en `0019`. El texto propuesto, con el antes y después de cada cláusula, está en
-`docs/contracts/cotizador-v0.2-rev10-propuesta.md`; esa propuesta **no está aprobada**. Precisión de alcance
+**Correcciones documentales (aprobadas como revisión 10-A6 el 2026-11-03, D-142):** contrato **revisión 10-A6** con
+§8.4 reescrito (orden interno y sin `advice` visible), §8.6 ajustado (se permite ordenar, nunca inventar ni ocultar),
+O3/O4 redefinidos como uso interno y traza de auditoría, y una nota de superación en AC31 registrada aquí (el HLD no se
+edita). Esquema en **`0018`** (fase 1: tablas creadas; el motor no añade migración). El texto de trabajo sigue en
+`docs/contracts/cotizador-v0.2-rev10-propuesta.md`; la fuente vigente es el contrato. Precisión de alcance
 (2026-11-02): las preferencias aplican a **cualquier producto comercializado** —cosmética, higiene, perfumería,
 veterinaria y otros—, no solo a medicamentos, y pueden referirse a laboratorio, marca, precio, disponibilidad u otros
 criterios. **El alcance quedó resuelto por D-138:** cada preferencia se aplica **solo al producto específico**; no hay
 preferencias de organización ni propagación por laboratorio, marca o proveedor. La redacción anterior que hablaba de
 «preferencia de organización» queda sustituida.
 
-**Estado.** Aprobada el 2026-11-02. **No implementada**: depende de O2–O4 (`0019`), de la interpretación con un modelo
-real y de la autorización de proveedor y costo (contrato §8.5 y §17). Hoy las ofertas **no** se ordenan por
+**Estado.** Aprobada el 2026-11-02. **Fase 1 implementada el 2026-11-03 (D-142)**: modelos, migración `0018` y pruebas
+de esquema. El **motor O2–O4, la interpretación con un modelo real, los endpoints y Lovable siguen sin implementar**, y
+dependen de la autorización de proveedor y costo (contrato §8.5 y §17). Hoy las ofertas **no** se ordenan por
 preferencias y no existe «Enseñar a la IA»; solo O1 guarda el texto.
 
 ### D-137 — Integridad de asignaciones al cerrar y al reducir cantidades (2026-11-02)
@@ -2007,10 +2012,11 @@ laboratorio en ningún otro producto.
 otros. No se supone equivalencia por compartir laboratorio, marca o proveedor.
 
 **Efecto documental.** Se elimina toda referencia a preferencias reutilizables de la organización o a propagación
-automática entre productos en A5, A6, O2–O4 y la propuesta de revisión 10. La revisión 9 ya exigía observaciones por
-artículo exacto; D-138 **confirma** esa prohibición y elimina la ambigüedad de la redacción anterior de A5/A6.
+automática entre productos en A5, A6, O2–O4 y el contrato. La revisión 9 ya exigía observaciones por artículo exacto;
+D-138 **confirma** esa prohibición y la revisión 10-A6 (D-142) la incorpora.
 
-**Estado.** No implementada. O2–O4 (`0019`) no existen. O1 solo guarda el texto de la observación.
+**Estado.** Fase 1 implementada el 2026-11-03 (modelos y migración `0018`). El motor O2–O4 no existe todavía; O1 solo
+guarda el texto de la observación.
 
 ### D-139 — Cierre de cotización: preparada para comprar (C9, 2026-11-02)
 
@@ -2045,7 +2051,7 @@ compra**. No significa comprada, descartada ni anulada.
 **Estado real y contradicción.** `coverage.py` cuenta cobertura solo de cotizaciones `draft` (dos filtros:
 `quoted_totals_subquery` y `_quoted_totals`), y `quotes._ensure_draft()` responde `409 QUOTE_CLOSED` a cualquier
 operación sobre una cotización cerrada. **Eso contradice D-139.** La corrección —incluir `closed` en la cobertura y
-permitir la compra sin reabrir— pertenece a C5-B (`0018`) y **no se implementó**. No hay endpoint de compras.
+permitir la compra sin reabrir— pertenece a C5-B (`0019`) y **no se implementó**. No hay endpoint de compras.
 
 **Antecedente.** D-121 ya había fijado que «cerrar la cotización no quita cobertura». El código de C5-A implementó solo
 `draft`, así que la brecha es de **implementación**, no una decisión nueva: D-139 ratifica D-121 y agrega que la compra
@@ -2076,7 +2082,7 @@ La compra registra 20; solo 16 cubren reportes.
 9. La compra sigue siendo **todo o nada respecto de la selección**: se registra completa —incluidas las unidades de
    inventario— o no se registra.
 
-**Estado.** No implementada. `purchase_line_allocation` y C5-B (`0018`) no existen. `coverage._purchased_totals`
+**Estado.** No implementada. `purchase_line_allocation` y C5-B (`0019`) no existen. `coverage._purchased_totals`
 devuelve `{}`.
 
 ### D-141 — AC31: auditoría interna de la IA (2026-11-02)
@@ -2094,8 +2100,9 @@ recomendaciones textuales ni puntuaciones en las tarjetas ni en la API pública.
    explicación visible.
 4. El HLD no se edita.
 
-**Estado.** No implementada. O1 guarda el texto, pero no hay interpretación ni orden que auditar. Corresponde a O2–O4
-(`0019`).
+**Estado.** Aprobada y **parcialmente implementada** en la fase 1 de A6 (2026-11-03): existen
+`observation_interpretation` y `preference_order_trace`, pero todavía no hay llamada real, motor de orden ni traza
+generada. El esquema quedó en `0018`; el motor O2–O4 no agrega migración. Ver **D-142**.
 
 ### Revisión de D-124 — alcance y efecto en permisos de Telegram (sin cambio, 2026-11-02)
 
@@ -2112,3 +2119,174 @@ habilite T1, con pruebas propias y sin cambios «de paso» en la matriz.
 
 **Decisión pendiente del usuario:** solo la oportunidad (fase), no el contenido. Mientras no se implemente, ninguna
 prueba ni documento debe presentar a `admin` como reportero de Telegram.
+
+### D-142 — A6 aprobada: preferencias por producto, orden determinista y traza interna (2026-11-03)
+
+**Decisión.** Se aprueba implementar **A6 “Enseñar a la IA”** y actualizar el contrato **solo en la parte A6**,
+identificada como **revisión 10-A6**. La aprobación comprende D-136 (preferencias que ordenan ofertas), D-138 (alcance
+exclusivo por producto, sin propagación) y D-141 (auditoría interna). **No aprueba C9/D-139 ni C11/D-140**, que siguen
+pendientes y conservan el texto histórico de la revisión 9. El HLD no se edita.
+
+**Alcance funcional.**
+
+1. El botón «Enseñar a la IA» vive en la tarjeta de un producto ya elegido. El backend obtiene y valida el contexto
+   real por `trade_item_id` y los identificadores de oferta; no confía solo en el texto enviado por React.
+2. OpenAI interpreta la intención comercial. El backend valida la estructura, el alcance, la moneda y la base de
+   precio. **OpenAI no modifica datos comerciales.**
+3. Se guardan una interpretación histórica y una o más preferencias estructuradas. Se aplican automáticamente
+   `suggested` y `confirmed`; **no** se aplican `rejected`, `failed`, `needs_review` ni `no_preference`.
+4. El motor determinista ordena las ofertas del producto exacto. **Todas siguen visibles.** No cambia precios, stock,
+   cantidades, descuentos, impuestos, totales, elegibilidad ni la posibilidad de seleccionar manualmente.
+5. El orden se aplica en `GET /articles/{id}` y en `POST /comparisons` (candidatos por producto). No se llama a OpenAI
+   al abrir o comparar. Sin preferencias aplicables, se conserva exactamente el orden determinista actual.
+6. La clase de preferencia y la precedencia quedan definidas en el contrato §8.4: la más reciente de la misma clase
+   para el mismo producto gana; una interpretación rechazada no reactiva una anterior; un fallo no borra la
+   observación y permite reintentar sin duplicarla.
+7. La IA no muestra explicaciones, justificaciones, recomendaciones textuales ni puntuaciones. La trazabilidad
+   (observación, interpretación, modelo, prompt, estado, preferencias, ofertas y orden anterior/resultante) se guarda
+   internamente en `preference_order_trace` (AC31/D-141).
+8. Se aceptan las formas comerciales A–H del contrato §2.8.1: laboratorio, tolerancia implícita del 10 %, porcentaje
+   explícito, monto adicional en CLP, precio aceptable, precio máximo, preferencia negativa y disponibilidad. El dinero
+   usa `Decimal`/NUMERIC; una expresión ambigua queda `needs_review` y no se aplica.
+9. Cada `offer_snapshot` puede llevar `laboratory_as_published` y `brand_as_published`, opcionales y **tomados de la
+   fuente o de un fixture explícito**. Nunca se infieren del nombre del producto; NULL significa no informado.
+10. Si OpenAI falla por cuota, límite de tasa, timeout, indisponibilidad o respuesta inválida, **la observación se
+    guarda**, el error se registra internamente, no se inventa una preferencia, el cotizador sigue operativo y se
+    informa un mensaje amable. El reintento no duplica la observación.
+11. No se exponen la clave, la salida cruda, los errores técnicos ni los internals del proveedor en logs, respuestas,
+    auditoría o frontend.
+12. El presupuesto mensual, la tarifa por token, la auditoría financiera y los reportes de costo quedan **diferidos**;
+    no se inventan valores. Se mantiene una protección básica contra llamadas excesivas.
+
+**Migración.** Se usa **0018** para A6. La cadena lineal queda: **O2–O4/A6 = 0018**, **C5-B = 0019**, **C5-C = 0020**,
+**C5-D = 0021**. `0018` agrega `commercial_preference`, `preference_order_trace`, rediseña
+`observation_interpretation` y agrega dos columnas opcionales a `offer_snapshot`; no se aplica a `farmacia` ni a
+`farmacia_demo` sin autorización adicional. Las pruebas usan una base aislada terminada en `_test`.
+
+**Implementación por fases.** Fase 1 (esta decisión): contrato, decisiones, modelos, migración y pruebas de esquema.
+Fases siguientes: motor determinista, integración real con OpenAI, persistencia de estados/errores/reintentos,
+respuestas de API y conexión con Lovable. **La fase 1 no declara cumplidos los criterios funcionales de A6.**
+
+**Estado.** A6 aprobada; esquema y migración implementados en código. Motor, IA real, endpoints y frontend pendientes.
+
+### D-143 — Corrección de interpretación de A6 antes de Fase 3 (2026-11-03)
+
+**Decisión.** Se corrige la interpretación del motor aprobado en D-142, sin ampliar A6 ni aprobar Fase 3. La
+corrección precisa a D-142 y se incorpora al contrato como enmienda de la revisión 10-A6.
+
+1. **Elegibilidad primero.** En `POST /comparisons`, el orden resultante es
+   `(elegibilidad, preferencias, desempates deterministas anteriores)`. Las preferencias solo ordenan dentro de
+   `eligible`, `needs_review` e `ineligible`; una oferta no elegible que cumple la preferencia **no** adelanta a una
+   elegible que no la cumple. No cambian el conjunto de ofertas, precios, cantidades, stock, totales, causas ni
+   elegibilidad.
+2. **Estados sin efecto comercial.** Solo `suggested` y `confirmed` compiten por la precedencia de su clase. Una
+   interpretación `rejected`, `needs_review` o `no_preference` no se aplica, no reactiva una anterior **ni desactiva
+   la preferencia vigente**; `failed` no es semántica. Por tanto, una ambigüedad, un rechazo o un fallo no pueden
+   cambiar el orden ni retirar una preferencia válida. Se conserva la precedencia de la interpretación aplicada más
+   reciente por clase (`created_at`, desempate por `id`).
+3. **Auditoría.** En `GET /articles/{id}` el registro de `preference_order_trace` es *best effort*: corre en un
+   savepoint, un fallo revierte solo la traza, se registra internamente sin datos sensibles y la consulta responde
+   normalmente; no se informa que la auditoría se guardó. En `POST /comparisons` la traza sigue siendo obligatoria y
+   forma parte de la transacción: si falla, no queda una corrida a medias. Sin colas ni workers.
+4. **Trazabilidad sin migración.** `interpretation_ids` enumera las interpretaciones **consultadas** para el artículo
+   (incluidas las no aplicadas, excepto `failed`); `applied_preferences` contiene solo las vigentes y congela
+   `interpretation_status`, `preference_status`, `observation_id`, `model` y `prompt_version` en el JSON existente. La
+   idempotencia por `offer_set_hash` + `preference_fingerprint` se mantiene y la traza no se expone en la API pública.
+5. **Retiro: no implementado.** No se aprueba `status='rejected'` como marcador de retiro: mezcla retirada con
+   rechazo, exige copiar sujeto o referencia y no distingue bien las causas. Queda **propuesto para decisión**, sin
+   migración en esta tarea:
+   * **Opción recomendada:** columna `retired_subject_kinds jsonb` en `observation_interpretation`, con las clases
+     explícitas (`laboratory`, `brand`, `supplier`, `availability`, `price:acceptable`, `price:maximum`). El motor
+     resuelve por clase y la traza puede registrar `effect='retire'`. Requiere una migración nueva.
+   * Alternativa sin migración: reutilizar una preferencia con `status='rejected'` y una referencia al sujeto; se
+     descarta por ambigüedad semántica.
+   * Alternativa relacional: tabla `preference_retirement`; más esquema y no mínima.
+   La cadena `0018`–`0021` no se toca ni se renumera; si se aprueba la columna, su posición en la cadena se decide
+   explícitamente.
+
+**Estado.** Implementada la corrección 1–4. El retiro quedó pendiente en D-143 y lo aprobó e implementó después
+**D-144**; no se implementan OpenAI, prompts, endpoints ni interfaces de Fase 3.
+
+### D-144 — Retiro explícito de preferencias comerciales (2026-11-03)
+
+**Decisión.** Se aprueba e implementa la opción recomendada en D-143 §5: el retiro se representa como **contenido de la
+interpretación**, no como una preferencia. Se agrega `retired_subject_kinds jsonb` (`NOT NULL DEFAULT '[]'`) a
+`observation_interpretation` y la misma columna a `preference_order_trace`. Las clases válidas son `laboratory`,
+`brand`, `supplier`, `availability`, `price:acceptable` y `price:maximum`; la base las impone con `CHECK`
+(`jsonb_typeof = 'array'` y subconjunto de la lista). No se reutiliza `status='rejected'`, no se crean preferencias
+ficticias y no se copian sujetos.
+
+1. **Alcance.** Un retiro aplica solo a la clase indicada, al `trade_item_id` **exacto** y a la organización de la
+   interpretación. No reactiva historial, no afecta otras clases ni otros productos y no se propaga a otros artículos.
+2. **Estados.** Solo `suggested` y `confirmed` retiran. `rejected`, `needs_review`, `failed` y `no_preference` no
+   retiran, no reactivan y no deshacen un retiro. Una interpretación sin clases retiradas no retira nada.
+3. **Secuencia temporal.** Por clase, el motor compara preferencias establecidas y retiros aplicados por
+   `(created_at, id)` y el evento más reciente gana. Un retiro posterior deja la clase sin preferencia vigente; una
+   preferencia posterior válida vuelve a establecerla. Las preferencias anteriores se conservan como historial.
+4. **Misma interpretación.** Puede retirar una clase y establecer otra. Si retira y establece la misma clase, prevalece
+   el retiro.
+5. **Precio.** `price:acceptable` y `price:maximum` son clases distintas: retirar una no retira la otra.
+6. **E3/E5.** La elegibilidad, el conjunto de ofertas, precios, cantidades, stock y totales no cambian. Con solo
+   retiros, el orden es exactamente el determinista vigente y no se excluye ninguna oferta.
+7. **Auditoría.** `preference_order_trace.retired_subject_kinds` conserva las clases retiradas vigentes al aplicar el
+   orden; la traza se escribe también cuando el único efecto es un retiro (`preference_ids` y `applied_preferences`
+   vacíos). La huella incorpora los retiros. No se expone en la API pública.
+8. **Migración.** La cadena real termina en `0018` (las `0019`–`0021` de la planificación anterior no existen). Se crea
+   **`0019`** con `down_revision = "0018"`, sin renumerar ni modificar migraciones existentes; incorpora las columnas,
+   los `CHECK` y actualiza el guardián de inmutabilidad de la interpretación para incluir la nueva columna. `downgrade`
+   revierte todo. Se probó `upgrade → downgrade → upgrade` **solo en `farmacia_test`**. **C5-B pasa a `0020`, C5-C a
+   `0021` y C5-D a `0022`.**
+9. **Alcance de la tarea.** No se implementan OpenAI, prompts, endpoints de interpretación, Lovable, autenticación ni
+   despliegues. Las observaciones siguen siendo libres: sin categorías, formularios ni conversación.
+
+**Estado.** Implementada en código: modelo, migración `0019`, motor de preferencias (resolución por clase con retiros),
+trazabilidad y 12 pruebas obligatorias. Suite completa y `ruff` aprobados. No se avanzó a Fase 3.
+
+### D-145 — A6 Fase 3A: interpretación de observaciones con OpenAI (2026-11-03)
+
+**Decisión.** Se implementa **en código** la interpretación interna de observaciones comerciales (O2) sin exponer
+endpoints ni modificar el frontend. No hay migración nueva: se usan `observation_interpretation`,
+`commercial_preference` y `retired_subject_kinds` (`0018`/`0019`). La salida del modelo es **una propuesta**, nunca
+una escritura directa ni una decisión de dinero, cantidad, permiso o disponibilidad.
+
+1. **Flujo.** El llamador guarda la observación **antes** de interpretar. `services/observation_ai.py` valida que el
+   `Actor` sea `admin` y que la observación pertenezca a su organización, serializa la interpretación con
+   `advisory_lock`, construye el contexto verificado del artículo (solo sus ofertas, proveedores activos y valores
+   publicados de laboratorio/marca) y llama al modelo. La propuesta se valida contra ese contexto y el texto original;
+   solo entonces se escribe la interpretación y, si corresponde, todas sus preferencias en la misma transacción. El
+   servicio **no ordena** ofertas: el motor determinista de E3/E5 sigue siendo el único que ordena.
+2. **Contrato de salida estructurado.** `operations[]` (sujeto y etiqueta, `prefer`/`deprioritize`, tolerancia,
+   referencia de precio y confianza), `retire_subject_kinds[]` y `ambiguity`. El esquema es estricto
+   (`additionalProperties=false`, todos los campos obligatorios); los importes viajan como texto, nunca como número
+   flotante, y el backend los convierte a `Decimal`.
+3. **Validación del backend (todo o nada).** Se rechaza la propuesta completa si: declara ambigüedad; el sujeto no está
+   publicado para el artículo (laboratorio, marca o proveedor); un precio, porcentaje o monto no aparece en el texto
+   (cifras chilenas y en palabras); la confianza es menor que `0.50`; hay dos operaciones de la misma clase; una
+   preferencia negativa lleva tolerancia; un precio lleva tolerancia; un retiro usa una clase no permitida; o
+   `per_line_total` no trae cantidad y unidad. Una tolerancia implícita se convierte en 10 % configurable con origen
+   `implicit_default`; una explícita reemplaza el valor por defecto y se marca `explicit`. `price:acceptable` y
+   `price:maximum` son clases distintas. Cualquier rechazo deja `needs_review` (o `failed` si es una respuesta
+   inválida) y **cero** preferencias.
+4. **Estados y persistencia.** `suggested` con efectos, `no_preference` sin ellos, `needs_review` con código de
+   validación y `failed` con el código del proveedor. Una interpretación `suggested`/`confirmed` ya existente se
+   **reutiliza** sin crear otra; un intento fallido puede reintentarse y crea una fila nueva, sin duplicar la
+   observación ni las preferencias. Se conservan texto original, modelo, versión del prompt, salida cruda como objeto
+   JSON, tokens, latencia y estado; los retiros se registran en `retired_subject_kinds`. `disabled` es un estado
+   interno del resultado, no una fila.
+5. **Errores del proveedor.** Códigos internos `timeout`, `rate_limit`, `quota_exceeded`, `unavailable`,
+   `invalid_response` y `validation_error`. Un máximo de un reintento para fallos transitorios; cuota, credenciales y
+   errores de solicitud no se reintentan. Las pruebas no llaman a OpenAI, no usan la clave ni consumen cuota: inyectan
+   un doble de `ObservationModel`.
+6. **Configuración.** `OBSERVATION_AI_ENABLED` (por defecto `false`), `OPENAI_MODEL` (sin valor por defecto),
+   `OPENAI_API_KEY`, `OPENAI_MAX_OUTPUT_TOKENS`, `OPENAI_TIMEOUT_SECONDS`, `OPENAI_PROMPT_VERSION` y
+   `OPENAI_MAX_CALLS_PER_MINUTE`. Faltar credenciales o modelo no impide arrancar: la observación queda guardada y el
+   intento `failed` es recuperable. No se inventan modelo, tarifa ni presupuesto.
+7. **Fuera de alcance de esta fase.** Endpoints públicos de interpretación, cambios en Lovable, autenticación,
+   migraciones, despliegues, colas/workers, presupuesto mensual, tarifa por token y cualquier llamada real desde la
+   suite. La elección del modelo y el consumo real se informan antes de una prueba con el proveedor real.
+
+**Estado.** Implementada en código: `app/interpretation/commercial.py`, `app/interpretation/openai_observations.py`,
+`app/services/observation_ai.py`, configuración y `httpx` como dependencia. Pruebas: esquema/prompt/validación/
+adaptador sin base de datos y flujo completo con PostgreSQL real y proveedor simulado (incluye motor E3/E5,
+aislamiento por producto y organización, reintentos, retiros, errores y configuración). `ruff` sin hallazgos.
+No se avanzó a endpoints ni Lovable.

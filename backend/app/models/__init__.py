@@ -45,7 +45,11 @@ from app.models.demand import (
 )
 from app.models.events import AuditEvent, OutboxEvent
 from app.models.quote import (
+    RETIRED_SUBJECT_KINDS,
     CommercialObservation,
+    CommercialPreference,
+    ObservationInterpretation,
+    PreferenceOrderTrace,
     Quote,
     QuoteCart,
     QuoteLine,
@@ -56,9 +60,10 @@ from app.models.search import SearchResult, SearchRun, SearchSourceResult
 __all__ = [
     "ActorSession", "AppUser", "Attachment", "AuditEvent", "AuxiliaryProfile", "ChainProduct",
     "ChannelBinding", "ChannelMessage", "CommercialCriterion", "CommercialObservation",
-    "CommercialReference", "ComparisonCandidate", "ComparisonLine", "ComparisonRun",
-    "ComparisonSupplierTotal", "DemandItem", "DemandObservation", "Quote", "QuoteCart",
-    "QuoteLine", "QuoteLineAllocation",
+    "CommercialPreference", "CommercialReference", "ComparisonCandidate", "ComparisonLine",
+    "ComparisonRun", "ComparisonSupplierTotal", "DemandItem", "DemandObservation",
+    "ObservationInterpretation", "PreferenceOrderTrace", "Quote", "QuoteCart",
+    "QuoteLine", "QuoteLineAllocation", "RETIRED_SUBJECT_KINDS",
     "ImportProfile", "ImportRequest", "ImportRun", "InboundEvent", "OfferSnapshot", "Organization", "OutboundMessage", "OutboxEvent",
     "PharmaIdentity", "ProductAlias", "PurchaseCycle", "QuantityEvent", "ReferencePrice",
     "SearchResult", "SearchRun", "SearchSourceResult",

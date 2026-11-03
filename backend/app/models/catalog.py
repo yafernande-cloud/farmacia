@@ -363,6 +363,9 @@ class OfferSnapshot(Base):
     external_id: Mapped[str] = mapped_column(String(120))
     external_id_kind: Mapped[str] = mapped_column(String(20), server_default="supplier_sku")
     external_name: Mapped[str | None] = mapped_column(String(300))
+    # Laboratorio y marca tal como los publica la fuente; NULL = no informado (nunca inferido).
+    laboratory_as_published: Mapped[str | None] = mapped_column(String(200))
+    brand_as_published: Mapped[str | None] = mapped_column(String(200))
     price_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
     currency: Mapped[str] = mapped_column(String(3))
     price_basis: Mapped[str] = mapped_column(String(24), server_default="per_commercial_unit")

@@ -352,9 +352,11 @@ async def get_article(
     cursor: Annotated[str | None, Query(description="Cursor de la página anterior")] = None,
     limit: Annotated[int, Query(ge=1, le=50)] = 50,
 ):
-    return await search_svc.article_detail(
-        session, actor, article_id, limit=limit, cursor=cursor
-    )
+    # La lectura aplica preferencias y deja su traza interna (AC31/D-141); el commit la conserva.
+    async with transaction(session):
+        return await search_svc.article_detail(
+            session, actor, article_id, limit=limit, cursor=cursor
+        )
 
 
 @router.post(
