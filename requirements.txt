@@ -1,4 +1,4 @@
-# Dependencias directas del backend, fijadas a las versiones probadas en local (2026-11-02).
+# Dependencias directas del backend, fijadas a las versiones probadas en local (2026-11-03).
 # Heroku instala desde este archivo porque el código vive en backend/ pero el buildpack lee la raíz.
 # Al cambiar backend/pyproject.toml hay que actualizar este archivo en el mismo cambio.
 fastapi==0.162.0
@@ -11,3 +11,5 @@ PyJWT[crypto]==2.15.1
 openpyxl==3.1.5
 defusedxml==0.7.1
 python-multipart==0.0.32
+# Adaptador HTTP de la Responses API de OpenAI (A6 Fase 3A); el backend lo importa al arrancar.
+httpx==0.28.1

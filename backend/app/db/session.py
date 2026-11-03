@@ -27,8 +27,14 @@ def get_engine(settings: Settings | None = None) -> AsyncEngine:
         settings = settings or get_settings()
         if settings.database_url is None:
             raise DatabaseNotConfigured("DATABASE_URL no está configurada")
+        # Heroku Postgres Essential 0 admite 20 conexiones en total. Sin `max_overflow`, el pool
+        # por defecto llegaría a 15 por proceso (5 + 10) y, sumado al release y a un dyno de
+        # consola, dejaría casi sin margen. Se limita a 5 por proceso: suficiente para un dyno.
         _engine = create_async_engine(
-            settings.database_url.get_secret_value(), pool_pre_ping=True, pool_size=5
+            settings.database_url.get_secret_value(),
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=0,
         )
         _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
     return _engine
