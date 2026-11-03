@@ -99,11 +99,16 @@ async def test_carga_completa_en_simulacion(sessions, farm):
         centro = [o for o in offers if o.external_id.startswith("FC-")]
         assert all(o.stock_status == "unknown" and o.stock_quantity is None for o in centro)
         assert all(o.tax_included is None for o in centro)
-        # La fuente Sur exige mínimo de 6 cajas; las demás no lo informan.
+        # La fuente Sur exige mínimo de 6 cajas; Norte declara explícitamente 1 y múltiplo 1.
         sur = [o for o in offers if o.external_id.startswith("FS-")]
         assert all(o.minimum_known and o.minimum_quantity == 6 for o in sur)
+        assert all(o.multiple_known and o.multiple_quantity == 1 for o in sur)
         norte = [o for o in offers if o.external_id.startswith("FN-")]
-        assert all(not o.minimum_known and o.minimum_quantity is None for o in norte)
+        assert all(o.minimum_known and o.minimum_quantity == 1 for o in norte)
+        assert all(o.multiple_known and o.multiple_quantity == 1 for o in norte)
+        # Centro no informa mínimo ni múltiplo: lo desconocido no se rellena.
+        assert all(not o.minimum_known and o.minimum_quantity is None for o in centro)
+        assert all(not o.multiple_known and o.multiple_quantity is None for o in centro)
 
         sources = (await s.execute(select(Source))).scalars().all()
         assert all(x.mode == "fixture" and x.kind == "supplier" for x in sources)
