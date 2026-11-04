@@ -19,6 +19,9 @@ dist/
 /uploads/
 *.dump
 
+# Captura HTML real para validar el parser de Ahumada (no se versiona)
+backend/tests/fixtures/ahumada_search_real.html
+
 # SO / editor
 .DS_Store
 .idea/

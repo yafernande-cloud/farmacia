@@ -73,6 +73,14 @@ class Settings(BaseSettings):
     # Habilita cadenas por nombre. Hoy NO existe conector autorizado para ninguna: aunque se listen
     # aquí, la búsqueda las informa `not_configured` y no se inventan resultados (contrato §11.6/§11.7).
     chain_search_enabled: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # ---- Fuente en vivo de Farmacias Ahumada (E15)
+    # Apagada por defecto. Solo se activa cuando la operadora declara por escrito que la fuente
+    # configurada está autorizada para este uso (convenio, espejo o feed licenciado). Sin ambas
+    # variables, E15 informa `not_configured` y NO se hace ninguna solicitud al sitio.
+    ahumada_live_search_enabled: bool = False
+    # URL de la fuente autorizada que entrega el HTML de resultados (sin barra final necesaria).
+    ahumada_live_search_url: str | None = None
+    ahumada_live_search_timeout_seconds: int = Field(default=10, ge=1, le=60)
     # ---- Interpretación de observaciones comerciales (A6 Fase 3 / O2, contrato §8.5)
     # Interruptor de despliegue: apagado por defecto. Apagado, la observación se guarda y la
     # interpretación queda pendiente; nunca se simula una respuesta real.
@@ -123,6 +131,14 @@ class Settings(BaseSettings):
     def _esfuerzo_vacio_es_nulo(cls, v):
         """Permite desactivar el campo con una variable vacía, sin inventar un valor."""
         return None if isinstance(v, str) and not v.strip() else v
+
+    @field_validator("ahumada_live_search_url", mode="before")
+    @classmethod
+    def _url_ahumada_vacia_es_nula(cls, v):
+        """Una variable vacía significa «sin fuente configurada», no una URL inventada."""
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v.strip() if isinstance(v, str) else v
 
     @field_validator("openai_model", "openai_prompt_version", "openai_base_url")
     @classmethod

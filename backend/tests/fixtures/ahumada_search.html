@@ -1,0 +1,94 @@
+<!doctype html>
+<!--
+  Muestra SINTÉTICA y acotada para probar el parser E15. No es una captura completa del sitio ni
+  se usa para consultas en vivo. Reproduce la estructura publicada (`product-tile`,
+  `product-tile-wrapper`, `data-pid`, `img.tile-image`) y los campos observados manualmente.
+  Los importes son los de la inspección del 2026-11-04 y aquí solo son datos de prueba (fixture).
+-->
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title>Resultados de búsqueda — fixture</title>
+  </head>
+  <body>
+    <main class="search-results">
+      <div class="product-tile-wrapper" data-pid="84574">
+        <div class="product-tile">
+          <a
+            class="tile-link"
+            href="/paracetamol-500-mg-x-16-comprimidos-84574.html"
+            title="Paracetamol 500 mg x 16 comprimidos"
+          >
+            <img
+              class="tile-image"
+              src="/medias/paracetamol-84574.jpg"
+              alt="Paracetamol 500 mg x 16 comprimidos"
+            />
+          </a>
+          <div class="product-name">Paracetamol 500 mg x 16 comprimidos</div>
+          <div class="product-brand"><span class="laboratory">Laboratorio Chile</span></div>
+          <div class="product-presentation">16 comprimidos</div>
+          <div class="product-description">Analgésico y antipirético de uso común.</div>
+          <div class="product-price">
+            <del class="old-price">$1.309</del>
+            <span class="promo-price">$618</span>
+          </div>
+          <div class="promo-condition">Ahumada Contigo</div>
+          <div class="unit-price">$82 por comprimido</div>
+          <a class="tile-link" href="/paracetamol-500-mg-x-16-comprimidos-84574.html">
+            Ver producto
+          </a>
+
+          <!-- Producto relacionado anidado: su precio NO debe atribuirse a 84574. -->
+          <div class="product-tile-wrapper" data-pid="99999">
+            <div class="product-tile">
+              <a href="/producto-relacionado-99999.html" title="Producto relacionado">
+                <img class="tile-image" src="/medias/relacionado-99999.jpg" alt="Producto relacionado" />
+              </a>
+              <div class="product-name">Producto relacionado</div>
+              <div class="product-price">$9.999</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="product-tile-wrapper" data-pid="84575">
+        <div class="product-tile">
+          <a
+            class="tile-link"
+            href="https://www.farmaciasahumada.cl/losartan-50-mg-x-30-comprimidos-84575.html"
+            title="Losartán 50 mg x 30 comprimidos"
+          >
+            <img
+              class="tile-image"
+              src="https://www.farmaciasahumada.cl/medias/losartan-84575.jpg"
+              alt="Losartán 50 mg x 30 comprimidos"
+            />
+          </a>
+          <h2>Losartán 50 mg x 30 comprimidos</h2>
+          <div class="product-presentation">30 comprimidos</div>
+          <div class="product-price">$4.590</div>
+        </div>
+      </div>
+
+      <div class="product-tile-wrapper" data-pid="70000">
+        <div class="product-tile">
+          <a href="/ibuprofeno-400-mg-x-20-comprimidos-70000.html">
+            <img class="tile-image" src="/medias/ibuprofeno-70000.jpg" alt="Ibuprofeno" />
+          </a>
+          <h2>Ibuprofeno 400 mg x 20 comprimidos</h2>
+          <div class="product-price">
+            $3.990 <span class="unit-price">$199 por comprimido</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tarjeta incompleta: sin nombre ni URL oficial; debe omitirse, no completarse. -->
+      <div class="product-tile-wrapper" data-pid="00000">
+        <div class="product-tile">
+          <div class="product-price">$1.000</div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>
