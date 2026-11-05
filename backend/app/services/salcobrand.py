@@ -18,10 +18,13 @@ Reglas de datos (verificadas contra el sitio el 2026-11-05):
 """
 
 import asyncio
+import json
 import logging
 import time
+from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import quote, urlencode, urlparse
 
@@ -33,11 +36,21 @@ DEFAULT_LIMIT = 24
 DEFAULT_TIMEOUT_SECONDS = 10
 MAX_RESPONSE_BYTES = 2_000_000
 CURRENCY = "CLP"
-CONNECTOR_VERSION = "salcobrand-algolia-1"
+CONNECTOR_VERSION = "salcobrand-algolia-2"
 PREFERENCES_PATH = "/api/v2/preferences"
 DEFAULT_CLOCK_TTL_SECONDS = 600
 FAILED_CLOCK_TTL_SECONDS = 30
 MAX_CLOCK_DEVIATION_SECONDS = 86_400
+
+# Enriquecimiento de fabricante desde los datos estructurados de la ficha publicada. No comparte
+# credenciales con Algolia: la ficha es HTML público y solo se lee `manufacturer.name`.
+DEFAULT_LABORATORY_CONCURRENCY = 6
+DEFAULT_LABORATORY_BUDGET_SECONDS = 8.0
+DEFAULT_PRODUCT_TIMEOUT_SECONDS = 8
+MAX_PRODUCT_BYTES = 1_500_000
+LABORATORY_CACHE_TTL_SECONDS = 86_400
+LABORATORY_CACHE_MAX_ENTRIES = 2_000
+ALLOWED_PRODUCT_HOSTS = {"salcobrand.cl", "www.salcobrand.cl"}
 
 
 class SalcobrandFetchError(Exception):
@@ -104,6 +117,39 @@ async def fetch_current_timestamp(
     if isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp <= 0:
         raise SalcobrandFetchError("Salcobrand no publicó un sello de tiempo válido.")
     return timestamp
+
+
+async def fetch_product_page(
+    *,
+    url: str,
+    referer: str,
+    timeout_seconds: int = DEFAULT_PRODUCT_TIMEOUT_SECONDS,
+) -> str:
+    """Descarga la ficha HTML pública de un producto. No lleva credenciales de Algolia.
+
+    Solo se aceptan URL HTTPS del propio sitio: la URL viene de una ficha normalizada, pero se
+    valida igual para no convertir el conector en un cliente HTTP arbitrario.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in ALLOWED_PRODUCT_HOSTS:
+        raise SalcobrandFetchError("La ficha de Salcobrand no es una URL válida.")
+
+    headers = {
+        "User-Agent": "CotizadorFarmacia/0.1",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "es-CL,es;q=0.9",
+        "Referer": referer,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=False) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+    except (httpx.HTTPError, httpx.InvalidURL) as exc:
+        raise SalcobrandFetchError("La ficha de Salcobrand no respondió correctamente.") from exc
+
+    if len(response.content) > MAX_PRODUCT_BYTES:
+        raise SalcobrandFetchError("La ficha de Salcobrand excede el tamaño permitido.")
+    return response.text
 
 
 class SiteClock:
@@ -245,6 +291,212 @@ def parse_search_results(
         if len(productos) >= limit:
             break
     return productos
+
+
+class _JsonLdScripts(HTMLParser):
+    """Recolecta el contenido de los bloques `application/ld+json` de una ficha."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._capturando = False
+        self._buffer: list[str] = []
+        self.blocks: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag.lower() != "script":
+            return
+        tipo = dict(attrs).get("type") or ""
+        if tipo.strip().lower() == "application/ld+json":
+            self._capturando = True
+            self._buffer = []
+
+    def handle_data(self, data: str) -> None:
+        if self._capturando:
+            self._buffer.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "script" and self._capturando:
+            self.blocks.append("".join(self._buffer))
+            self._capturando = False
+
+
+def _jsonld_nodes(value: Any) -> list[dict[str, Any]]:
+    """Nodos de datos estructurados, incluidos los agrupados en `@graph`."""
+    if isinstance(value, list):
+        nodos = []
+        for item in value:
+            nodos.extend(_jsonld_nodes(item))
+        return nodos
+    if not isinstance(value, dict):
+        return []
+    nodos = [value]
+    graph = value.get("@graph")
+    if isinstance(graph, list):
+        nodos.extend(item for item in graph if isinstance(item, dict))
+    return nodos
+
+
+def _is_product_node(node: dict[str, Any]) -> bool:
+    tipo = node.get("@type")
+    if isinstance(tipo, str):
+        return tipo == "Product"
+    return isinstance(tipo, list) and "Product" in tipo
+
+
+def parse_product_manufacturer(html: str) -> str | None:
+    """Fabricante publicado en el JSON-LD de la ficha. Nunca usa `brand` como respaldo.
+
+    El sitio publica `manufacturer.name` en el nodo `Product` de schema.org. Es un dato distinto
+    de la marca comercial; si el bloque falta, no es JSON válido o no trae fabricante, se devuelve
+    `None` y la ficha conserva `laboratory_as_published = None`.
+    """
+    if not isinstance(html, str):
+        return None
+    parser = _JsonLdScripts()
+    try:
+        parser.feed(html)
+    except Exception:  # HTML malformado: se trata como ficha sin fabricante.
+        return None
+
+    for block in parser.blocks:
+        try:
+            data = json.loads(block)
+        except (TypeError, ValueError):
+            continue
+        for node in _jsonld_nodes(data):
+            if not _is_product_node(node):
+                continue
+            manufacturer = node.get("manufacturer")
+            if isinstance(manufacturer, dict):
+                name = _text(manufacturer.get("name"))
+            else:
+                name = _text(manufacturer)
+            if name:
+                return name
+    return None
+
+
+class LaboratoryCache:
+    """Caché en memoria por SKU: valor publicado o ausencia confirmada, con vencimiento y tope."""
+
+    def __init__(
+        self,
+        *,
+        ttl_seconds: int = LABORATORY_CACHE_TTL_SECONDS,
+        max_entries: int = LABORATORY_CACHE_MAX_ENTRIES,
+    ):
+        self.ttl_seconds = ttl_seconds
+        self.max_entries = max(1, max_entries)
+        self._entries: OrderedDict[str, tuple[float, str | None]] = OrderedDict()
+
+    def get(self, sku: str) -> tuple[bool, str | None]:
+        """(encontrado, fabricante). Un `None` cacheado también es una respuesta válida."""
+        if not isinstance(sku, str) or not sku:
+            return False, None
+        entry = self._entries.get(sku)
+        if entry is None:
+            return False, None
+        expires_at, manufacturer = entry
+        if time.monotonic() >= expires_at:
+            self._entries.pop(sku, None)
+            return False, None
+        self._entries.move_to_end(sku)
+        return True, manufacturer
+
+    def set(self, sku: str, manufacturer: str | None) -> None:
+        if not isinstance(sku, str) or not sku:
+            return
+        self._entries[sku] = (time.monotonic() + self.ttl_seconds, manufacturer)
+        self._entries.move_to_end(sku)
+        while len(self._entries) > self.max_entries:
+            self._entries.popitem(last=False)
+
+    def clear(self) -> None:
+        self._entries.clear()
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+
+laboratory_cache = LaboratoryCache()
+
+
+async def enrich_laboratory(
+    products: list[dict[str, Any]],
+    *,
+    referer: str,
+    timeout_seconds: int = DEFAULT_PRODUCT_TIMEOUT_SECONDS,
+    concurrency: int = DEFAULT_LABORATORY_CONCURRENCY,
+    budget_seconds: float = DEFAULT_LABORATORY_BUDGET_SECONDS,
+    cache: LaboratoryCache | None = None,
+) -> None:
+    """Completa `laboratory_as_published` con el fabricante publicado en cada ficha.
+
+    Modifica las fichas en sitio. Una ficha que falla, tarda más que el presupuesto o no publica
+    fabricante se queda con `None`; nunca falla la búsqueda completa ni usa la marca como respaldo.
+    La caché evita repetir consultas de SKU ya vistos, incluida la ausencia confirmada de dato.
+    """
+    if not products:
+        return
+    # Un cache vacío es un objeto válido: no se sustituye por el global por ser falsy.
+    cache = cache if cache is not None else laboratory_cache
+
+    objetivos: dict[str, tuple[str, list[dict[str, Any]]]] = {}
+    for product in products:
+        sku = _text(product.get("chain_item_id"))
+        if not sku:
+            continue
+        encontrado, manufacturer = cache.get(sku)
+        if encontrado:
+            product["laboratory_as_published"] = manufacturer
+            continue
+        url = _url(product.get("source_url"))
+        if not url:
+            continue
+        if sku in objetivos:
+            objetivos[sku][1].append(product)
+        else:
+            objetivos[sku] = (url, [product])
+
+    if not objetivos:
+        return
+
+    sem = asyncio.Semaphore(max(1, int(concurrency)))
+
+    async def consultar(sku: str, url: str) -> tuple[str, str | None]:
+        async with sem:
+            try:
+                html = await fetch_product_page(
+                    url=url,
+                    referer=referer,
+                    timeout_seconds=timeout_seconds,
+                )
+            except Exception:
+                # Error transitorio: no se cachea y la ficha conserva laboratorio nulo.
+                return sku, None
+            manufacturer = parse_product_manufacturer(html)
+            cache.set(sku, manufacturer)
+            return sku, manufacturer
+
+    tareas = {
+        asyncio.create_task(consultar(sku, url)): sku
+        for sku, (url, _) in objetivos.items()
+    }
+    hechas, pendientes = await asyncio.wait(tareas, timeout=budget_seconds)
+    for tarea in pendientes:
+        tarea.cancel()
+    if pendientes:
+        await asyncio.gather(*pendientes, return_exceptions=True)
+
+    for tarea in hechas:
+        try:
+            sku, manufacturer = tarea.result()
+        except Exception:
+            continue
+        if not manufacturer:
+            continue
+        for product in objetivos[sku][1]:
+            product["laboratory_as_published"] = manufacturer
 
 
 def _product(hit: Any, observed_at: datetime) -> dict[str, Any] | None:

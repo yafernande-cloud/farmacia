@@ -23,12 +23,17 @@ MOMENTO = datetime(2026, 11, 5, 1, 30, tzinfo=UTC)
 
 @pytest.fixture(autouse=True)
 def _reloj_del_sitio(monkeypatch):
-    """La hora del filtro se prueba aparte: aquí solo interesa la independencia entre cadenas."""
+    """La hora del filtro y el enriquecimiento se prueban aparte: aquí solo interesa la
+    independencia entre cadenas, sin ninguna solicitud adicional a las fichas."""
 
     async def fake_now(**kwargs):
         return MOMENTO
 
+    async def sin_enriquecimiento(*args, **kwargs):
+        return None
+
     monkeypatch.setattr(salcobrand.clock, "now", fake_now)
+    monkeypatch.setattr(salcobrand, "enrich_laboratory", sin_enriquecimiento)
 
 
 class _Clave:

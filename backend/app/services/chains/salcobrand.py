@@ -5,12 +5,15 @@ interruptor y la configuración propios de la cadena. No comparte estado ni cód
 con las otras cadenas: si Salcobrand falla, Ahumada no se ve afectada.
 """
 
+import logging
 from typing import Any
 from urllib.parse import urljoin
 
 from app.core.config import get_settings
 from app.services import salcobrand
 from app.services.chains.base import ChainNotConfigured, ChainUnavailable
+
+logger = logging.getLogger(__name__)
 
 CHAIN = "salcobrand"
 
@@ -45,6 +48,17 @@ async def search(query: str) -> list[dict[str, Any]]:
             timeout_seconds=settings.salcobrand_live_search_timeout_seconds,
             moment=moment,
         )
-        return salcobrand.parse_search_results(payload)
+        fichas = salcobrand.parse_search_results(payload)
+        # El fabricante solo existe en la ficha publicada de cada producto. Un fallo de esta
+        # etapa deja laboratorio nulo y nunca invalida los resultados de Algolia.
+        try:
+            await salcobrand.enrich_laboratory(
+                fichas,
+                referer=referer,
+                timeout_seconds=settings.salcobrand_live_search_timeout_seconds,
+            )
+        except Exception:
+            logger.warning("E15: no se pudo enriquecer el fabricante de Salcobrand.")
+        return fichas
     except salcobrand.SalcobrandFetchError as exc:
         raise ChainUnavailable("fetch_failed") from exc
