@@ -260,16 +260,22 @@ class ArticleDetailOut(BaseModel):
 
 
 class ChainResultOut(BaseModel):
-    """Ficha publicada por una cadena (§11.3). Hoy no hay conector: nunca llega una."""
+    """Ficha publicada por una cadena (§11.3). Solo contiene datos publicados por esa cadena.
+
+    `brand_as_published` y `has_stock` son opcionales para no alterar las fichas de conectores que
+    no publican esos campos; cada conector los informa únicamente cuando su fuente los entrega.
+    """
 
     chain_item_id: str
     published_name: str
-    laboratory_as_published: str | None
-    presentation_as_published: str | None
-    description: str | None
-    image_url: str | None
+    brand_as_published: str | None = None
+    laboratory_as_published: str | None = None
+    presentation_as_published: str | None = None
+    description: str | None = None
+    image_url: str | None = None
     price: dict[str, Any]
-    conditions: str | None
+    conditions: str | None = None
+    has_stock: bool | None = None
     source_url: str
     observed_at: datetime
     provenance: dict[str, Any]

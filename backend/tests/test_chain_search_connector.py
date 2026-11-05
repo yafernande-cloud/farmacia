@@ -8,6 +8,7 @@ import pytest
 
 from app.api.v1.search import ChainSourceOut
 from app.services import ahumada, chain_search
+from app.services.chains import ahumada as ahumada_connector
 
 FIXTURE = Path(__file__).parent / "fixtures" / "ahumada_search.html"
 
@@ -18,9 +19,23 @@ def _settings(**overrides):
         "ahumada_live_search_enabled": False,
         "ahumada_live_search_url": None,
         "ahumada_live_search_timeout_seconds": 10,
+        # Salcobrand tiene su propio interruptor: apagado, su conector no consulta nada.
+        "salcobrand_live_search_enabled": False,
+        "salcobrand_live_search_url": None,
+        "salcobrand_live_search_app_id": None,
+        "salcobrand_live_search_api_key": None,
+        "salcobrand_live_search_index": "sb_variant_production",
+        "salcobrand_live_search_referer": "https://salcobrand.cl/",
+        "salcobrand_live_search_timeout_seconds": 10,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
+
+
+@pytest.fixture(autouse=True)
+def _config_del_conector(monkeypatch):
+    """El conector lee su configuración desde su propio módulo, no desde el coordinador."""
+    monkeypatch.setattr(ahumada_connector, "get_settings", lambda: _settings())
 
 
 def _forbid_fetch(*args, **kwargs):
@@ -28,7 +43,7 @@ def _forbid_fetch(*args, **kwargs):
 
 
 async def test_por_defecto_no_consulta_la_fuente(monkeypatch) -> None:
-    monkeypatch.setattr(chain_search, "get_settings", lambda: _settings())
+    monkeypatch.setattr(ahumada_connector, "get_settings", lambda: _settings())
     monkeypatch.setattr(ahumada, "fetch_search_html", _forbid_fetch)
 
     source = await chain_search._source_for("ahumada", "paracetamol")
@@ -40,7 +55,7 @@ async def test_por_defecto_no_consulta_la_fuente(monkeypatch) -> None:
 
 async def test_habilitada_sin_url_no_consulta_la_fuente(monkeypatch) -> None:
     monkeypatch.setattr(
-        chain_search,
+        ahumada_connector,
         "get_settings",
         lambda: _settings(chain_search_enabled=["ahumada"], ahumada_live_search_enabled=True),
     )
@@ -62,7 +77,7 @@ async def test_fuente_autorizada_inyecta_las_fichas(monkeypatch) -> None:
         return html
 
     monkeypatch.setattr(
-        chain_search,
+        ahumada_connector,
         "get_settings",
         lambda: _settings(
             chain_search_enabled=["ahumada"],
@@ -90,7 +105,7 @@ async def test_fuente_sin_coincidencias_es_no_matches(monkeypatch) -> None:
         return "<html><body><main class='search-results'></main></body></html>"
 
     monkeypatch.setattr(
-        chain_search,
+        ahumada_connector,
         "get_settings",
         lambda: _settings(
             chain_search_enabled=["ahumada"],
@@ -112,7 +127,7 @@ async def test_fallo_de_la_fuente_es_failed_y_no_no_matches(monkeypatch) -> None
         raise ahumada.AhumadaFetchError("bloqueo")
 
     monkeypatch.setattr(
-        chain_search,
+        ahumada_connector,
         "get_settings",
         lambda: _settings(
             chain_search_enabled=["ahumada"],
@@ -131,13 +146,13 @@ async def test_fallo_de_la_fuente_es_failed_y_no_no_matches(monkeypatch) -> None
 
 
 async def test_las_otras_cadenas_siguen_no_configuradas(monkeypatch) -> None:
-    monkeypatch.setattr(chain_search, "get_settings", lambda: _settings())
+    monkeypatch.setattr(ahumada_connector, "get_settings", lambda: _settings())
 
     cruz_verde = await chain_search._source_for("cruz_verde", "paracetamol")
     salcobrand = await chain_search._source_for("salcobrand", "paracetamol")
 
     assert cruz_verde["reason"] == "requires_javascript"
-    assert salcobrand["reason"] == "search_not_available"
+    assert salcobrand["reason"] == "access_not_authorized"
     assert cruz_verde["results"] == [] and salcobrand["results"] == []
 
 
@@ -160,7 +175,7 @@ def test_el_esquema_de_salida_acepta_la_ficha_parseada() -> None:
 
 @pytest.mark.asyncio
 async def test_store_informa_las_tres_cadenas_sin_persistir(monkeypatch) -> None:
-    monkeypatch.setattr(chain_search, "get_settings", lambda: _settings())
+    monkeypatch.setattr(ahumada_connector, "get_settings", lambda: _settings())
     store = chain_search.ChainSearchStore()
 
     started = await store.start("paracetamol", [])

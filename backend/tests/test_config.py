@@ -40,3 +40,20 @@ def test_cors_origins_desde_variable_de_entorno_con_comas(monkeypatch):
 def test_auth_demo_prohibida_en_produccion():
     with pytest.raises(ValidationError):
         Settings(auth_mode="demo_header", app_env="production", _env_file=None)
+
+
+def test_fuente_de_cadena_vacia_significa_sin_configurar():
+    # Una variable vacía no es una fuente: el conector queda sin configuración y no consulta.
+    s = Settings(
+        salcobrand_live_search_url="",
+        salcobrand_live_search_app_id="   ",
+        salcobrand_live_search_api_key="",
+        _env_file=None,
+    )
+    assert s.salcobrand_live_search_enabled is False
+    assert s.salcobrand_live_search_url is None
+    assert s.salcobrand_live_search_app_id is None
+    assert s.salcobrand_live_search_api_key is None
+    assert s.salcobrand_live_search_index == "sb_variant_production"
+    assert s.salcobrand_live_search_referer == "https://salcobrand.cl/"
+

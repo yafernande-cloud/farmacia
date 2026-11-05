@@ -70,8 +70,9 @@ class Settings(BaseSettings):
     # Una fuente sin observación exitosa en esta ventana se informa `stale` (E4). No inventa frescura.
     source_stale_after_hours: int = Field(default=24, ge=1, le=24 * 365)
     # ---- Búsqueda de precios públicos de cadenas (E15)
-    # Habilita cadenas por nombre. Hoy NO existe conector autorizado para ninguna: aunque se listen
-    # aquí, la búsqueda las informa `not_configured` y no se inventan resultados (contrato §11.6/§11.7).
+    # Habilita cadenas por nombre. Cada conector conserva su propio interruptor y su propia fuente;
+    # una cadena listada sin fuente configurada se informa `not_configured` y no inventa resultados
+    # (contrato §11.6/§11.7).
     chain_search_enabled: Annotated[list[str], NoDecode] = Field(default_factory=list)
     # ---- Fuente en vivo de Farmacias Ahumada (E15)
     # Apagada por defecto. Solo se activa cuando la operadora declara por escrito que la fuente
@@ -81,6 +82,19 @@ class Settings(BaseSettings):
     # URL de la fuente autorizada que entrega el HTML de resultados (sin barra final necesaria).
     ahumada_live_search_url: str | None = None
     ahumada_live_search_timeout_seconds: int = Field(default=10, ge=1, le=60)
+    # ---- Fuente en vivo de Salcobrand (E15)
+    # Conector independiente sobre el índice público de Algolia del sitio. Apagado por defecto y
+    # sin credenciales en el código: la operadora configura su propia fuente y su propio acceso.
+    salcobrand_live_search_enabled: bool = False
+    # Endpoint de consultas de Algolia (p. ej. https://<app>-dsn.algolia.net/1/indexes/*/queries).
+    salcobrand_live_search_url: str | None = None
+    salcobrand_live_search_app_id: str | None = None
+    # Clave de búsqueda pública del sitio; se trata como secreto operativo y nunca sale al frontend.
+    salcobrand_live_search_api_key: SecretStr | None = None
+    salcobrand_live_search_index: str = "sb_variant_production"
+    # Origen declarado en la consulta. Es una restricción de la clave del sitio, no una identidad.
+    salcobrand_live_search_referer: str = "https://salcobrand.cl/"
+    salcobrand_live_search_timeout_seconds: int = Field(default=10, ge=1, le=60)
     # ---- Interpretación de observaciones comerciales (A6 Fase 3 / O2, contrato §8.5)
     # Interruptor de despliegue: apagado por defecto. Apagado, la observación se guarda y la
     # interpretación queda pendiente; nunca se simula una respuesta real.
@@ -132,10 +146,16 @@ class Settings(BaseSettings):
         """Permite desactivar el campo con una variable vacía, sin inventar un valor."""
         return None if isinstance(v, str) and not v.strip() else v
 
-    @field_validator("ahumada_live_search_url", mode="before")
+    @field_validator(
+        "ahumada_live_search_url",
+        "salcobrand_live_search_url",
+        "salcobrand_live_search_app_id",
+        "salcobrand_live_search_api_key",
+        mode="before",
+    )
     @classmethod
-    def _url_ahumada_vacia_es_nula(cls, v):
-        """Una variable vacía significa «sin fuente configurada», no una URL inventada."""
+    def _fuente_vacia_es_nula(cls, v):
+        """Una variable vacía significa «sin fuente configurada», no un valor inventado."""
         if isinstance(v, str) and not v.strip():
             return None
         return v.strip() if isinstance(v, str) else v

@@ -2,16 +2,17 @@
 
 Tres reglas mandan aquí:
 
-1. **Ninguna cadena está autorizada hoy.** Cruz Verde y Salcobrand no tienen conector. Ahumada
-   tiene parser HTML y una fuente en vivo preparada, pero permanece apagada por defecto: solo se
-   consulta cuando la operadora configura una fuente autorizada (`AHUMADA_LIVE_SEARCH_ENABLED` +
-   `AHUMADA_LIVE_SEARCH_URL`). Sin esa declaración se informa `not_configured` con su motivo real
-   y **no** se inventan fichas ni precios (D-115, contrato §11.7).
+1. **Cada cadena tiene su propio conector** (`app.services.chains`). Este coordinador solo pregunta
+   por la cadena y traduce su respuesta a los estados del contrato. Un conector consulta su fuente
+   únicamente cuando su interruptor y su configuración están presentes; sin eso se informa
+   `not_configured` con su motivo real y **no** se inventan fichas ni precios (D-115, §11.6/§11.7).
+   Cruz Verde todavía no tiene conector: conserva su estado declarado (`requires_javascript`).
 2. **El estado vive en la memoria del proceso** (TTL 10 min, 50 búsquedas vivas, un solo worker de
    API). Reiniciar el backend pierde las búsquedas en vuelo y el sondeo devuelve 404.
 3. **No persiste nada** (§11.9): ni tabla, ni migración, ni caché en disco.
 
-Un CAPTCHA o un bloqueo serán `failed`, nunca `no_matches`, cuando exista un conector real.
+Las cadenas se consultan en paralelo y cada una falla por separado: una fuente caída se informa
+`failed` y nunca se convierte en «sin resultados» ni afecta a las otras cadenas.
 """
 
 import asyncio
@@ -21,16 +22,15 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.core.config import get_settings
-from app.services import ahumada
+from app.services.chains import CONNECTORS, ChainNotConfigured
 
 logger = logging.getLogger(__name__)
 
 CHAINS = ("cruz_verde", "salcobrand", "ahumada")
-# Estado real de cada cadena (§11.6). No es un fixture: es la situación declarada del conector.
+# Estado declarado de una cadena SIN conector. No es un fixture: es su situación real hoy.
 INITIAL_STATE: dict[str, str] = {
     "cruz_verde": "requires_javascript",
-    "salcobrand": "search_not_available",
+    "salcobrand": "access_not_authorized",
     "ahumada": "access_not_authorized",
 }
 TTL_SECONDS = 600
@@ -51,31 +51,23 @@ def _source(chain: str, reason: str | None = None) -> dict[str, Any]:
 
 
 async def _source_for(chain: str, query: str) -> dict[str, Any]:
-    """Estado real de una cadena para ESTA consulta.
+    """Estado real de una cadena para ESTA consulta, preguntando a su propio conector.
 
-    Ahumada usa el parser HTML solo si la operadora habilitó explícitamente la fuente en vivo.
-    La fuente apunta a un acceso autorizado; sin esa configuración no se hace ninguna solicitud y
-    se conserva `access_not_authorized` (D-115, contrato §11.6/§11.7).
+    El coordinador no sabe de HTML, Algolia ni credenciales: solo recibe fichas o un motivo. Una
+    cadena sin conector conserva su estado declarado y no hace ninguna solicitud de red.
     """
-    if chain != "ahumada":
+    connector = CONNECTORS.get(chain)
+    if connector is None:
         return _source(chain)
-
-    settings = get_settings()
-    if "ahumada" not in settings.chain_search_enabled or not settings.ahumada_live_search_enabled:
-        return _source(chain)
-    if not settings.ahumada_live_search_url:
-        return _source(chain, "live_source_not_configured")
 
     try:
-        html_text = await ahumada.fetch_search_html(
-            query,
-            url=settings.ahumada_live_search_url,
-            timeout_seconds=settings.ahumada_live_search_timeout_seconds,
-        )
-        results = ahumada.parse_search_results(html_text)
+        results = await connector(query)
+    except ChainNotConfigured as exc:
+        return _source(chain, exc.reason)
     except Exception:
-        # Un bloqueo, un CAPTCHA o una fuente caída son `failed`, nunca «sin resultados».
-        logger.warning("E15: la fuente de Ahumada no respondió", exc_info=True)
+        # Un bloqueo, un CAPTCHA, un tiempo de espera o una respuesta inválida son `failed`,
+        # nunca «sin resultados», y solo afectan a esta cadena.
+        logger.warning("E15: el conector de %s no respondió", chain, exc_info=True)
         return {
             "chain": chain,
             "state": "failed",
