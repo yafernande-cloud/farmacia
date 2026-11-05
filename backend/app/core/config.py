@@ -95,6 +95,18 @@ class Settings(BaseSettings):
     # Origen declarado en la consulta. Es una restricción de la clave del sitio, no una identidad.
     salcobrand_live_search_referer: str = "https://salcobrand.cl/"
     salcobrand_live_search_timeout_seconds: int = Field(default=10, ge=1, le=60)
+    # ---- Fuente en vivo de Cruz Verde (E15)
+    # Conector independiente sobre la API pública de productos del sitio. Apagado por defecto y sin
+    # credenciales en el código: la sesión es anónima y vive solo en memoria. Los endpoints tienen
+    # valores oficiales; las variables permiten apuntar a un espejo autorizado sin tocar el código.
+    cruzverde_live_search_enabled: bool = False
+    cruzverde_live_search_base_url: str | None = None
+    cruzverde_live_search_login_url: str | None = None
+    cruzverde_live_search_sitemap_url: str | None = None
+    cruzverde_live_search_timeout_seconds: int = Field(default=10, ge=1, le=60)
+    # Presupuesto para fichas de detalle y enlaces canónicos; al vencer se devuelven los productos
+    # ya disponibles sin esperar más (D-115).
+    cruzverde_live_search_budget_seconds: float = Field(default=4.0, ge=1, le=30)
     # ---- Interpretación de observaciones comerciales (A6 Fase 3 / O2, contrato §8.5)
     # Interruptor de despliegue: apagado por defecto. Apagado, la observación se guarda y la
     # interpretación queda pendiente; nunca se simula una respuesta real.
@@ -151,6 +163,9 @@ class Settings(BaseSettings):
         "salcobrand_live_search_url",
         "salcobrand_live_search_app_id",
         "salcobrand_live_search_api_key",
+        "cruzverde_live_search_base_url",
+        "cruzverde_live_search_login_url",
+        "cruzverde_live_search_sitemap_url",
         mode="before",
     )
     @classmethod

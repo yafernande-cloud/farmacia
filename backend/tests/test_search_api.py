@@ -483,8 +483,8 @@ async def test_e15_cadenas_sin_conector_se_informan_no_configuradas(api):
     assert [s["chain"] for s in body["sources"]] == ["cruz_verde", "salcobrand", "ahumada"]
     assert all(s["state"] == "not_configured" and s["results"] == [] for s in body["sources"])
     assert [s["reason"] for s in body["sources"]] == [
-        "requires_javascript",
-        "search_not_available",
+        "access_not_authorized",
+        "access_not_authorized",
         "access_not_authorized",
     ]
 

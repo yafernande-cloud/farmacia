@@ -6,7 +6,7 @@ Tres reglas mandan aquí:
    por la cadena y traduce su respuesta a los estados del contrato. Un conector consulta su fuente
    únicamente cuando su interruptor y su configuración están presentes; sin eso se informa
    `not_configured` con su motivo real y **no** se inventan fichas ni precios (D-115, §11.6/§11.7).
-   Cruz Verde todavía no tiene conector: conserva su estado declarado (`requires_javascript`).
+   Las tres cadenas tienen conector propio; una cadena apagada conserva su motivo declarado.
 2. **El estado vive en la memoria del proceso** (TTL 10 min, 50 búsquedas vivas, un solo worker de
    API). Reiniciar el backend pierde las búsquedas en vuelo y el sondeo devuelve 404.
 3. **No persiste nada** (§11.9): ni tabla, ni migración, ni caché en disco.
@@ -27,9 +27,10 @@ from app.services.chains import CONNECTORS, ChainNotConfigured
 logger = logging.getLogger(__name__)
 
 CHAINS = ("cruz_verde", "salcobrand", "ahumada")
-# Estado declarado de una cadena SIN conector. No es un fixture: es su situación real hoy.
+# Estado declarado de una cadena si su conector faltara del registro. No es un fixture: es el
+# motivo con el que se informa una cadena que no puede consultarse sin autorización explícita.
 INITIAL_STATE: dict[str, str] = {
-    "cruz_verde": "requires_javascript",
+    "cruz_verde": "access_not_authorized",
     "salcobrand": "access_not_authorized",
     "ahumada": "access_not_authorized",
 }

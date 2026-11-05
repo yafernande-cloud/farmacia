@@ -145,13 +145,13 @@ async def test_fallo_de_la_fuente_es_failed_y_no_no_matches(monkeypatch) -> None
     assert source["results"] == []
 
 
-async def test_las_otras_cadenas_siguen_no_configuradas(monkeypatch) -> None:
+async def test_las_otras_cadenas_siguen_sin_autorizacion(monkeypatch) -> None:
     monkeypatch.setattr(ahumada_connector, "get_settings", lambda: _settings())
 
     cruz_verde = await chain_search._source_for("cruz_verde", "paracetamol")
     salcobrand = await chain_search._source_for("salcobrand", "paracetamol")
 
-    assert cruz_verde["reason"] == "requires_javascript"
+    assert cruz_verde["reason"] == "access_not_authorized"
     assert salcobrand["reason"] == "access_not_authorized"
     assert cruz_verde["results"] == [] and salcobrand["results"] == []
 

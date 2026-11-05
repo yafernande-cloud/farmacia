@@ -276,7 +276,9 @@ class ChainResultOut(BaseModel):
     price: dict[str, Any]
     conditions: str | None = None
     has_stock: bool | None = None
-    source_url: str
+    # Una publicación sin enlace público válido se conserva y la interfaz lo informa; nunca se
+    # rellena con un enlace técnico ni se descarta el producto por este campo.
+    source_url: str | None = None
     observed_at: datetime
     provenance: dict[str, Any]
     match: dict[str, Any]
