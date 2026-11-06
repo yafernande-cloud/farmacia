@@ -140,7 +140,7 @@ async def test_respuesta_invalida_no_se_reintenta_ni_se_interpreta():
     assert exc.value.code == "invalid_response" and calls == 1
 
 
-async def test_cuota_agotada_no_se_reintenta():
+async def test_cuota_agotada_no_se_reintenta_y_conserva_metadatos():
     calls = 0
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -149,11 +149,141 @@ async def test_cuota_agotada_no_se_reintenta():
         return httpx.Response(
             429,
             json={"error": {"code": "insufficient_quota", "message": "sin cuota"}},
+            headers={"x-request-id": "req_cuota"},
         )
 
     with pytest.raises(VisionFailed) as exc:
         await _interpreter(handler).extract(fake_jpeg(4), "image/jpeg", None)
-    assert exc.value.code == "quota_exceeded" and calls == 1
+    failure = exc.value
+    assert failure.code == "quota_exceeded" and calls == 1
+    assert (failure.http_status, failure.provider_code, failure.request_id) == (
+        429,
+        "insufficient_quota",
+        "req_cuota",
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "provider_code", "expected"),
+    [
+        (400, "invalid_value", "http_400"),
+        (401, "invalid_api_key", "http_401"),
+        (403, "permission_denied", "http_403"),
+        (404, "model_not_found", "http_404"),
+    ],
+)
+async def test_cada_error_http_se_distingue_y_registra_sin_filtrar_el_cuerpo(
+    status, provider_code, expected
+):
+    calls = 0
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            status,
+            json={
+                "error": {
+                    "code": provider_code,
+                    "type": "invalid_request_error",
+                    "message": "detalle interno que no debe guardarse",
+                }
+            },
+            headers={"x-request-id": f"req_{status}"},
+        )
+
+    with pytest.raises(VisionFailed) as exc:
+        await _interpreter(handler).extract(fake_jpeg(10 + status % 10), "image/jpeg", None)
+    failure = exc.value
+    assert failure.code == expected and calls == 1  # un 4xx de configuración no se reintenta
+    assert (failure.http_status, failure.provider_code, failure.request_id) == (
+        status,
+        provider_code,
+        f"req_{status}",
+    )
+    # `str()` solo expone el código interno: ni el mensaje del proveedor ni la clave.
+    assert str(failure) == expected
+    assert "detalle interno" not in repr(failure.__dict__)
+
+
+async def test_429_de_tasa_se_reintenta_una_vez_y_conserva_el_request_id():
+    calls = 0
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            429,
+            json={"error": {"code": "rate_limit_exceeded"}},
+            headers={"x-request-id": "req_tasa"},
+        )
+
+    with pytest.raises(VisionFailed) as exc:
+        await _interpreter(handler).extract(fake_jpeg(20), "image/jpeg", None)
+    failure = exc.value
+    assert failure.code == "http_429" and calls == 2
+    assert (failure.http_status, failure.provider_code, failure.request_id) == (
+        429,
+        "rate_limit_exceeded",
+        "req_tasa",
+    )
+
+
+async def test_5xx_se_reintenta_y_no_se_confunde_con_un_4xx():
+    calls = 0
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            503,
+            json={"error": {"code": "server_error"}},
+            headers={"x-request-id": "req_5xx"},
+        )
+
+    with pytest.raises(VisionFailed) as exc:
+        await _interpreter(handler).extract(fake_jpeg(21), "image/jpeg", None)
+    assert exc.value.code == "http_5xx" and calls == 2
+    assert exc.value.http_status == 503 and exc.value.request_id == "req_5xx"
+
+
+async def test_error_de_conectividad_no_se_presenta_como_error_http():
+    def handler(req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("sin red", request=req)
+
+    with pytest.raises(VisionFailed) as exc:
+        await _interpreter(handler).extract(fake_jpeg(22), "image/jpeg", None)
+    assert exc.value.code == "unavailable"
+    assert exc.value.http_status is None and exc.value.request_id is None
+
+
+async def test_respuesta_failed_del_proveedor_conserva_su_codigo_y_request_id():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"status": "failed", "error": {"code": "server_error", "message": "no"}},
+            headers={"x-request-id": "req_failed"},
+        )
+
+    with pytest.raises(VisionFailed) as exc:
+        await _interpreter(handler).extract(fake_jpeg(23), "image/jpeg", None)
+    failure = exc.value
+    assert failure.code == "provider_failed" and failure.http_status == 200
+    assert failure.provider_code == "server_error" and failure.request_id == "req_failed"
+
+
+async def test_metadatos_del_proveedor_se_sanean_antes_de_registrarse():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            404,
+            json={"error": {"code": "model not found <script>"}},
+            headers={"x-request-id": "req 1 <script>"},
+        )
+
+    with pytest.raises(VisionFailed) as exc:
+        await _interpreter(handler).extract(fake_jpeg(24), "image/jpeg", None)
+    assert exc.value.provider_code == "modelnotfoundscript"
+    assert exc.value.request_id == "req1script"
 
 
 async def test_salida_truncada_nunca_se_parsea():

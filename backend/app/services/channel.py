@@ -1589,25 +1589,32 @@ async def _on_callback(session, binding, ev, inbound, now, cfg,
         # Confirmación sencilla e idéntica elija al mismo auxiliar o a otro.
         replies = [Reply(f"✅ Reportando como {u.display_name}.", keyboard=keyboard)]
         pend = await _pending_messages(session, binding)
-        fresh = [m for m in pend if m.received_at >= now - cfg.pending_max_age]
         # Un comando pendiente (p. ej. `/faltantes` guardado por una versión anterior) no es un
         # reporte: al identificarse se resuelve como consulta, sin preguntar si se anota.
-        queries = [m for m in fresh if m.kind == "text" and _is_command_text(m.text or "")]
+        queries = [
+            m
+            for m in pend
+            if m.received_at >= now - cfg.pending_max_age
+            and m.kind == "text"
+            and _is_command_text(m.text or "")
+        ]
         show_list = False
         for m in queries:
             show_list = (
                 _discard_pending_command(session, org, m, sess.auxiliary_id, now) or show_list
             )
-        if queries:
-            ids = {m.id for m in queries}
-            fresh = [m for m in fresh if m.id not in ids]
-            if show_list:
-                replies.append(await _list_reply(session, org, 0, cfg, keyboard))
-        if fresh:
-            note = f"Tienes {len(fresh)} mensaje(s) recibido(s) antes de identificarte."
-            replies.append(Reply(f"{note} ¿Los anoto a nombre de {u.display_name}?",
-                                 [[Button(f"Anotar a nombre de {u.display_name}", "att:ok"), Button("Descartar", "att:no")]],
-                                 keyboard))  # fmt: skip
+        ids = {m.id for m in queries}
+        if show_list:
+            replies.append(await _list_reply(session, org, 0, cfg, keyboard))
+        remaining = [m for m in pend if m.id not in ids]
+        if remaining:
+            # Elegir el nombre ES la confirmación: el reporte pendiente continúa solo, sin una
+            # segunda pregunta («¿Los anoto a nombre de…?»). La base sigue siendo
+            # `confirmed_after_identification`: hubo una elección explícita de la persona.
+            # Los pendientes demasiado viejos se descartan aquí con un aviso breve.
+            replies.extend(
+                await _on_pending_decision(session, binding, inbound, True, now, cfg, account)
+            )
         return replies
     if data.startswith("rp:"):
         return await _on_report_confirmation(session, binding, ev, data, now, cfg, account)
@@ -1691,9 +1698,11 @@ async def _on_pending_decision(session, binding, inbound, accept: bool, now, cfg
     await sessions.touch(session, sess, now, cfg.idle)
     if not accept:
         return [Reply("Descartados. No se anotó nada.", keyboard=keyboard)]
-    if stale:
+    if stale == 1:
+        lines.append("Un mensaje era de hace demasiado rato y no se puede atribuir; envíalo de nuevo.")
+    elif stale > 1:
         lines.append(
-            f"{stale} mensaje(s) eran de hace demasiado rato y no se pueden atribuir; envíalos de nuevo."
+            f"{stale} mensajes eran de hace demasiado rato y no se pueden atribuir; envíalos de nuevo."
         )
     replies: list[Reply] = []
     if show_list:

@@ -22,7 +22,7 @@ from app.interpretation.vision import (
     VisionFailed,
     VisionField,
 )
-from app.models import Attachment, ChannelMessage, DemandItem
+from app.models import Attachment, ChannelMessage, DemandItem, OutboxEvent
 from app.services.photo_processing import process_pending_attachments
 from app.services.storage import sha256_hex
 from app.telegram.handler import after_handle, handle_update
@@ -465,6 +465,48 @@ async def test_fallo_de_openai_conserva_la_foto_y_avisa_sin_reintentar_la_llamad
     assert "La dejé pendiente de revisión." in reply
 
 
+async def test_fallo_http_de_openai_guarda_metadatos_internos_y_mantiene_el_mensaje(
+    photo_chat, sessions, tg_api
+):
+    """El auxiliar ve el mismo mensaje simple; el diagnóstico queda solo en registros internos."""
+    failure = VisionFailed(
+        "http_404",
+        http_status=404,
+        provider_code="model_not_found",
+        request_id="req_abc123",
+    )
+    vision = LiveVision(error=failure)
+    c = photo_chat(vision=vision)
+    await c.pick("ana")
+    await c.send(photo_update, img(tg_api, 31))
+
+    (a,) = await attachments(sessions)
+    assert a.status == "needs_review"
+    assert a.error == "vision_failed:http_404"
+    assert a.uncertainties == [
+        "vision_failed:http_404",
+        "vision_http_status:404",
+        "vision_provider_code:model_not_found",
+        "vision_request_id:req_abc123",
+    ]
+    async with sessions() as s:
+        payload = (
+            await s.execute(
+                select(OutboxEvent.payload).where(OutboxEvent.type == "attachment.vision_failed")
+            )
+        ).scalar_one()
+    assert payload == {
+        "code": "http_404",
+        "http_status": 404,
+        "provider_code": "model_not_found",
+        "request_id": "req_abc123",
+    }
+    assert await observations(sessions) == []
+    reply = tg_api.texts()[-1]
+    assert "No pude identificar el producto de la fotografía." in reply
+    assert "404" not in reply and "model_not_found" not in reply and "req_abc123" not in reply
+
+
 async def test_foto_del_mismo_producto_ya_anotado_no_duplica_el_faltante(
     photo_chat, sessions, tg_api
 ):
@@ -670,7 +712,7 @@ async def test_archivo_que_no_es_imagen_se_rechaza_y_no_se_guarda(
 # ---------- foto sin identidad: pendiente de atribución ----------
 
 
-async def test_foto_sin_sesion_no_se_procesa_ni_se_atribuye_hasta_confirmar(
+async def test_foto_sin_sesion_se_atribuye_y_procesa_al_elegir_el_nombre(
     photo_chat, sessions, seed, tg_api
 ):
     c = photo_chat({"*": MIGRANOL})
@@ -681,12 +723,14 @@ async def test_foto_sin_sesion_no_se_procesa_ni_se_atribuye_hasta_confirmar(
         m = (await s.execute(select(ChannelMessage))).scalar_one()
     assert m.attribution_status == "pending_attribution" and await observations(sessions) == []
     await c.pick("luis", now=mins(1))
-    assert (await attachments(sessions))[0].author_id is None  # identificarse no la atribuye
-    await c.click("att:ok", now=mins(2))
+    # Elegir el nombre ES la confirmación: la foto se atribuye y se procesa sola.
     (a,) = await attachments(sessions)
     assert a.author_id == seed["luis"] and a.status == "identified"
     (o,) = await observations(sessions)
     assert o.author_id == seed["luis"]
+    reply = "\n".join(tg_api.texts()[-2:])
+    assert "La foto quedó a tu nombre" in reply
+    assert "¿Los anoto" not in reply
 
 
 async def test_trazabilidad_de_una_observacion_no_se_puede_reescribir(photo_chat, sessions, engine):

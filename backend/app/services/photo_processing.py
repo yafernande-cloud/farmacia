@@ -11,6 +11,7 @@ proveedor real configurado (`VISION_PROVIDER=openai`); `simulated` queda para pr
 se etiqueta como tal. Sin proveedor (`none`) la foto se guarda y queda pendiente.
 """
 
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -43,6 +44,8 @@ from app.services.demand import Origin, record_interpreted_observation
 from app.services.events import advisory_lock, emit
 from app.services.provenance import allow_simulated_vision, org_kind
 from app.services.storage import PrivateStorage, detect_image_type, sha256_hex
+
+log = logging.getLogger(__name__)
 
 DUPLICATE_WINDOW = timedelta(hours=24)
 MAX_ATTEMPTS = 3
@@ -154,19 +157,38 @@ async def process_attachment(
             a.status, a.error, a.uncertainties = status, error, unc or []
         return PhotoOutcome(attachment_id, status)
 
-    async def fail_vision(code: str) -> PhotoOutcome:
+    async def fail_vision(exc: VisionFailed) -> PhotoOutcome:
         """Fallo de lectura: la foto se conserva y queda para revisión; nunca se inventa nada.
 
         No se reintenta con otra llamada al proveedor (el adaptador ya reintentó solo lo
         transitorio): así una misma foto no consume cuota repetidamente.
+
+        Los metadatos técnicos (estado HTTP, código del proveedor, request ID) son internos y ya
+        vienen saneados por el adaptador: nunca incluyen la clave, la imagen ni el cuerpo.
         """
+        code = exc.code
+        details = [f"vision_failed:{code}"]
+        if exc.http_status is not None:
+            details.append(f"vision_http_status:{exc.http_status}")
+        if exc.provider_code:
+            details.append(f"vision_provider_code:{exc.provider_code}")
+        if exc.request_id:
+            details.append(f"vision_request_id:{exc.request_id}")
+        log.warning(
+            "vision_failed photo=%s code=%s http_status=%s provider_code=%s request_id=%s",
+            attachment_id,
+            code,
+            exc.http_status,
+            exc.provider_code,
+            exc.request_id,
+        )
         async with sm() as s2, s2.begin():
             a = await s2.get(Attachment, attachment_id)
             binding = await s2.get(ChannelBinding, info["binding"])
             actor = await load_actor(s2, info["author"])
             name = actor.display_name if actor is not None else "auxiliar"
             a.status, a.error = "needs_review", f"vision_failed:{code}"
-            a.uncertainties, a.processed_at = [f"vision_failed:{code}"], now
+            a.uncertainties, a.processed_at = details, now
             if binding is not None:
                 n = (
                     await s2.execute(
@@ -184,7 +206,9 @@ async def process_attachment(
                 )
             emit(s2, org_id=info["org"], actor_id=info["author"], action="attachment.vision_failed",
                  entity_type="attachment", entity_id=a.id, event_type="attachment.vision_failed",
-                 aggregate_version=None, payload={"code": code})  # fmt: skip
+                 aggregate_version=None,
+                 payload={"code": code, "http_status": exc.http_status,
+                          "provider_code": exc.provider_code, "request_id": exc.request_id})  # fmt: skip
         return PhotoOutcome(attachment_id, "needs_review")
 
     # ---- 2) obtener y guardar la imagen original (privada, tipo verificado por firma de bytes)
@@ -261,9 +285,9 @@ async def process_attachment(
             a.attempts -= 1
         return PhotoOutcome(attachment_id, "pending")
     except VisionFailed as e:
-        return await fail_vision(e.code)
-    except Exception as e:  # noqa: BLE001
-        return await fail_vision(type(e).__name__)
+        return await fail_vision(e)
+    except Exception as e:  # noqa: BLE001  error inesperado del doble/proveedor
+        return await fail_vision(VisionFailed(type(e).__name__))
 
     # ---- 4) mismas reglas que un texto: traducir, combinar con el pie de foto, registrar
     reading: ImageReading = read_extraction(ext)

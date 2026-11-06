@@ -537,31 +537,30 @@ async def test_barrido_cierra_sesiones_vencidas_aunque_nadie_escriba(chat, sessi
 # ---- Atribución de pendientes: jamás automática ----
 
 
-async def test_pendiente_se_atribuye_solo_con_confirmacion_explicita(chat, sessions, seed, tg_api):
+async def test_pendiente_se_atribuye_al_elegir_el_nombre_sin_segunda_pregunta(
+    chat, sessions, seed, tg_api
+):
     await chat.text("falta ibuprofeno 400 mg", now=T0)
     await chat.pick("luis", now=mins(2))
-    assert await observations(sessions) == []  # identificarse NO atribuye lo pendiente
-    assert "¿Los anoto a nombre de Luis?" in tg_api.texts()[-1]
-    await chat.click("att:ok", now=mins(3))
+    # Elegir el nombre ES la confirmación: el reporte pendiente continúa solo.
     (o,) = await observations(sessions)
     assert o.author_id == seed["luis"]
+    reply = "\n".join(tg_api.texts()[-2:])
+    assert "Reportando como Luis" in reply
+    assert "Anotado: Ibuprofeno" in reply
+    assert "¿Los anoto" not in reply
     async with sessions() as s:
         m = (await s.execute(select(ChannelMessage))).scalar_one()
     assert m.attribution_basis == "confirmed_after_identification" and m.attributed_at is not None
-    await chat.click("att:ok", now=mins(4))  # doble clic: sin efecto
+    await chat.click("att:ok", now=mins(4))  # botón viejo: no vuelve a registrar nada
     assert len(await observations(sessions)) == 1
 
 
-async def test_pendiente_descartado_o_viejo_no_se_atribuye(chat, sessions, tg_api):
+async def test_pendiente_viejo_no_se_atribuye_al_elegir_el_nombre(chat, sessions, tg_api):
     await chat.text("falta ibuprofeno 400 mg", now=T0)
-    await chat.pick("ana", now=mins(1))
-    await chat.click("att:no", now=mins(1))
-    assert await observations(sessions) == []
-    await chat.text("falta paracetamol 500 mg", now=mins(20))  # sesión expirada: queda pendiente
-    await chat.pick("luis", now=mins(60))  # recién una hora después
-    await chat.click("att:ok", now=mins(61))
+    await chat.pick("luis", now=mins(60))  # fuera de la ventana de pendientes
     assert await observations(sessions) == []  # demasiado viejo: no se atribuye a Luis
-    assert "no se pueden atribuir" in tg_api.texts()[-1]
+    assert "Un mensaje era de hace demasiado rato" in tg_api.texts()[-1]
     async with sessions() as s:
         st = (
             (
@@ -574,7 +573,7 @@ async def test_pendiente_descartado_o_viejo_no_se_atribuye(chat, sessions, tg_ap
             .scalars()
             .all()
         )
-    assert sorted(st) == ["discarded_by_user", "stale_unattributed"]
+    assert st == ["stale_unattributed"]
 
 
 # ---- Escenario 9: alias ambiguo ----

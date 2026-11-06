@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
+import re
 import time
 from collections import deque
 from typing import Any
@@ -25,7 +27,6 @@ from typing import Any
 import httpx
 
 from app.core.config import Settings
-from app.interpretation.openai_observations import ModelError, error_for_response
 from app.interpretation.vision import (
     VISION_ATTRIBUTES,
     VisionExtraction,
@@ -33,12 +34,73 @@ from app.interpretation.vision import (
     VisionField,
 )
 
+log = logging.getLogger(__name__)
+
 MAX_ATTEMPTS = 2
 WINDOW_SECONDS = 60.0
 SCHEMA_NAME = "vision_extraction"
 MAX_FIELDS = 40
 MAX_TEXT = 200
-RETRYABLE = {"timeout", "rate_limit", "unavailable"}
+# Solo se reintenta lo transitorio: timeout, límite de tasa y 5xx. Credenciales, modelo
+# inexistente, solicitud inválida y cuota agotada no mejoran con un segundo intento.
+RETRYABLE = {"timeout", "http_429", "http_5xx", "unavailable"}
+MAX_PROVIDER_CODE = 64
+MAX_REQUEST_ID = 128
+_SAFE_TOKEN = re.compile(r"[^A-Za-z0-9_.:-]")
+
+
+def _safe_token(value: object, limit: int) -> str | None:
+    """Deja solo caracteres de identificador: nunca se guarda texto libre del proveedor."""
+    if not isinstance(value, str):
+        return None
+    return _SAFE_TOKEN.sub("", value.strip())[:limit] or None
+
+
+def _request_id(response: httpx.Response) -> str | None:
+    return _safe_token(response.headers.get("x-request-id"), MAX_REQUEST_ID)
+
+
+def _provider_error(response: httpx.Response) -> tuple[str | None, str | None]:
+    """(request_id, código del proveedor) sin conservar el mensaje ni el cuerpo de la respuesta."""
+    request_id = _request_id(response)
+    try:
+        body = response.json()
+    except ValueError:
+        return request_id, None
+    if not isinstance(body, dict) or not isinstance(body.get("error"), dict):
+        return request_id, None
+    error = body["error"]
+    return request_id, _safe_token(error.get("code") or error.get("type"), MAX_PROVIDER_CODE)
+
+
+def _failure(response: httpx.Response) -> VisionFailed:
+    """Traduce el estado HTTP a un código **distinto por familia** y adjunta metadatos saneados."""
+    status = response.status_code
+    request_id, provider_code = _provider_error(response)
+    if status == 429:
+        # Cuota agotada no es lo mismo que un límite de tasa temporal.
+        code = "quota_exceeded" if provider_code == "insufficient_quota" else "http_429"
+    elif status >= 500:
+        code = "http_5xx"
+    else:
+        code = f"http_{status}"
+    return VisionFailed(
+        code,
+        http_status=status,
+        provider_code=provider_code,
+        request_id=request_id,
+    )
+
+
+def _log_failure(exc: VisionFailed) -> None:
+    """Registro interno saneado: nunca incluye clave, imagen ni cuerpo del proveedor."""
+    log.warning(
+        "openai_vision_error code=%s http_status=%s provider_code=%s request_id=%s",
+        exc.code,
+        exc.http_status,
+        exc.provider_code,
+        exc.request_id,
+    )
 
 SYSTEM_PROMPT = """Eres un lector de envases de farmacia. Mira la fotografía y devuelve SOLO el \
 JSON del esquema pedido. Reglas:
@@ -158,8 +220,12 @@ class OpenAIVisionInterpreter:
             except VisionFailed as exc:
                 last = exc
                 if exc.code not in RETRYABLE or attempt + 1 >= MAX_ATTEMPTS:
-                    raise
-        raise last or VisionFailed("unavailable")
+                    break
+        if last is None:  # defensivo: el bucle siempre deja un fallo
+            last = VisionFailed("unavailable")
+        # Se registra una sola vez, ya con el resultado final (con o sin reintento).
+        _log_failure(last)
+        raise last
 
     async def _post(
         self, image: bytes, mime: str, caption: str | None
@@ -209,33 +275,60 @@ class OpenAIVisionInterpreter:
         except httpx.HTTPError as exc:
             raise VisionFailed("unavailable") from exc
         if response.status_code >= 400:
-            try:
-                raise error_for_response(response)
-            except ModelError as exc:
-                raise VisionFailed(exc.code) from exc
+            raise _failure(response)
+        request_id = _request_id(response)
         try:
             data = response.json()
         except ValueError as exc:
-            raise VisionFailed("invalid_response") from exc
+            raise VisionFailed(
+                "invalid_response", http_status=response.status_code, request_id=request_id
+            ) from exc
         if not isinstance(data, dict):
-            raise VisionFailed("invalid_response")
+            raise VisionFailed(
+                "invalid_response", http_status=response.status_code, request_id=request_id
+            )
         status = data.get("status")
         if status == "incomplete":
             details = data.get("incomplete_details")
             reason = details.get("reason") if isinstance(details, dict) else None
-            raise VisionFailed("output_truncated" if reason == "max_output_tokens" else "invalid_response")
+            raise VisionFailed(
+                "output_truncated" if reason == "max_output_tokens" else "invalid_response",
+                http_status=response.status_code,
+                request_id=request_id,
+            )
         if status == "failed":
-            raise VisionFailed("unavailable")
+            # El proveedor respondió 200 pero marcó la generación como fallida.
+            error = data.get("error") if isinstance(data.get("error"), dict) else {}
+            raise VisionFailed(
+                "provider_failed",
+                http_status=response.status_code,
+                provider_code=_safe_token(
+                    error.get("code") or error.get("type"), MAX_PROVIDER_CODE
+                ),
+                request_id=request_id,
+            )
         if status not in (None, "completed"):
-            raise VisionFailed("invalid_response")
+            raise VisionFailed(
+                "invalid_response", http_status=response.status_code, request_id=request_id
+            )
         text = _output_text(data)
         if not text:
-            raise VisionFailed("invalid_response")
+            raise VisionFailed(
+                "invalid_response", http_status=response.status_code, request_id=request_id
+            )
         try:
             body = json.loads(text)
         except ValueError as exc:
-            raise VisionFailed("invalid_response") from exc
-        return _extraction(body, data, self.model)
+            raise VisionFailed(
+                "invalid_response", http_status=response.status_code, request_id=request_id
+            ) from exc
+        try:
+            return _extraction(body, data, self.model)
+        except VisionFailed as exc:
+            # La validación local también conserva la traza del proveedor.
+            raise VisionFailed(
+                exc.code, http_status=response.status_code, request_id=request_id
+            ) from exc
 
 
 def _output_text(data: dict) -> str:
