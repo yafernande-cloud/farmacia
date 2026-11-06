@@ -12,7 +12,10 @@
   approve-telegram-request <request_id> --by <app_user_id> --label "<nombre>"
                                   [--mode shared_device|personal] [--branch "<sucursal>"]
                                   [--role operator|admin] [--person <app_user_id>]
-                                  aprueba una solicitud usando la organización del administrador
+                                  [--auxiliary <app_user_id>]...
+                                  aprueba una solicitud usando la organización del administrador;
+                                  un teléfono compartido exige al menos un --auxiliary y los
+                                  habilita en la misma transacción
   add-telegram-auxiliary <account_id> --by <app_user_id> --person <app_user_id>
                                   habilita a una persona en un teléfono compartido (no otorga roles)
   list-auth-subjects --org sim|real --by <app_user_id>
@@ -232,6 +235,11 @@ def _arg(a: list[str], flag: str, default: str | None = None) -> str | None:
     return default
 
 
+def _args(a: list[str], flag: str) -> list[str]:
+    """Todos los valores de una bandera repetible (`--auxiliary` puede aparecer varias veces)."""
+    return [a[i + 1] for i, value in enumerate(a[:-1]) if value == flag]
+
+
 def _subject_arg(a: list[str]) -> str:
     """El `sub` se pide por consola si no viene en --subject, para no dejarlo en el historial del shell."""
     value = _arg(a, "--subject")
@@ -333,6 +341,15 @@ async def approve_telegram_request(request_id: str, a: list[str]) -> None:
         raise SystemExit("Una cuenta personal requiere --person <app_user_id>.")
     if mode == "shared_device" and person:
         raise SystemExit("Un teléfono compartido no se liga a una persona; quita --person.")
+    auxiliaries = _args(a, "--auxiliary")
+    if "--auxiliary" in a and (a.index("--auxiliary") + 1 >= len(a)):
+        raise SystemExit("--auxiliary necesita un <app_user_id>.")
+    if mode == "personal" and auxiliaries:
+        raise SystemExit("Una cuenta personal no usa --auxiliary; la identidad la fija --person.")
+    if mode == "shared_device" and not auxiliaries:
+        raise SystemExit(
+            "Un teléfono compartido requiere al menos un --auxiliary <app_user_id>."
+        )
     role = _arg(a, "--role", "operator") or "operator"
     if role not in {"operator", "admin"}:
         raise SystemExit("--role debe ser operator o admin.")
@@ -348,13 +365,15 @@ async def approve_telegram_request(request_id: str, a: list[str]) -> None:
                 app_user_id=_uuid(person, "app_user_id") if person else None,
                 access_role=role,
                 branch_label=_arg(a, "--branch"),
+                auxiliary_ids=[_uuid(x, "app_user_id") for x in auxiliaries],
             )
     except Exception as e:  # noqa: BLE001
         raise SystemExit(getattr(e, "message", str(e))) from None
     print(
         f"Solicitud aprobada en «{name}» por {actor.display_name}: cuenta {r.account.id} "
         f"({r.account.mode}), chat {r.binding.external_chat_id}. "
-        "La persona ya recibe la confirmación por Telegram."
+        + (f"{len(auxiliaries)} auxiliar(es) habilitado(s). " if auxiliaries else "")
+        + "La persona ya recibe la confirmación por Telegram."
     )
     await dispose_engine()
 

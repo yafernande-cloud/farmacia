@@ -831,14 +831,31 @@ async def approve_request(
     app_user_id: uuid.UUID | None = None,
     access_role: str = "operator",
     branch_label: str | None = None,
+    auxiliary_ids: list[uuid.UUID] | None = None,
     now: datetime | None = None,
 ) -> Approval:
-    """Aprueba una solicitud, crea/reutiliza la cuenta y habilita el chat. Todo en una transacción."""
+    """Aprueba una solicitud, crea/reutiliza la cuenta y habilita el chat. Todo en una transacción.
+
+    En un teléfono compartido `auxiliary_ids` es obligatorio: la aprobación y las asociaciones se
+    registran juntas, así que no queda un teléfono autorizado sin nadie que pueda reportar. Se
+    valida cada persona ANTES de crear nada; si alguna no pertenece a la organización, está inactiva
+    o no puede reportar, la aprobación completa falla (nada parcial). Una persona ya habilitada se
+    deja como está (la operación es idempotente para esa asociación).
+    """
     require(actor.roles, Permission.MANAGE_ACCOUNTS)
     now = now or _now()
     label = _clean_label(display_label)
     branch = _clean_branch(branch_label)
     _validate_mode_role(mode, access_role)
+    wanted = list(dict.fromkeys(auxiliary_ids or []))
+
+    if mode == MODE_PERSONAL:
+        if wanted:
+            raise DomainError(
+                "PERSONAL_WITH_AUXILIARIES",
+                "Una cuenta personal no usa auxiliares: la identidad ya está fijada por la persona.",
+                status_code=400,
+            )
 
     req = (
         await session.execute(
@@ -879,6 +896,27 @@ async def approve_request(
                 "Un teléfono compartido no se liga a una persona: la identidad se elige en cada sesión.",
                 status_code=400,
             )
+
+    if mode == MODE_SHARED and not wanted:
+        raise DomainError(
+            "AUXILIARY_REQUIRED",
+            "Un teléfono compartido debe indicar al menos un auxiliar habilitado.",
+            status_code=400,
+        )
+
+    # Se valida la lista completa ANTES de crear cuenta o vínculo: o quedan todos habilitados, o
+    # la aprobación no se registra. Así una persona de otra organización o sin permiso no deja una
+    # aprobación a medias.
+    reporters_to_enable: list[AppUser] = []
+    for aux_id in wanted:
+        person = await _load_person(session, actor.organization_id, aux_id)
+        if not can_report(list(person.roles or [])):
+            raise DomainError(
+                "PERSON_CANNOT_REPORT",
+                f"{person.display_name} no está activa o no tiene un rol que permita reportar.",
+                status_code=422,
+            )
+        reporters_to_enable.append(person)
 
     await advisory_lock(session, f"tgacct:{req.provider}:{req.external_user_id}")
     account = (
@@ -956,6 +994,20 @@ async def approve_request(
         await _deactivate_active_auxiliaries(
             session, account, actor_id=actor.id, now=now, reason="account_mode_personal"
         )
+    else:
+        # Misma transacción que la aprobación. Una asociación ya activa se conserva tal cual.
+        for person in reporters_to_enable:
+            link = (
+                await session.execute(
+                    select(TelegramAccountAuxiliary).where(
+                        TelegramAccountAuxiliary.account_id == account.id,
+                        TelegramAccountAuxiliary.app_user_id == person.id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if link is not None and link.active:
+                continue
+            await add_account_auxiliary(session, actor, account.id, person.id, now=now)
 
     binding = ChannelBinding(
         organization_id=actor.organization_id,
@@ -977,6 +1029,7 @@ async def approve_request(
          payload={"account_id": str(account.id), "binding_id": str(binding.id), "mode": mode,
                   "access_role": access_role, "branch_label": branch,
                   "app_user_id": str(app_user_id) if app_user_id else None,
+                  "auxiliary_ids": [str(p.id) for p in reporters_to_enable],
                   "request_id": str(req.id), "origin": account.origin},
          after={"display_label": label, "branch_label": account.branch_label, "mode": mode,
                 "access_role": access_role, "status": "active"})  # fmt: skip

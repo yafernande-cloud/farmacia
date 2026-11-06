@@ -44,18 +44,23 @@ from app.services.events import advisory_lock, emit
 from app.services.provenance import org_kind, origin_for
 from app.services.quantities import apply_quantity_command
 
-KEYBOARD = [["Ver faltantes", "Cambiar auxiliar"], ["Ver auxiliar activo", "Ayuda"]]
+# Dos filas: el listado en la primera y las dos acciones de identidad/ayuda en la segunda.
+KEYBOARD = [["📋 Ver listado de Faltantes"], ["👤 Cambiar auxiliar", "❓ Ayuda"]]
 # Con un solo auxiliar habilitado no hay nada que cambiar: el teclado no ofrece el selector.
-KEYBOARD_SINGLE = [["Ver faltantes", "Ver auxiliar activo"], ["Ayuda"]]
+KEYBOARD_SINGLE = [["📋 Ver listado de Faltantes"], ["❓ Ayuda"]]
 # En un teléfono personal no hay selector de identidad: la cuenta autorizada ya la fija.
-KEYBOARD_PERSONAL = [["Ver faltantes", "Ver auxiliar activo"], ["Ayuda"]]
-CMD_LIST = {"/lista", "ver lista", "lista", "ver faltantes", "faltantes"}
-CMD_CHANGE = {"/cambiar", "cambiar auxiliar", "cambiar"}
+KEYBOARD_PERSONAL = [["📋 Ver listado de Faltantes"], ["❓ Ayuda"]]
+CMD_LIST = {
+    "/lista", "ver lista", "lista", "ver faltantes", "faltantes",
+    "📋 ver listado de faltantes", "ver listado de faltantes", "listado de faltantes",
+}  # fmt: skip
+CMD_CHANGE = {"/cambiar", "cambiar auxiliar", "cambiar", "👤 cambiar auxiliar"}
+# Se conservan las variantes antiguas aunque «Ver auxiliar activo» ya no esté en el teclado.
 CMD_WHO = {
     "/quien", "¿quién soy?", "quien soy", "¿quien soy?", "/yo",
     "ver auxiliar activo", "auxiliar activo", "¿quién está activo?", "quien esta activo",
 }  # fmt: skip
-CMD_HELP = {"/ayuda", "/help", "ayuda"}
+CMD_HELP = {"/ayuda", "/help", "ayuda", "❓ ayuda"}
 # «/salir» sigue disponible como comando de compatibilidad, aunque ya no está en el teclado.
 CMD_LOGOUT = {"/salir", "/finalizar", "finalizar reportes", "cerrar sesion", "cerrar sesión"}
 
@@ -161,12 +166,26 @@ async def _selectable(
     return await sessions.list_reporters(session, binding.organization_id)
 
 
-def _selector(auxs: list[AppUser], text: str) -> Reply:
-    """Botones con las personas activas y disponibles (datos de PostgreSQL). Si no hay ninguna, no hay botones."""
+def _selector(
+    auxs: list[AppUser],
+    text: str,
+    *,
+    current: str | None = None,
+    keyboard: list[list[str]] | None = None,
+) -> Reply:
+    """Botones con las personas activas y disponibles (datos de PostgreSQL).
+
+    Si `current` viene, se informa quién reporta ahora antes de preguntar, para que elegir al mismo
+    auxiliar sea una decisión informada y no un cambio a ciegas. `keyboard` respeta la forma del
+    teclado de la cuenta (sin «Cambiar auxiliar» cuando hay cero o un auxiliar).
+    """
+    kb = KEYBOARD if keyboard is None else keyboard
+    if current:
+        text = f"Ahora reporta: {current}.\n\n{text}"
     if not auxs:
         return Reply(
             "No hay personas disponibles para reportar en este momento. Pide a compras que revise el personal.",
-            keyboard=KEYBOARD,
+            keyboard=kb,
         )
     rows, row = [], []
     for u in auxs:
@@ -176,7 +195,7 @@ def _selector(auxs: list[AppUser], text: str) -> Reply:
             row = []
     if row:
         rows.append(row)
-    return Reply(text, rows, KEYBOARD)
+    return Reply(text, rows, kb)
 
 
 _PENDING = {
@@ -1180,7 +1199,7 @@ async def handle_event(session: AsyncSession, binding: ChannelBinding, ev: Chann
                 return [Reply(f"Hola. {_identity_error_text(err)}", keyboard=keyboard)]
             auxs = await _selectable(session, binding, account)
             if not auxs:
-                return [_selector(auxs, "Hola.")]
+                return [_selector(auxs, "Hola.", keyboard=keyboard)]
             return [
                 Reply(
                     f"Hola. {_identity_error_text(err)} ¿Quién va a reportar ahora?",
@@ -1213,7 +1232,15 @@ async def handle_event(session: AsyncSession, binding: ChannelBinding, ev: Chann
                         keyboard=keyboard,
                     )
                 ]
-            return [_selector(auxs, "¿Quién va a reportar ahora?")]
+            # Se informa quién reporta ahora (si sigue habilitado en esta cuenta) para poder
+            # volver a elegir a la misma persona sin advertencias ni bloqueos.
+            active = await sessions.active_session(session, binding, now, cfg.idle)
+            current = None
+            if active is not None and any(u.id == active.auxiliary_id for u in auxs):
+                current_user = await session.get(AppUser, active.auxiliary_id)
+                current = current_user.display_name if current_user is not None else None
+            return [_selector(auxs, "¿Quién va a reportar ahora?", current=current,
+                              keyboard=keyboard)]  # fmt: skip
         if low in CMD_WHO:
             sess, _actor, err = await _resolve_identity(
                 session, binding, account, now, cfg.idle, event_id=inbound.id
@@ -1274,7 +1301,8 @@ async def handle_event(session: AsyncSession, binding: ChannelBinding, ev: Chann
                 keyboard=keyboard,
             )]  # fmt: skip
         return [_selector(await _selectable(session, binding, account),
-                          "Guardé tu mensaje, pero no lo anoto a nombre de nadie hasta saber quién eres. ¿Quién eres?")]  # fmt: skip
+                          "Guardé tu mensaje, pero no lo anoto a nombre de nadie hasta saber quién eres. ¿Quién eres?",
+                          keyboard=keyboard)]  # fmt: skip
 
     intent = classify_intent(text)
     await sessions.touch(session, sess, now, cfg.idle)
@@ -1309,7 +1337,7 @@ async def handle_event(session: AsyncSession, binding: ChannelBinding, ev: Chann
     if intent is Intent.QUESTION:
         return [
             Reply(
-                "No registro preguntas. Para anotar un faltante escribe el producto; para consultar, usa «Ver faltantes».",
+                "No registro preguntas. Para anotar un faltante escribe el producto; para consultar, usa «📋 Ver listado de Faltantes».",
                 keyboard=keyboard,
             )
         ]
@@ -1346,13 +1374,14 @@ def _selector_buttons(auxs: list[AppUser]) -> list[list[Button]]:
 
 _HELP = (
     "Escribe lo que falta («falta ibuprofeno 400 mg») o envía una foto del envase. "
-    "«Ver faltantes» muestra todos los faltantes activos de la farmacia; «Ver auxiliar activo» "
-    "dice quién está reportando."
+    "«📋 Ver listado de Faltantes» muestra todos los faltantes activos de la farmacia. "
+    "«👤 Cambiar auxiliar» dice quién está reportando y permite elegirlo. "
+    "«❓ Ayuda» vuelve a mostrar este texto."
 )
 _HELP_PERSONAL = (
     "Escribe lo que falta («falta ibuprofeno 400 mg») o envía una foto del envase. "
-    "«Ver faltantes» muestra todos los faltantes activos de la farmacia. Esta cuenta está "
-    "vinculada a una persona: no necesitas elegir identidad en cada mensaje."
+    "«📋 Ver listado de Faltantes» muestra todos los faltantes activos de la farmacia. "
+    "Esta cuenta está vinculada a una persona: no necesitas elegir identidad en cada mensaje."
 )
 
 
@@ -1466,13 +1495,14 @@ async def _on_callback(session, binding, ev, inbound, now, cfg,
                     keyboard=keyboard,
                 ),
                 _selector(
-                    await _selectable(session, binding, account), "¿Quién va a reportar ahora?"
+                    await _selectable(session, binding, account),
+                    "¿Quién va a reportar ahora?",
+                    keyboard=keyboard,
                 ),
             ]
         u = await session.get(AppUser, sess.auxiliary_id)
-        replies = [
-            Reply(f"Listo, {u.display_name}. Reportando como {u.display_name}.", keyboard=keyboard)
-        ]
+        # Confirmación sencilla e idéntica elija al mismo auxiliar o a otro.
+        replies = [Reply(f"✅ Reportando como {u.display_name}.", keyboard=keyboard)]
         pend = await _pending_messages(session, binding)
         if pend:
             fresh = [m for m in pend if m.received_at >= now - cfg.pending_max_age]
@@ -1501,7 +1531,7 @@ async def _on_pending_decision(session, binding, inbound, accept: bool, now, cfg
         if personal:
             return [Reply(_identity_error_text(err), keyboard=keyboard)]
         return [_selector(await _selectable(session, binding, account),
-                          "Primero necesito saber quién eres.")]  # fmt: skip
+                          "Primero necesito saber quién eres.", keyboard=keyboard)]  # fmt: skip
     org = binding.organization_id
     pend = await _pending_messages(session, binding)
     if not pend:
@@ -1612,7 +1642,8 @@ async def _on_photo(session, binding, ev, inbound, sess, actor, now, cfg,
                 keyboard=keyboard,
             )]  # fmt: skip
         return [_selector(await _selectable(session, binding, account),
-                          "Guardé la foto, pero no la anoto a nombre de nadie hasta saber quién eres. ¿Quién eres?")]  # fmt: skip
+                          "Guardé la foto, pero no la anoto a nombre de nadie hasta saber quién eres. ¿Quién eres?",
+                          keyboard=keyboard)]  # fmt: skip
     await sessions.touch(session, sess, now, cfg.idle)
     base = (f"Recibí la foto, {actor.display_name}. " + ("La estoy revisando y te aviso." if cfg.vision_enabled
             else "La guardé; todavía no la leo automáticamente, queda para revisión de compras."))  # fmt: skip

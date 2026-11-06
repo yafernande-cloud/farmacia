@@ -113,6 +113,14 @@ class ApproveIn(BaseModel):
         default="operator",
         description="Tipo de cuenta; no otorga permisos de negocio (salen de app_user.roles)",
     )
+    auxiliary_ids: list[uuid.UUID] = Field(
+        default_factory=list,
+        max_length=50,
+        description=(
+            "Auxiliares a habilitar en el mismo paso. Obligatorio (al menos uno) en modo "
+            "shared_device y prohibido en modo personal."
+        ),
+    )
 
 
 class UpdateAccountIn(BaseModel):
@@ -286,6 +294,7 @@ async def approve_request(
             app_user_id=body.app_user_id,
             access_role=body.access_role,
             branch_label=body.branch_label,
+            auxiliary_ids=body.auxiliary_ids,
         )
         return await _account_out(session, actor, approval.account.id)
 
