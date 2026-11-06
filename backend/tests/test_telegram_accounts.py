@@ -1117,6 +1117,87 @@ async def test_teclado_nuevo_y_cambiar_auxiliar_solo_con_varios(
     assert len(keyboard) == 2 and len(keyboard[0]) == 1 and len(keyboard[1]) == 2
 
 
+async def test_faltantes_sin_identidad_consulta_el_listado_y_no_crea_reporte(
+    farm, sessions, user, tg_api
+):
+    """`/faltantes` es una consulta: se responde aunque todavía no haya identidad.
+
+    Antes se guardaba como mensaje pendiente y, al elegir a la persona, se interpretaba como el
+    producto «Faltantes» («Anotado: Faltantes — 1 unidad solicitada»). Este es el caso real.
+    """
+    a = await shared_account(sessions, farm, 55500075, links=("ana", "luis"))
+    c = user(55500075)
+
+    await c.text("/faltantes", now=mins(1))
+    assert "La lista de faltantes está vacía." in tg_api.texts()[-1]
+    async with sessions() as s:
+        msgs = (
+            await s.execute(
+                select(ChannelMessage).where(ChannelMessage.channel_binding_id == a.binding.id)
+            )
+        ).scalars().all()
+    assert msgs == []  # ni pendiente de atribución ni observación
+
+    # Elegir a Ana después de la consulta no crea nada: la consulta ya se respondió.
+    await c.click(f"sel:{farm['ana']}", now=mins(2))
+    assert "Reportando como Ana" in tg_api.texts()[-1]
+    assert "¿Los anoto" not in tg_api.texts()[-1]
+    assert await observations(sessions) == []
+
+
+async def test_comando_pendiente_guardado_antes_se_ejecuta_sin_crear_faltante(
+    farm, sessions, user, tg_api
+):
+    """Una fila pendiente con `/faltantes` guardada por la versión anterior no se anota.
+
+    Al confirmar la identidad se descarta como comando y se muestra el listado que la persona
+    pidió; el flujo normal de pendientes que sí contienen reportes no cambia.
+    """
+    a = await shared_account(sessions, farm, 55500076, links=("ana", "luis"))
+    c = user(55500076)
+    # El texto de un mensaje recibido es inmutable (trigger de la BD): la fila histórica se
+    # inserta tal como la guardó la versión con el error.
+    async with sessions() as s, s.begin():
+        ev = InboundEvent(
+            organization_id=farm["org"],
+            provider="telegram",
+            channel_binding_id=a.binding.id,
+            external_event_id="legacy-faltantes",
+            event_type="message",
+            payload={"text": "/faltantes"},
+            payload_hash="0" * 64,
+            received_at=mins(1),
+        )
+        s.add(ev)
+        await s.flush()
+        m = ChannelMessage(
+            organization_id=farm["org"],
+            channel_binding_id=a.binding.id,
+            inbound_event_id=ev.id,
+            external_message_id="legacy-1",
+            kind="text",
+            text="/faltantes",
+            sent_at=mins(1),
+            received_at=mins(1),
+            attribution_status="pending_attribution",
+            data_origin="simulated",
+        )
+        s.add(m)
+        await s.flush()
+        mid = m.id
+
+    await c.click(f"sel:{farm['ana']}", now=mins(2))
+
+    reply = "\n".join(tg_api.texts()[-2:])
+    assert "Reportando como Ana" in reply
+    assert "La lista de faltantes está vacía." in reply  # ejecuta la consulta pendiente
+    assert "¿Los anoto" not in reply  # un comando no se ofrece como reporte
+    assert await observations(sessions) == []
+    async with sessions() as s:
+        m = await s.get(ChannelMessage, mid)
+    assert m.attribution_status == "discarded" and m.discard_reason == "command_not_report"
+
+
 async def test_cambiar_auxiliar_muestra_al_activo_y_permite_repetirlo(
     farm, sessions, user, tg_api
 ):

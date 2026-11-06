@@ -51,7 +51,7 @@ KEYBOARD_SINGLE = [["📋 Ver listado de Faltantes"], ["❓ Ayuda"]]
 # En un teléfono personal no hay selector de identidad: la cuenta autorizada ya la fija.
 KEYBOARD_PERSONAL = [["📋 Ver listado de Faltantes"], ["❓ Ayuda"]]
 CMD_LIST = {
-    "/lista", "ver lista", "lista", "ver faltantes", "faltantes",
+    "/lista", "/faltantes", "ver lista", "lista", "ver faltantes", "faltantes",
     "📋 ver listado de faltantes", "ver listado de faltantes", "listado de faltantes",
 }  # fmt: skip
 CMD_CHANGE = {"/cambiar", "cambiar auxiliar", "cambiar", "👤 cambiar auxiliar"}
@@ -63,6 +63,21 @@ CMD_WHO = {
 CMD_HELP = {"/ayuda", "/help", "ayuda", "❓ ayuda"}
 # «/salir» sigue disponible como comando de compatibilidad, aunque ya no está en el teclado.
 CMD_LOGOUT = {"/salir", "/finalizar", "finalizar reportes", "cerrar sesion", "cerrar sesión"}
+
+
+def _command_text(text: str) -> str:
+    """Texto normalizado para comparar comandos: sin espacios extra, en minúsculas y sin la
+    mención `@bot` que Telegram agrega en grupos (`/faltantes@MiBot`)."""
+    low = (text or "").strip().lower()
+    if low.startswith("/"):
+        first, sep, rest = low.partition(" ")
+        low = first.split("@", 1)[0] + (sep + rest if sep else "")
+    return low
+
+
+def _is_command_text(text: str) -> bool:
+    """Todo texto que empieza con «/» es un comando, nunca el nombre de un producto."""
+    return _command_text(text).startswith("/")
 
 
 @dataclass(frozen=True)
@@ -473,6 +488,20 @@ async def _pending_messages(session, binding) -> list[ChannelMessage]:
             )
         ).scalars()
     )  # fmt: skip
+
+
+def _discard_pending_command(session, org, m: ChannelMessage, actor_id, now) -> bool:
+    """Resuelve un pendiente que era un comando, no un producto. Devuelve si pedía el listado.
+
+    Sirve para filas guardadas por versiones anteriores que aún no reconocían el comando: la
+    identidad no las convierte en reportes.
+    """
+    m.attribution_status, m.discarded_at = "discarded", now
+    m.discard_reason = "command_not_report"
+    emit(session, org_id=org, actor_id=actor_id, action="message.discarded", entity_type="channel_message",
+         entity_id=m.id, event_type="message.discarded", aggregate_version=None,
+         payload={"reason": m.discard_reason})  # fmt: skip
+    return _command_text(m.text or "") in CMD_LIST
 
 
 # ------------------------------------------------------------------ confirmación de coincidencias
@@ -1189,7 +1218,7 @@ async def handle_event(session: AsyncSession, binding: ChannelBinding, ev: Chann
         return ack + await _on_callback(session, binding, ev, inbound, now, cfg, account)
 
     text = (ev.text or "").strip()
-    low = text.lower()
+    low = _command_text(text)
     if ev.kind == "start" or low in ("/start",):
         sess, _actor, err = await _resolve_identity(
             session, binding, account, now, cfg.idle, event_id=inbound.id
@@ -1276,6 +1305,14 @@ async def handle_event(session: AsyncSession, binding: ChannelBinding, ev: Chann
                     else "No había una sesión activa."
                 )
             return [Reply(text, keyboard=keyboard)]
+        if _is_command_text(text):
+            # Un comando desconocido NUNCA es el nombre de un producto: no se guarda pendiente
+            # ni se convierte en observación. Se orienta a las acciones que sí existen.
+            return [Reply(
+                "No conozco ese comando. Escribe el producto que falta o usa "
+                "«📋 Ver listado de Faltantes».",
+                keyboard=keyboard,
+            )]
 
     sess, actor, err = await _resolve_identity(
         session, binding, account, now, cfg.idle, event_id=inbound.id
@@ -1504,8 +1541,21 @@ async def _on_callback(session, binding, ev, inbound, now, cfg,
         # Confirmación sencilla e idéntica elija al mismo auxiliar o a otro.
         replies = [Reply(f"✅ Reportando como {u.display_name}.", keyboard=keyboard)]
         pend = await _pending_messages(session, binding)
-        if pend:
-            fresh = [m for m in pend if m.received_at >= now - cfg.pending_max_age]
+        fresh = [m for m in pend if m.received_at >= now - cfg.pending_max_age]
+        # Un comando pendiente (p. ej. `/faltantes` guardado por una versión anterior) no es un
+        # reporte: al identificarse se resuelve como consulta, sin preguntar si se anota.
+        queries = [m for m in fresh if m.kind == "text" and _is_command_text(m.text or "")]
+        show_list = False
+        for m in queries:
+            show_list = (
+                _discard_pending_command(session, org, m, sess.auxiliary_id, now) or show_list
+            )
+        if queries:
+            ids = {m.id for m in queries}
+            fresh = [m for m in fresh if m.id not in ids]
+            if show_list:
+                replies.append(await _list_reply(session, org, 0, cfg, keyboard))
+        if fresh:
             note = f"Tienes {len(fresh)} mensaje(s) recibido(s) antes de identificarte."
             replies.append(Reply(f"{note} ¿Los anoto a nombre de {u.display_name}?",
                                  [[Button(f"Anotar a nombre de {u.display_name}", "att:ok"), Button("Descartar", "att:no")]],
@@ -1538,6 +1588,7 @@ async def _on_pending_decision(session, binding, inbound, accept: bool, now, cfg
         return [Reply("No hay mensajes pendientes.", keyboard=keyboard)]
     lines: list[str] = []
     hold: tuple[ChannelMessage, dict] | None = None
+    show_list = False
     done = stale = 0
     for m in pend:
         fresh = m.received_at >= now - cfg.pending_max_age
@@ -1548,6 +1599,11 @@ async def _on_pending_decision(session, binding, inbound, accept: bool, now, cfg
             emit(session, org_id=org, actor_id=actor.id, action="message.discarded", entity_type="channel_message",
                  entity_id=m.id, event_type="message.discarded", aggregate_version=None,
                  payload={"reason": m.discard_reason})  # fmt: skip
+            continue
+        if m.kind == "text" and _is_command_text(m.text or ""):
+            # Confirmar la identidad no convierte un comando en reporte: se descarta como comando
+            # y, si era el listado, se ejecuta la consulta que la persona pidió.
+            show_list = _discard_pending_command(session, org, m, actor.id, now) or show_list
             continue
         # La persona confirmó explícitamente: queda atribuida. En una cuenta personal la base es
         # `authorized_account` (la cuenta ya fijaba la identidad); en el teléfono compartido,
@@ -1591,12 +1647,16 @@ async def _on_pending_decision(session, binding, inbound, accept: bool, now, cfg
         lines.append(
             f"{stale} mensaje(s) eran de hace demasiado rato y no se pueden atribuir; envíalos de nuevo."
         )
-    replies = [
-        Reply(
-            "\n".join(lines or ["Listo."]) + f"\n{_footer(actor.display_name, personal)}",
-            keyboard=keyboard,
+    replies: list[Reply] = []
+    if show_list:
+        replies.append(await _list_reply(session, org, 0, cfg, keyboard))
+    if lines or hold is not None or not show_list:
+        replies.append(
+            Reply(
+                "\n".join(lines or ["Listo."]) + f"\n{_footer(actor.display_name, personal)}",
+                keyboard=keyboard,
+            )
         )
-    ]
     if hold is not None:
         hold_msg, hold_pending = hold
         replies.append(
