@@ -500,11 +500,46 @@ async def test_fallo_http_de_openai_guarda_metadatos_internos_y_mantiene_el_mens
         "http_status": 404,
         "provider_code": "model_not_found",
         "request_id": "req_abc123",
+        "detail": None,
     }
     assert await observations(sessions) == []
     reply = tg_api.texts()[-1]
     assert "No pude identificar el producto de la fotografía." in reply
     assert "404" not in reply and "model_not_found" not in reply and "req_abc123" not in reply
+
+
+async def test_respuesta_200_invalida_guarda_la_rama_del_analisis(photo_chat, sessions, tg_api):
+    """HTTP 200 que no se puede interpretar: se guarda qué rama falló, nunca el texto leído."""
+    failure = VisionFailed(
+        "invalid_response",
+        http_status=200,
+        request_id="req_babb87",
+        detail="output_not_json",
+    )
+    c = photo_chat(vision=LiveVision(error=failure))
+    await c.pick("ana")
+    await c.send(photo_update, img(tg_api, 32))
+
+    (a,) = await attachments(sessions)
+    assert a.status == "needs_review"
+    assert a.error == "vision_failed:invalid_response"
+    assert a.uncertainties == [
+        "vision_failed:invalid_response",
+        "vision_http_status:200",
+        "vision_request_id:req_babb87",
+        "vision_detail:output_not_json",
+    ]
+    async with sessions() as s:
+        payload = (
+            await s.execute(
+                select(OutboxEvent.payload).where(OutboxEvent.type == "attachment.vision_failed")
+            )
+        ).scalar_one()
+    assert payload["detail"] == "output_not_json" and payload["http_status"] == 200
+    assert await observations(sessions) == []
+    reply = tg_api.texts()[-1]
+    assert "No pude identificar el producto de la fotografía." in reply
+    assert "output_not_json" not in reply and "req_babb87" not in reply
 
 
 async def test_foto_del_mismo_producto_ya_anotado_no_duplica_el_faltante(

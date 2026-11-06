@@ -174,13 +174,17 @@ async def process_attachment(
             details.append(f"vision_provider_code:{exc.provider_code}")
         if exc.request_id:
             details.append(f"vision_request_id:{exc.request_id}")
+        if exc.detail:
+            # Rama exacta del análisis local (p. ej. `output_not_json`); nunca el texto leído.
+            details.append(f"vision_detail:{exc.detail}")
         log.warning(
-            "vision_failed photo=%s code=%s http_status=%s provider_code=%s request_id=%s",
+            "vision_failed photo=%s code=%s http_status=%s provider_code=%s request_id=%s detail=%s",
             attachment_id,
             code,
             exc.http_status,
             exc.provider_code,
             exc.request_id,
+            exc.detail,
         )
         async with sm() as s2, s2.begin():
             a = await s2.get(Attachment, attachment_id)
@@ -208,7 +212,8 @@ async def process_attachment(
                  entity_type="attachment", entity_id=a.id, event_type="attachment.vision_failed",
                  aggregate_version=None,
                  payload={"code": code, "http_status": exc.http_status,
-                          "provider_code": exc.provider_code, "request_id": exc.request_id})  # fmt: skip
+                          "provider_code": exc.provider_code, "request_id": exc.request_id,
+                          "detail": exc.detail})  # fmt: skip
         return PhotoOutcome(attachment_id, "needs_review")
 
     # ---- 2) obtener y guardar la imagen original (privada, tipo verificado por firma de bytes)

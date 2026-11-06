@@ -91,9 +91,10 @@ class VisionUnavailable(RuntimeError):
 class VisionFailed(RuntimeError):
     """El proveedor de visión falló. `code` nunca se muestra al usuario.
 
-    `http_status`, `provider_code` y `request_id` son datos técnicos **ya saneados** para el
-    diagnóstico interno (registro y auditoría): nunca contienen la clave, la imagen ni el cuerpo
-    de la respuesta del proveedor.
+    `http_status`, `provider_code`, `request_id` y `detail` son datos técnicos **ya saneados**
+    para el diagnóstico interno (registro y auditoría): nunca contienen la clave, la imagen, el
+    texto leído ni el cuerpo de la respuesta del proveedor. `detail` señala **qué rama** del
+    análisis local rechazó la respuesta (p. ej. `output_not_json`), sin guardar su contenido.
     """
 
     def __init__(
@@ -103,12 +104,14 @@ class VisionFailed(RuntimeError):
         http_status: int | None = None,
         provider_code: str | None = None,
         request_id: str | None = None,
+        detail: str | None = None,
     ):
         super().__init__(code)
         self.code = code
         self.http_status = http_status
         self.provider_code = provider_code
         self.request_id = request_id
+        self.detail = detail
 
 
 class VisionInterpreter(Protocol):

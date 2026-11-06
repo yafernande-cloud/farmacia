@@ -302,7 +302,7 @@ async def test_salida_truncada_nunca_se_parsea():
     assert exc.value.code == "output_truncated"
 
 
-def test_un_atributo_repetido_es_salida_ambigua():
+def test_un_atributo_repetido_con_valores_distintos_es_salida_ambigua():
     from app.interpretation.openai_vision import _extraction
 
     body = {
@@ -313,8 +313,121 @@ def test_un_atributo_repetido_es_salida_ambigua():
         ],
         "warnings": [],
     }
-    with pytest.raises(VisionFailed):
+    with pytest.raises(VisionFailed) as exc:
         _extraction(body, {"model": "gpt-vision-test"}, "gpt-vision-test")
+    assert exc.value.detail == "duplicate_attribute:strength"
+
+
+async def test_un_texto_largo_valido_se_recorta_y_no_anula_la_lectura():
+    """El esquema no limita el largo de `text`: un dato largo no puede perder toda la foto."""
+    large = "aqua glycerin cetearyl alcohol " * 20  # > 200 caracteres
+    assert len(large) > 200
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return _ok(
+            {
+                "legibility": "clear",
+                "fields": [
+                    {"attribute": "ingredient", "text": large, "confidence": 0.9},
+                    {"attribute": "content", "text": "50 ml", "confidence": 0.95},
+                ],
+                "warnings": [],
+            }
+        )
+
+    ext = await _interpreter(handler).extract(fake_jpeg(25), "image/jpeg", None)
+    fields = {f.attribute: f.text for f in ext.fields}
+    assert len(fields["ingredient"]) == 200 and fields["content"] == "50 ml"
+
+
+async def test_una_repeticion_identica_se_colapsa_y_no_anula_la_lectura():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return _ok(
+            {
+                "legibility": "clear",
+                "fields": [
+                    {"attribute": "content", "text": "50 ml", "confidence": 0.9},
+                    {"attribute": "content", "text": " 50 ml ", "confidence": 0.8},
+                ],
+                "warnings": [],
+            }
+        )
+
+    ext = await _interpreter(handler).extract(fake_jpeg(26), "image/jpeg", None)
+    assert [(f.attribute, f.text) for f in ext.fields] == [("content", "50 ml")]
+
+
+async def test_un_campo_vacio_se_ignora_sin_perder_el_resto():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return _ok(
+            {
+                "legibility": "partial",
+                "fields": [
+                    {"attribute": "product_name", "text": "   ", "confidence": 0.9},
+                    {"attribute": "variant", "text": "Berry Warm", "confidence": 0.9},
+                ],
+                "warnings": [],
+            }
+        )
+
+    ext = await _interpreter(handler).extract(fake_jpeg(27), "image/jpeg", None)
+    assert [(f.attribute, f.text) for f in ext.fields] == [("variant", "Berry Warm")]
+
+
+async def test_respuesta_200_sin_mensaje_registra_la_rama_no_message():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"status": "completed", "output": []},
+            headers={"x-request-id": "req_sin_msg"},
+        )
+
+    with pytest.raises(VisionFailed) as exc:
+        await _interpreter(handler).extract(fake_jpeg(28), "image/jpeg", None)
+    failure = exc.value
+    assert failure.code == "invalid_response" and failure.detail == "no_message"
+    assert (failure.http_status, failure.request_id) == (200, "req_sin_msg")
+
+
+async def test_una_negativa_del_modelo_se_registra_sin_guardar_su_texto():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "refusal", "refusal": "no puedo ayudarte"}],
+                    }
+                ],
+            },
+        )
+
+    with pytest.raises(VisionFailed) as exc:
+        await _interpreter(handler).extract(fake_jpeg(29), "image/jpeg", None)
+    assert exc.value.code == "invalid_response" and exc.value.detail == "refusal"
+    assert "no puedo ayudarte" not in repr(exc.value.__dict__)
+
+
+async def test_salida_que_no_es_json_registra_la_rama_output_not_json():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "no es json"}],
+                    }
+                ],
+            },
+        )
+
+    with pytest.raises(VisionFailed) as exc:
+        await _interpreter(handler).extract(fake_jpeg(30), "image/jpeg", None)
+    assert exc.value.code == "invalid_response" and exc.value.detail == "output_not_json"
 
 
 async def test_simulacion_sigue_marcada_y_no_se_confunde_con_lectura_real():

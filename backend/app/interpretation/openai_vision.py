@@ -46,6 +46,7 @@ MAX_TEXT = 200
 RETRYABLE = {"timeout", "http_429", "http_5xx", "unavailable"}
 MAX_PROVIDER_CODE = 64
 MAX_REQUEST_ID = 128
+MAX_DETAIL = 64
 _SAFE_TOKEN = re.compile(r"[^A-Za-z0-9_.:-]")
 
 
@@ -95,11 +96,12 @@ def _failure(response: httpx.Response) -> VisionFailed:
 def _log_failure(exc: VisionFailed) -> None:
     """Registro interno saneado: nunca incluye clave, imagen ni cuerpo del proveedor."""
     log.warning(
-        "openai_vision_error code=%s http_status=%s provider_code=%s request_id=%s",
+        "openai_vision_error code=%s http_status=%s provider_code=%s request_id=%s detail=%s",
         exc.code,
         exc.http_status,
         exc.provider_code,
         exc.request_id,
+        exc.detail,
     )
 
 SYSTEM_PROMPT = """Eres un lector de envases de farmacia. Mira la fotografía y devuelve SOLO el \
@@ -281,11 +283,17 @@ class OpenAIVisionInterpreter:
             data = response.json()
         except ValueError as exc:
             raise VisionFailed(
-                "invalid_response", http_status=response.status_code, request_id=request_id
+                "invalid_response",
+                http_status=response.status_code,
+                request_id=request_id,
+                detail="response_not_json",
             ) from exc
         if not isinstance(data, dict):
             raise VisionFailed(
-                "invalid_response", http_status=response.status_code, request_id=request_id
+                "invalid_response",
+                http_status=response.status_code,
+                request_id=request_id,
+                detail="response_not_object",
             )
         status = data.get("status")
         if status == "incomplete":
@@ -295,6 +303,7 @@ class OpenAIVisionInterpreter:
                 "output_truncated" if reason == "max_output_tokens" else "invalid_response",
                 http_status=response.status_code,
                 request_id=request_id,
+                detail="incomplete:" + (_safe_token(reason, MAX_DETAIL) or "unknown"),
             )
         if status == "failed":
             # El proveedor respondió 200 pero marcó la generación como fallida.
@@ -309,26 +318,51 @@ class OpenAIVisionInterpreter:
             )
         if status not in (None, "completed"):
             raise VisionFailed(
-                "invalid_response", http_status=response.status_code, request_id=request_id
+                "invalid_response",
+                http_status=response.status_code,
+                request_id=request_id,
+                detail="status:" + (_safe_token(status, MAX_DETAIL) or "unknown"),
             )
         text = _output_text(data)
         if not text:
             raise VisionFailed(
-                "invalid_response", http_status=response.status_code, request_id=request_id
+                "invalid_response",
+                http_status=response.status_code,
+                request_id=request_id,
+                detail=_empty_output_detail(data),
             )
         try:
             body = json.loads(text)
         except ValueError as exc:
             raise VisionFailed(
-                "invalid_response", http_status=response.status_code, request_id=request_id
+                "invalid_response",
+                http_status=response.status_code,
+                request_id=request_id,
+                detail="output_not_json",
             ) from exc
         try:
             return _extraction(body, data, self.model)
         except VisionFailed as exc:
-            # La validación local también conserva la traza del proveedor.
+            # La validación local también conserva la traza del proveedor y el motivo exacto.
             raise VisionFailed(
-                exc.code, http_status=response.status_code, request_id=request_id
+                exc.code,
+                http_status=response.status_code,
+                request_id=request_id,
+                detail=exc.detail,
             ) from exc
+
+
+def _empty_output_detail(data: dict) -> str:
+    """Motivo de una respuesta 200 sin texto útil, sin conservar nada del proveedor."""
+    messages = 0
+    for item in data.get("output") or []:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        messages += 1
+        for content in item.get("content") or []:
+            if isinstance(content, dict) and content.get("type") == "refusal":
+                return "refusal"
+    return "empty_output_text" if messages else "no_message"
 
 
 def _output_text(data: dict) -> str:
@@ -344,40 +378,57 @@ def _output_text(data: dict) -> str:
 
 
 def _extraction(body: object, response: dict, fallback_model: str) -> VisionExtraction:
+    """Traduce la salida del modelo sin perder una lectura válida por defectos locales.
+
+    El esquema enviado al proveedor **no** limita el largo de `text` ni impide repetir un
+    atributo: por eso esos dos casos no pueden invalidar toda la lectura. Un texto largo se
+    recorta (igual que `warnings`) y una repetición idéntica se colapsa; solo un mismo atributo
+    con **valores distintos** es ambiguo. Los rechazos llevan un `detail` seguro para saber qué
+    rama falló sin guardar el texto leído.
+    """
+
     if not isinstance(body, dict):
-        raise VisionFailed("invalid_response")
+        raise VisionFailed("invalid_response", detail="body_not_object")
     legibility = body.get("legibility")
     if legibility not in ("clear", "partial", "blurry", "unreadable"):
-        raise VisionFailed("invalid_response")
+        raise VisionFailed("invalid_response", detail="bad_legibility")
     raw_fields = body.get("fields")
     raw_warnings = body.get("warnings")
-    if not isinstance(raw_fields, list) or not isinstance(raw_warnings, list):
-        raise VisionFailed("invalid_response")
+    if not isinstance(raw_fields, list):
+        raise VisionFailed("invalid_response", detail="bad_fields_type")
+    if not isinstance(raw_warnings, list):
+        raise VisionFailed("invalid_response", detail="bad_warnings_type")
     if len(raw_fields) > MAX_FIELDS:
-        raise VisionFailed("invalid_response")
+        raise VisionFailed("invalid_response", detail="too_many_fields")
     fields: list[VisionField] = []
-    seen: set[str] = set()
+    seen: dict[str, str] = {}
     for item in raw_fields:
         if not isinstance(item, dict):
-            raise VisionFailed("invalid_response")
+            raise VisionFailed("invalid_response", detail="field_not_object")
         attribute = item.get("attribute")
         text = item.get("text")
         confidence = item.get("confidence")
+        if attribute not in VISION_ATTRIBUTES:
+            raise VisionFailed("invalid_response", detail="bad_attribute")
+        if not isinstance(text, str):
+            raise VisionFailed("invalid_response", detail=f"bad_text:{attribute}")
+        clean = text.strip()
+        if not clean:
+            continue  # un campo vacío no aporta y no invalida el resto de la lectura
         if (
-            attribute not in VISION_ATTRIBUTES
-            or not isinstance(text, str)
-            or not text.strip()
-            or len(text.strip()) > MAX_TEXT
-            or not isinstance(confidence, (int, float))
+            not isinstance(confidence, (int, float))
             or isinstance(confidence, bool)
             or not 0 <= float(confidence) <= 1
         ):
-            raise VisionFailed("invalid_response")
-        # Un atributo repetido no se descarta en silencio: es una salida ambigua.
+            raise VisionFailed("invalid_response", detail=f"bad_confidence:{attribute}")
+        clean = clean[:MAX_TEXT]  # el esquema no limita el largo: se recorta, no se descarta
         if attribute in seen:
-            raise VisionFailed("invalid_response")
-        seen.add(attribute)
-        fields.append(VisionField(attribute, text.strip(), float(confidence)))
+            if seen[attribute] == clean:
+                continue  # repetición idéntica: un solo campo
+            # Valores distintos para el mismo atributo sí son ambiguos: no se elige uno al azar.
+            raise VisionFailed("invalid_response", detail=f"duplicate_attribute:{attribute}")
+        seen[attribute] = clean
+        fields.append(VisionField(attribute, clean, float(confidence)))
     warnings = tuple(
         w.strip()[:MAX_TEXT] for w in raw_warnings if isinstance(w, str) and w.strip()
     )
