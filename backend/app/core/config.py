@@ -61,7 +61,9 @@ class Settings(BaseSettings):
     list_page_size: int = Field(default=8, ge=1, le=20)
     session_require_pin: bool = False  # PIN preparado en el servicio; el adaptador aún no lo pide
     # ---- Fotografías
-    vision_provider: Literal["none", "simulated"] = "none"  # no existe proveedor real conectado
+    # `none`: no hay proveedor de visión (la foto se guarda y queda pendiente). `simulated`: solo
+    # pruebas/demo, etiquetado. `openai`: lectura real con OpenAI (requiere clave y modelo).
+    vision_provider: Literal["none", "simulated", "openai"] = "none"
     vision_simulation_file: str | None = None
     storage_dir: Path = Path(__file__).resolve().parents[3] / ".storage"
     max_image_bytes: int = Field(default=10_000_000, ge=1_000)
@@ -114,12 +116,19 @@ class Settings(BaseSettings):
     # Sin `OPENAI_MODEL` la interpretación queda deshabilitada: no hay valor por defecto inventado.
     openai_model: str | None = None
     openai_api_key: SecretStr | None = None
+    # Modelo con visión para las fotografías. Se configura aparte porque no todo modelo de texto
+    # acepta imágenes; sin `OPENAI_VISION_MODEL` la lectura visual queda deshabilitada.
+    openai_vision_model: str | None = None
     # Base de la API (permite un proxy propio). La clave nunca sale del backend.
     openai_base_url: str = "https://api.openai.com/v1"
     # El límite incluye los tokens de razonamiento. La extracción es breve, pero un modelo con
     # razonamiento necesita holgura para no truncar el JSON (ver `openai_reasoning_effort`).
     openai_max_output_tokens: int = Field(default=2500, ge=64, le=8000)
     openai_timeout_seconds: int = Field(default=20, ge=1, le=120)
+    # Lectura de una fotografía: salida breve y un tiempo acotado para no retener el webhook.
+    openai_vision_timeout_seconds: int = Field(default=20, ge=1, le=60)
+    openai_vision_max_output_tokens: int = Field(default=800, ge=64, le=2000)
+    openai_vision_max_calls_per_minute: int = Field(default=20, ge=1, le=300)
     # Esfuerzo de razonamiento de los modelos GPT-5.x. `low` basta para extraer una propuesta
     # breve y acotada; `none` lo desactiva. Se envía solo cuando tiene valor.
     openai_reasoning_effort: Literal["none", "low", "medium", "high", "xhigh"] | None = "low"
@@ -175,7 +184,7 @@ class Settings(BaseSettings):
             return None
         return v.strip() if isinstance(v, str) else v
 
-    @field_validator("openai_model", "openai_prompt_version", "openai_base_url")
+    @field_validator("openai_model", "openai_vision_model", "openai_prompt_version", "openai_base_url")
     @classmethod
     def _texto_openai_no_vacio(cls, v: str | None):
         if v is not None and not v.strip():

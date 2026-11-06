@@ -159,7 +159,7 @@ class OpenAIResponsesModel:
             raise ModelError("unavailable", retryable=True) from exc
         latency_ms = int((time.monotonic() - started) * 1000)
         if response.status_code >= 400:
-            raise _error_for(response)
+            raise error_for_response(response)
         try:
             data = response.json()
         except ValueError as exc:
@@ -209,7 +209,7 @@ def _token(value: object) -> int | None:
     return value if isinstance(value, int) and value >= 0 else None
 
 
-def _error_for(response: httpx.Response) -> ModelError:
+def error_for_response(response: httpx.Response) -> ModelError:
     """Traduce el estado HTTP a un código interno. Nunca propaga el cuerpo al usuario."""
     status = response.status_code
     if status in (401, 403):

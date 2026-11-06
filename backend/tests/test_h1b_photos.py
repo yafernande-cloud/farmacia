@@ -15,7 +15,12 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select, text
 
-from app.interpretation.vision import SimulatedVisionInterpreter, VisionExtraction, VisionField
+from app.interpretation.vision import (
+    SimulatedVisionInterpreter,
+    VisionExtraction,
+    VisionFailed,
+    VisionField,
+)
 from app.models import Attachment, ChannelMessage, DemandItem
 from app.services.photo_processing import process_pending_attachments
 from app.services.storage import sha256_hex
@@ -47,8 +52,9 @@ VIT_D3 = ext(("ingredient", "Vitamina D3", .95), ("strength", "50.000 UI", .93),
 
 @pytest.fixture
 def photo_chat(make_rt, seed, tg_api, chan):
-    def build(script: dict | None = None):
-        vision = SimulatedVisionInterpreter(script) if script is not None else None
+    def build(script: dict | None = None, vision=None):
+        if vision is None and script is not None:
+            vision = SimulatedVisionInterpreter(script)
         return Chat(make_rt(vision=vision), seed, tg_api)
 
     return build
@@ -97,7 +103,7 @@ async def test_foto_sin_proveedor_de_vision_se_guarda_y_queda_pendiente(
     assert (
         await observations(sessions) == [] and await count(sessions, DemandItem) == 0
     )  # nada inventado
-    assert "todavía no la leo automáticamente" in tg_api.texts()[-1] and "Ana" in tg_api.texts()[-1]
+    assert "Todavía no puedo leerla automáticamente" in tg_api.texts()[-1] and "Ana" in tg_api.texts()[-1]
     stored = tmp_path / "storage" / a.storage_key
     assert (
         stored.read_bytes() == fake_jpeg(1) and stat.S_IMODE(stored.stat().st_mode) == 0o600
@@ -156,10 +162,11 @@ async def test_migranol_foto_sin_texto_registra_el_faltante_sin_inventar(
     assert o.parsed["identity"]["pharmaceutical"]["complete"] is False
     reply = tg_api.texts()[-1]  # breve, natural, sin asegurar identificación farmacéutica
     assert reply.startswith(
-        "Anoté el faltante: Migranol comprimido recubierto x 10 (Laboratorio Bagó de Chile S.A.)."
+        "✅ Anotado: Migranol comprimido recubierto x 10 — 1 unidad."
     )
-    assert "No pude ver el principio activo ni la dosis, así que queda por confirmar." in reply
+    assert "Falta confirmar el principio activo y la dosis." in reply
     assert "lectura simulada" in reply and "?" not in reply and len(reply) < 260
+    assert "👤 Reportado por: Ana" in reply
 
 
 async def test_migranol_sin_catalogo_no_hay_candidatos_y_con_referencia_se_propone_sin_aplicar(
@@ -258,7 +265,7 @@ async def test_foto_vitamina_d3_con_texto_faltan_2_cajas(photo_chat, sessions, t
     )  # contenido, NO cantidad
     assert (
         at["form"]["value"] == "capsula"
-        and "Anoté 2 como pedido sugerido (no cambia la cantidad)" in tg_api.texts()[-1]
+        and "— 2 cajas." in tg_api.texts()[-1]
     )
 
 
@@ -267,7 +274,10 @@ async def test_la_cantidad_visible_en_el_envase_no_es_cantidad_solicitada(photo_
     await c.pick("ana")
     await c.send(photo_update, img(c.api, 3))  # sin texto
     (o,) = await observations(sessions)
-    assert o.declared_quantity is None and (await item_of(sessions)).target_quantity is None
+    # la cantidad visible en el envase no se usa; sin pedido explícito rige la unidad predeterminada
+    assert (o.declared_quantity, o.declared_unit) == (1, "unit")
+    assert o.interpretation["quantity_origin"] == "default"
+    assert (await item_of(sessions)).target_quantity is None
 
 
 async def test_foto_con_texto_que_la_contradice_queda_en_conflicto(photo_chat, sessions, tg_api):
@@ -299,7 +309,9 @@ async def test_foto_borrosa_se_guarda_pendiente_de_identificacion_sin_inventar(
         and a.extraction_mode == "simulated"
     )
     assert await observations(sessions) == [] and await count(sessions, DemandItem) == 0
-    assert "no pude identificar el producto con seguridad" in tg_api.texts()[-1]
+    assert "No pude identificar el producto de la fotografía." in tg_api.texts()[-1]
+    assert "La dejé pendiente de revisión." in tg_api.texts()[-1]
+    assert "👤 Reportado por: Ana" in tg_api.texts()[-1]
 
 
 async def test_pie_de_foto_identifica_el_producto_cuando_la_imagen_no_sirve(photo_chat, sessions):
@@ -311,6 +323,179 @@ async def test_pie_de_foto_identifica_el_producto_cuando_la_imagen_no_sirve(phot
         o.parsed["strengths"][0]["origin"] == "text"
         and (await attachments(sessions))[0].status == "needs_review"
     )
+
+
+# ---------- visión real (doble controlado): MISMO flujo que un texto ----------
+
+
+class LiveVision:
+    """Doble del proveedor real: responde lo que un `VisionExtraction` live devolvería.
+
+    No hay ninguna llamada a OpenAI: el adaptador HTTP se prueba aparte con `httpx.MockTransport`.
+    """
+
+    def __init__(self, extraction=None, error=None):
+        self.extraction, self.error, self.calls = extraction, error, 0
+
+    async def extract(self, image, mime, caption):
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.extraction
+
+
+CREMA = VisionExtraction(
+    "live",
+    "openai",
+    "gpt-vision-test",
+    "clear",
+    (
+        VisionField("ingredient", "crema de manos", 0.95),
+        VisionField("variant", "Berry Warm", 0.9),
+        VisionField("content", "50 ml", 0.95),
+        VisionField("visible_quantity", "3 cajas apiladas", 0.8),
+    ),
+)
+
+
+async def test_foto_identificada_por_vision_real_registra_igual_que_un_texto(
+    photo_chat, sessions, seed, tg_api
+):
+    vision = LiveVision(CREMA)
+    c = photo_chat(vision=vision)
+    await c.pick("ana")
+    await c.send(photo_update, img(tg_api, 21))
+
+    (a,) = await attachments(sessions)
+    (o,) = await observations(sessions)
+    item = await item_of(sessions)
+    assert a.status == "identified" and a.extraction_mode == "live"
+    assert a.vision_provider == "openai" and a.vision_model == "gpt-vision-test"
+    assert a.author_id == seed["ana"] and a.content_sha256 == sha256_hex(fake_jpeg(21))
+    assert o.source == "telegram_photo" and o.author_id == seed["ana"]
+    assert o.attachment_id == a.id and o.demand_item_id == item.id
+    # cantidad predeterminada: una unidad; la cantidad visible en la foto NO se usa
+    assert (o.declared_quantity, o.declared_unit) == (1, "unit")
+    assert o.interpretation["quantity_origin"] == "default"
+    assert item.display_name == "Crema de manos, variante Berry Warm x 50 ml"
+    assert item.attributes["variant"] == {
+        "value": "Berry Warm",
+        "basis": "inferred",
+        "origin": "image",
+    }
+    assert item.target_quantity is None  # el faltante existe y es visible para compras
+    reply = tg_api.texts()[-1]
+    assert reply.startswith(
+        "✅ Anotado: Crema de manos, variante Berry Warm x 50 ml — 1 unidad."
+    )
+    assert "👤 Reportado por: Ana" in reply
+    assert vision.calls == 1  # una sola lectura por foto
+
+
+async def test_foto_parcialmente_legible_usa_lo_seguro_y_no_inventa_la_dosis(
+    photo_chat, sessions, tg_api
+):
+    partial = VisionExtraction(
+        "live",
+        "openai",
+        "gpt-vision-test",
+        "partial",
+        (
+            VisionField("ingredient", "ibuprofeno", 0.95),
+            VisionField("form", "comprimidos", 0.85),
+        ),
+    )
+    c = photo_chat(vision=LiveVision(partial))
+    await c.pick("ana")
+    await c.send(photo_update, img(tg_api, 22))
+
+    (a,) = await attachments(sessions)
+    (o,) = await observations(sessions)
+    item = await item_of(sessions)
+    assert a.status == "needs_review" and "image_partially_legible" in a.uncertainties
+    assert item.attributes["strengths"] == []  # la dosis no se veía: no se inventa
+    assert o.declared_quantity == 1
+    reply = tg_api.texts()[-1]
+    assert reply.startswith("✅ Anotado: Ibuprofeno comprimido — 1 unidad.")
+    assert "Quedó por confirmar lo leído de la foto." in reply
+    assert "👤 Reportado por: Ana" in reply
+
+
+async def test_foto_ilegible_no_crea_nada_y_avisa_sin_presentarla_como_registrada(
+    photo_chat, sessions, tg_api
+):
+    blurry = VisionExtraction(
+        "live",
+        "openai",
+        "gpt-vision-test",
+        "blurry",
+        (VisionField("ingredient", "algo que parece ibuprofeno", 0.9),),
+    )
+    c = photo_chat(vision=LiveVision(blurry))
+    await c.pick("ana")
+    await c.send(photo_update, img(tg_api, 23))
+
+    (a,) = await attachments(sessions)
+    assert a.status == "needs_review" and a.author_id is not None
+    assert await observations(sessions) == [] and await count(sessions, DemandItem) == 0
+    reply = tg_api.texts()[-1]
+    assert "📷 No pude identificar el producto de la fotografía." in reply
+    assert "La dejé pendiente de revisión." in reply
+    assert "Anotado" not in reply and "👤 Reportado por: Ana" in reply
+
+
+async def test_fallo_de_openai_conserva_la_foto_y_avisa_sin_reintentar_la_llamada(
+    photo_chat, sessions, tg_api
+):
+    vision = LiveVision(error=VisionFailed("timeout"))
+    c = photo_chat(vision=vision)
+    await c.pick("ana")
+    await c.send(photo_update, img(tg_api, 24))
+
+    (a,) = await attachments(sessions)
+    assert a.status == "needs_review" and a.error == "vision_failed:timeout"
+    assert a.uncertainties == ["vision_failed:timeout"] and a.processed_at is not None
+    assert a.storage_key and c.rt.photos.storage.get(a.storage_key) == fake_jpeg(24)
+    assert a.author_id is not None and await observations(sessions) == []
+    assert await count(sessions, DemandItem) == 0  # nada inventado
+    assert vision.calls == 1  # un fallo no dispara otra lectura de la misma foto
+    reply = tg_api.texts()[-1]
+    assert "No pude identificar el producto de la fotografía." in reply
+    assert "La dejé pendiente de revisión." in reply
+
+
+async def test_foto_del_mismo_producto_ya_anotado_no_duplica_el_faltante(
+    photo_chat, sessions, tg_api
+):
+    c = photo_chat(vision=LiveVision(CREMA))
+    await c.pick("ana")
+    await c.send(photo_update, img(tg_api, 25))
+    await c.send(photo_update, img(tg_api, 26))  # otra foto del mismo producto
+
+    obs = await observations(sessions)
+    assert len(obs) == 2 and obs[1].match_status == "attached_existing"
+    assert obs[0].demand_item_id == obs[1].demand_item_id
+    assert await count(sessions, DemandItem) == 1
+    assert "(ya estaba en tu lista)" in tg_api.texts()[-1]
+
+
+async def test_foto_de_otro_auxiliar_avisa_quien_lo_reporto_y_no_fusiona(
+    photo_chat, sessions, seed, tg_api
+):
+    c = photo_chat(vision=LiveVision(CREMA))
+    await c.pick("ana")
+    await c.send(photo_update, img(tg_api, 27))
+    await c.pick("luis")
+    await c.send(photo_update, img(tg_api, 28))
+
+    obs = await observations(sessions)
+    assert [o.author_id for o in obs] == [seed["ana"], seed["luis"]]
+    assert obs[0].demand_item_id != obs[1].demand_item_id  # reportes independientes
+    assert await count(sessions, DemandItem) == 2
+    reply = tg_api.texts()[-1]
+    assert "Ana ya informó este producto." in reply
+    assert "Quedó como un reporte tuyo independiente." in reply
+    assert "👤 Reportado por: Luis" in reply
 
 
 # ---------- duplicados, errores y seguridad ----------

@@ -247,6 +247,7 @@ async def record_interpreted_observation(
     ai_derived: bool = False,
     confirmation_mode: str | None = None,
     quantity_proposal: dict | None = None,
+    apply_default_quantity: bool = False,
 ) -> ObservationResult:
     """Registra un aviso cuya interpretación ya viene hecha (p. ej. foto + pie de foto).
 
@@ -270,13 +271,15 @@ async def record_interpreted_observation(
                         declared_unit=parsed.requested_unit, origin=origin, force_review=force_review,
                         extra_interpretation=extra_interpretation, ai_derived=ai_derived,
                         confirmation_mode=confirmation_mode,
-                        quantity_proposal=quantity_proposal)  # fmt: skip
+                        quantity_proposal=quantity_proposal,
+                        apply_default_quantity=apply_default_quantity)  # fmt: skip
 
 
 async def _store(
     session, actor, cycle, interp: Interpretation, *, raw_text, idempotency_key, req,
     declared_quantity, declared_unit, origin: Origin, force_review=(), extra_interpretation=None,
     ai_derived=False, confirmation_mode: str | None = None, quantity_proposal: dict | None = None,
+    apply_default_quantity: bool = False,
 ) -> ObservationResult:  # fmt: skip
     org = actor.organization_id
     parsed = interp.parsed
@@ -395,7 +398,7 @@ async def _store(
     previous_for_item = declared_by_item.get(item.id) if item is not None else None
     if (
         declared_quantity is None
-        and confirmation_mode == "telegram"
+        and (confirmation_mode == "telegram" or apply_default_quantity)
         and (
             outcome == "created_item"
             or (outcome == "attached_existing" and previous_for_item is None)

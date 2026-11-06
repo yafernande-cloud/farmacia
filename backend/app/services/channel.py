@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import DomainError
 from app.core.permissions import can_apply_quantity
+from app.domain.products import ParsedProduct
 from app.domain.quantities import QuantityOp, QuantityUnit
 from app.interpretation.ai import AIInterpreter
 from app.interpretation.segments import Intent, classify_intent, split_segments
@@ -137,7 +138,7 @@ class ChannelConfig:
 
 
 def _footer(name: str, personal: bool = False) -> str:
-    return f"— Reportando como {name}" + (" (cuenta autorizada)" if personal else "")
+    return f"👤 Reportado por: {name}" + (" (cuenta autorizada)" if personal else "")
 
 
 def _is_personal(account: AccountContext | None) -> bool:
@@ -219,13 +220,29 @@ _PENDING = {
 }
 
 
-def _pending_note(pending: list[dict]) -> str:
+_COSMETIC_HINTS = {
+    "shampoo", "champu", "crema", "jabon", "locion", "desodorante", "pasta dental",
+    "cepillo", "algodon", "panal", "toalla", "protector", "solar",
+}  # fmt: skip
+
+
+def _is_cosmetic(parsed: ParsedProduct | None) -> bool:
+    """Higiene, cuidado personal y cosmética no llevan «dosis»: no se pide algo que no aplica."""
+    if parsed is None:
+        return False
+    return any(w in _COSMETIC_HINTS for w in parsed.ingredient.split())
+
+
+def _pending_note(pending: list[dict], parsed: ParsedProduct | None = None) -> str:
     """Solo lo AMBIGUO o ausente que importa; jamás una pregunta al auxiliar."""
+    cosmetic = _is_cosmetic(parsed)
     notes = []
     for p in pending:
         if p["reason"] == "unit_not_stated":
             notes.append(f"la unidad de {p.get('value')}")
         elif p["attribute"] in _PENDING and p["reason"] == "not_stated":
+            if cosmetic and p["attribute"] == "strength":
+                continue  # un shampoo o una crema no tienen «dosis» que confirmar
             notes.append(_PENDING[p["attribute"]])
     return f" Falta confirmar {' y '.join(dict.fromkeys(notes))}." if notes else ""
 
@@ -235,6 +252,7 @@ _UNIT_LABELS = {
     "package": ("paquete", "paquetes"),
     "unit": ("unidad", "unidades"),
     "bottle": ("frasco", "frascos"),
+    "tube": ("tubo", "tubos"),
 }
 
 
@@ -275,30 +293,34 @@ def _quantity_origin(r: ObservationResult) -> str | None:
 
 
 def line_for(r: ObservationResult, raw: str) -> str:
-    note = _pending_note(r.parsed.pending_validation if r.item else [])
+    note = _pending_note(r.parsed.pending_validation if r.item else [], r.parsed)
     if r.outcome == "created_item" and r.item:
-        qty = _declared_text(r)
-        if _quantity_origin(r) == "default":
-            qty += " solicitada"
-        return f"Anotado: {r.item.display_name} — {qty}.{note}"
+        return f"✅ Anotado: {r.item.display_name} — {_declared_text(r)}.{note}"
     if r.outcome == "attached_existing" and r.item:
         if _quantity_origin(r) == "default":
-            return (
-                f"Anotado: {r.item.display_name} — 1 unidad solicitada "
-                f"(no tenías cantidad anotada).{note}"
-            )
+            return f"✅ Anotado: {r.item.display_name} — 1 unidad (ya estaba en tu lista).{note}"
         return (
-            f"{r.item.display_name} ya estaba en tu lista; registré tu aviso "
-            f"(la cantidad no cambió).{note}"
+            f"✅ Anotado: {r.item.display_name} — {_declared_text(r)} "
+            f"(ya estaba en tu lista; la cantidad no cambió).{note}"
         )
     if r.outcome == "blocked_in_cart" and r.item:
         return (
-            f"{r.item.display_name} está en carrito: no cambié la cantidad solicitada. "
+            f"⚠️ {r.item.display_name} está en carrito: no cambié la cantidad solicitada. "
             "Para corregirla, pide a compras que lo retire del carrito."
         )
     if r.outcome == "needs_confirmation":
         return f"Guardé tu aviso de {r.parsed.display_name}; falta que confirmes cómo seguimos."
-    return f"Anoté «{raw}» pero no puedo asegurar cuál producto es: queda para que compras lo confirme."
+    # needs_review: el aviso existe, pero no se asoció ni se confirmó solo.
+    candidates = (r.observation.candidates if r.observation is not None else []) or []
+    if candidates:
+        return (
+            f"⚠️ Reconocí {r.parsed.display_name}, pero hay un faltante parecido. "
+            "Lo dejé para revisión de compras."
+        )
+    return (
+        f"⚠️ Reconocí {r.parsed.display_name}, pero faltan datos para anotarlo con seguridad. "
+        "Quedó para revisión de compras."
+    )
 
 
 # ------------------------------------------------------------------ helpers de BD
@@ -723,23 +745,10 @@ async def _ask_confirmation(
     msg.attribution_status = "pending_confirmation"
     msg.confirmation_status = "pending_other_report"
     msg.confirmation_data = data
-    qty = other.get("target_quantity")
-    declared_qty = other.get("declared_quantity")
-    parts = []
-    if qty is not None:
-        parts.append(
-            f"pedida para compra: {_fmt_qty(qty)} {other.get('quantity_unit') or ''}".strip()
-        )
-    if declared_qty is not None:
-        parts.append(
-            f"solicitada: {_fmt_qty(declared_qty)} {other.get('declared_unit') or ''}".strip()
-        )
-    qty_text = ", ".join(parts) if parts else "cantidad no indicada"
-    who = author or "otra persona"
+    who = author or "Otra persona"
     return Reply(
-        f"Ya hay un reporte de {who} por {other.get('display_name')} ({qty_text}). "
-        "Cada persona conserva su propio reporte: no voy a sumar tu aviso al de esa persona. "
-        "¿Lo creo como un reporte tuyo independiente?",
+        f"⚠️ {who} ya informó {other.get('display_name')}.\n"
+        "¿También quieres reportarlo? Queda como un reporte tuyo independiente.",
         [
             [Button("Confirmar mi reporte", f"rp:ok:{msg.id}")],
             [Button("Modificar cantidad", f"rp:new:{msg.id}"),
@@ -1705,8 +1714,14 @@ async def _on_photo(session, binding, ev, inbound, sess, actor, now, cfg,
                           "Guardé la foto, pero no la anoto a nombre de nadie hasta saber quién eres. ¿Quién eres?",
                           keyboard=keyboard)]  # fmt: skip
     await sessions.touch(session, sess, now, cfg.idle)
-    base = (f"Recibí la foto, {actor.display_name}. " + ("La estoy revisando y te aviso." if cfg.vision_enabled
-            else "La guardé; todavía no la leo automáticamente, queda para revisión de compras."))  # fmt: skip
+    base = (
+        f"📷 Recibí la foto, {actor.display_name}. "
+        + (
+            "La estoy revisando."
+            if cfg.vision_enabled
+            else "Todavía no puedo leerla automáticamente; queda para revisión de compras."
+        )
+    )
     return [Reply(base + f"\n{_footer(actor.display_name, personal)}", keyboard=keyboard)]
 
 

@@ -60,6 +60,9 @@ STOPWORDS = {
     "reponer", "ya", "mas", "tampoco", "y", "para", "con", "en", "tenemos", "tengo", "stock", "x",
     "nos", "lo", "le", "les", "me", "hoy", "nada", "sin", "casi", "poco", "poca", "pocos", "ahi",
     "aca", "esta", "estan", "estamos", "quedamos", "acaba", "acabando", "faltando", "pedido",
+    # Verbos con los que el auxiliar introduce el reporte: nunca son el nombre del producto.
+    "anota", "anotar", "anotame", "anotamos", "agrega", "agregar", "agregame", "agregamos",
+    "suma", "sumar", "sumale", "sumamos", "apunta", "apuntar", "apuntame", "apuntamos",
 }  # fmt: skip
 FORMS = {
     "comprimido": "comprimido", "comprimidos": "comprimido", "comp": "comprimido",
@@ -77,7 +80,14 @@ RELEASE = {"retard": "prolongada", "lp": "prolongada", "xr": "prolongada", "sr":
            "cr": "prolongada", "prolongada": "prolongada"}  # fmt: skip
 PACKAGING = {"caja": "caja", "frasco": "frasco", "blister": "blister", "tubo": "tubo",
              "sobre": "sobre", "envase": "envase"}  # fmt: skip
-QUANTITY_UNITS = {"caja": "box", "envase": "package", "frasco": "bottle", "unidad": "unit"}
+QUANTITY_UNITS = {
+    "caja": "box",
+    "envase": "package",
+    "frasco": "bottle",
+    "unidad": "unit",
+    "tubo": "tube",
+    "paquete": "package",
+}
 
 _FORM_MODS = {"recubiert": "recubierto", "masticabl": "masticable", "dispersabl": "dispersable",
               "efervescent": "efervescente", "sublingual": "sublingual", "ranurad": "ranurado",
@@ -88,6 +98,9 @@ PHRASE_ALT = (
 )
 PHRASE_RE = re.compile(rf"(?<![a-z])(?:{PHRASE_ALT})(?![a-z])")
 FORM_ALT = PHRASE_ALT + "|" + "|".join(sorted(FORMS, key=len, reverse=True))
+# «Crema de manos» es el nombre del producto, no la forma farmacéutica «crema». Sin esta regla el
+# parser dejaba el ingrediente en «manos».
+_HAND_CREAM_RE = re.compile(r"(?<![a-z])crema\s+(?:de|para)\s+manos(?![a-z])")
 
 
 def canonical_form(text: str) -> str | None:
@@ -104,7 +117,7 @@ def canonical_form(text: str) -> str | None:
     return f"{base} {mod}" if base and mod else None
 
 
-_PACK_Q = r"cajas?|envases?|frascos?|unidades?"
+_PACK_Q = r"cajas?|envases?|frascos?|unidades?|tubos?|paquetes?"
 _PACK_ALL = r"caja|frasco|blister|tubo|sobre|envase"
 _TAIL = rf"\s*(?:de|x)\s*(?P<cn>{NUM})(?:\s*(?P<cu>{UNIT_ALT}|{FORM_ALT})(?![a-z0-9]))?"
 QTY_RE = re.compile(rf"(?<![a-z0-9.,])(?P<n>{NUM})\s*(?P<w>{_PACK_Q})(?![a-z])")
@@ -205,6 +218,7 @@ class ParsedProduct:
     # del envase. Desconocido = None. Mismo principio+potencia+presentación con otro laboratorio
     # NO es el mismo artículo comercial.
     brand: Attr | None = None  # nombre o marca comercial
+    variant: Attr | None = None  # variante comercial visible (p. ej. «Berry Warm»)
     laboratory: Attr | None = None  # laboratorio farmacéutico
     manufacturer: Attr | None = None  # fabricante
     registration_holder: Attr | None = None  # titular del registro sanitario
@@ -303,7 +317,14 @@ class ParsedProduct:
 
     @property
     def display_name(self) -> str:
-        parts = [self.ingredient.title()]
+        # «Crema de manos», «Vitamina D»: minúsculas salvo las siglas escritas en mayúsculas.
+        words = self.ingredient.title().split()
+        name = " ".join(
+            [words[0], *(w if w.isupper() else w.lower() for w in words[1:])]
+        ) if words else ""
+        if self.variant:
+            name += f", variante {self.variant.value}"
+        parts = [name]
         parts += [s.measure.label for s in self.strengths]
         parts += [
             f"{fmt(m.value)} (sin unidad)" if m.unit is None else f"{m.label} (rol por confirmar)"
@@ -328,7 +349,7 @@ class ParsedProduct:
             "unassigned": [m.to_dict() for m in self.unassigned],
             "name_anchor": self.name_anchor,
         }  # fmt: skip
-        for k in ("form", "packaging", "release", *COMMERCIAL_FIELDS):
+        for k in ("form", "packaging", "release", "variant", *COMMERCIAL_FIELDS):
             a = getattr(self, k)
             if a:
                 d[k] = {"value": a.value, "basis": a.basis.value, "origin": a.origin}
@@ -355,6 +376,7 @@ class ParsedProduct:
             strengths=tuple(StrengthAttr(Measure.from_dict(s["measure"]), s["kind"], Basis(s["basis"]),
                                          s.get("role_rule", "unit"), s.get("origin", "text")) for s in d.get("strengths", [])),
             form=attr("form"), packaging=attr("packaging"), release=attr("release"),
+            variant=attr("variant"),
             **{k: attr(k) for k in COMMERCIAL_FIELDS},
             content=ContentAttr(Measure.from_dict(c["measure"]), Basis(c["basis"]), c.get("origin", "text")) if c else None,
             unassigned=tuple(Measure.from_dict(m) for m in d.get("unassigned", [])),
@@ -505,6 +527,9 @@ def parse_shortage_text(text: str, *, allow_no_product: bool = False) -> ParsedP
     spans = [(t, a, b) for t, a, b in spans if t and t not in STOPWORDS]
     tokens = [t for t, _, _ in spans]
     forms |= {FORMS[t] for t in tokens if t in FORMS}
+    hand_cream = _HAND_CREAM_RE.search(_norm_map(original)[0])
+    if hand_cream and forms == {"crema"}:
+        forms = set()  # «crema de manos» es nombre comercial, no forma farmacéutica
     if len(forms) > 1 and len({f.split()[0] for f in forms}) == 1:
         forms = {
             max(forms, key=len)
@@ -548,6 +573,9 @@ def parse_shortage_text(text: str, *, allow_no_product: bool = False) -> ParsedP
         else:
             ing_tokens.append(t)
     ingredient = " ".join(ing_tokens).strip()
+    if hand_cream and form is None:
+        rest = re.sub(r"(?<![a-z])manos(?![a-z])", "", ingredient, count=1).strip()
+        ingredient = hand_cream.group(0) + (f" {rest}" if rest else "")
     if not ingredient and not allow_no_product:
         raise DomainError("PRODUCT_NOT_RECOGNIZED", "No pude identificar qué producto falta.")
     return ParsedProduct(

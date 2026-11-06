@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from app.core.config import Settings
 from app.db.session import get_sessionmaker
+from app.interpretation.openai_vision import OpenAIVisionInterpreter
 from app.interpretation.vision import VisionInterpreter, load_simulation
 from app.services.channel import ChannelConfig
 from app.services.photo_processing import PhotoRuntime
@@ -17,7 +18,13 @@ def vision_from_settings(s: Settings) -> VisionInterpreter | None:
         if not s.vision_simulation_file:
             raise RuntimeError("VISION_PROVIDER=simulated requiere VISION_SIMULATION_FILE")
         return load_simulation(s.vision_simulation_file)
-    return None  # no existe un proveedor de visión real conectado
+    if s.vision_provider == "openai":
+        if s.openai_api_key is None or not s.openai_vision_model:
+            raise RuntimeError(
+                "VISION_PROVIDER=openai requiere OPENAI_API_KEY y OPENAI_VISION_MODEL"
+            )
+        return OpenAIVisionInterpreter.from_settings(s)
+    return None  # sin proveedor: la foto se guarda y queda pendiente, sin inventar nada
 
 
 def build_runtime(s: Settings, *, client: TelegramClient | None = None, vision: VisionInterpreter | None = None,

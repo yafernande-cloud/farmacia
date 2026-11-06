@@ -147,7 +147,9 @@ async def test_luis_cambia_identidad_mismo_producto_dos_avisos_sin_sumar(
         ).scalars().all()
         (item,) = (await s.execute(select(DemandItem))).scalars().all()
     assert item.reported_by == seed["ana"]
-    assert "otra persona" in tg_api.texts()[-1] or "Ana" in tg_api.texts()[-1]
+    assert "Ana ya informó" in tg_api.texts()[-1]
+    assert "¿También quieres reportarlo?" in tg_api.texts()[-1]
+    assert "reporte tuyo independiente" in tg_api.texts()[-1]
     assert len(await observations(sessions)) == 1  # todavía no se creó nada para Luis
 
     await chat.click(f"rp:ok:{pending.id}", now=mins(4))
@@ -754,8 +756,8 @@ async def test_respuesta_inmediata_muestra_la_cantidad_declarada_sin_aplicarla(
     await chat.pick("ana")
     await chat.text("2 cajas de omeprazol 20 mg")
     reply = tg_api.texts()[-1]
-    assert "Anotado: Omeprazol 20 mg — 2 cajas." in reply
-    assert "Reportando como Ana" in reply
+    assert "✅ Anotado: Omeprazol 20 mg — 2 cajas." in reply
+    assert "👤 Reportado por: Ana" in reply
     (o,) = await observations(sessions)
     assert (o.declared_quantity, o.declared_unit) == (Decimal(2), "box")  # declarada…
     async with sessions() as s:
@@ -770,7 +772,7 @@ async def test_respuesta_inmediata_sin_cantidad_usa_unidad_predeterminada(
     """D-147: sin cantidad se pide 1 unidad genérica, nunca caja/frasco/sobre."""
     await chat.pick("ana")
     await chat.text("falta ibuprofeno 400 mg")
-    assert "Anotado: Ibuprofeno 400 mg — 1 unidad solicitada." in tg_api.texts()[-1]
+    assert "✅ Anotado: Ibuprofeno 400 mg — 1 unidad." in tg_api.texts()[-1]
     (o,) = await observations(sessions)
     assert (o.declared_quantity, o.declared_unit) == (Decimal(1), "unit")
     assert (o.interpretation or {}).get("quantity_origin") == "default"
@@ -1157,7 +1159,7 @@ async def test_d147_1_reporte_sin_cantidad_registra_una_unidad_generica(
 ):
     await chat.pick("ana")
     await chat.text("falta loratadina 10 mg", now=mins(1))
-    assert "Anotado: Loratadina 10 mg — 1 unidad solicitada." in tg_api.texts()[-1]
+    assert "✅ Anotado: Loratadina 10 mg — 1 unidad." in tg_api.texts()[-1]
     (o,) = await observations(sessions)
     assert (o.declared_quantity, o.declared_unit) == (Decimal(1), "unit")
     assert o.interpretation["quantity_origin"] == "default"
@@ -1412,3 +1414,43 @@ async def test_d147_14_unidad_inicial_generica_se_aclara_por_texto_antes_de_suma
     assert (obs[-1].declared_quantity, obs[-1].declared_unit) == (Decimal(11), "box")
     assert obs[-1].quantity_proposal["operation"] == "ADD"
     assert "Listo, actualicé tu solicitud de Loratadina 10 mg a 11 cajas." in tg_api.texts()[-1]
+
+
+# ---- interpretación de mensajes reales (texto) ----
+
+
+async def test_caso_real_falta_paracetamol_500_mg_2_cajas(chat, sessions, tg_api):
+    await chat.pick("ana")
+    await chat.text("falta paracetamol 500 mg 2 cajas")
+    reply = tg_api.texts()[-1]
+    assert "✅ Anotado: Paracetamol 500 mg — 2 cajas." in reply
+    assert "no puedo asegurar" not in reply and "revisión de compras" not in reply
+    (o,) = await observations(sessions)
+    assert (o.declared_quantity, o.declared_unit) == (Decimal(2), "box")
+    assert o.match_status == "created_item"
+    (item,) = await ctx_items(sessions)
+    assert item.display_name == "Paracetamol 500 mg" and item.target_quantity is None
+
+
+async def test_formas_habituales_se_interpretan_sin_pedir_aclaraciones(chat, sessions, tg_api):
+    await chat.pick("ana")
+    await chat.text("necesitamos 3 frascos de ibuprofeno suspensión", now=mins(1))
+    (o,) = await observations(sessions)
+    assert (o.declared_quantity, o.declared_unit) == (Decimal(3), "bottle")
+    assert "✅ Anotado: Ibuprofeno suspension — 3 frascos." in tg_api.texts()[-1]
+    assert "?" not in tg_api.texts()[-1]
+
+    await chat.text("shampoo 400 ml", now=mins(2))
+    shampoo = (await observations(sessions))[-1]
+    assert (shampoo.declared_quantity, shampoo.declared_unit) == (Decimal(1), "unit")
+    assert shampoo.interpretation["quantity_origin"] == "default"
+    assert "✅ Anotado: Shampoo x 400 ml — 1 unidad." in tg_api.texts()[-1]
+
+
+async def test_la_dosis_no_se_confunde_con_la_cantidad_solicitada(chat, sessions, tg_api):
+    await chat.pick("ana")
+    await chat.text("paracetamol 500 mg")
+    (o,) = await observations(sessions)
+    assert (o.declared_quantity, o.declared_unit) == (Decimal(1), "unit")
+    assert o.parsed["strengths"][0]["measure"]["value"] == "500"
+    assert "✅ Anotado: Paracetamol 500 mg — 1 unidad." in tg_api.texts()[-1]

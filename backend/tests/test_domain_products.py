@@ -74,6 +74,42 @@ def test_5_cajas_de_20_no_inventa_una_potencia():
     assert r.requested_quantity == 5 and r.content.measure.value == 20
 
 
+# ---------- mensajes reales de los auxiliares ----------
+
+
+@pytest.mark.parametrize(
+    "txt,ingredient,qty,unit",
+    [
+        ("paracetamol 500 mg", "paracetamol", None, None),
+        ("falta paracetamol 500 mg 2 cajas", "paracetamol", D(2), "box"),
+        ("necesitamos 3 frascos de ibuprofeno suspensión", "ibuprofeno", D(3), "bottle"),
+        ("2 cajas de loratadina 10 mg", "loratadina", D(2), "box"),
+        ("shampoo 400 ml", "shampoo", None, None),
+        ("anotar loratadina 10 mg", "loratadina", None, None),
+        ("agregar shampoo 400 ml", "shampoo", None, None),
+        ("necesitamos 3 tubos de pasta dental", "pasta dental", D(3), "tube"),
+        ("2 paquetes de algodón", "algodon", D(2), "package"),
+    ],
+)
+def test_interpreta_la_forma_real_de_pedir_un_faltante(txt, ingredient, qty, unit):
+    r = p(txt)
+    assert r.ingredient == ingredient
+    assert (r.requested_quantity, r.requested_unit) == (qty, unit)
+
+
+def test_la_dosis_no_es_la_cantidad_solicitada():
+    r = p("paracetamol 500 mg")
+    assert [s.measure.label for s in r.strengths] == ["500 mg"]
+    assert r.requested_quantity is None and r.requested_unit is None
+
+
+def test_crema_de_manos_conserva_el_nombre_y_el_contenido():
+    r = p("crema de manos 50 ml")
+    assert r.ingredient == "crema de manos"  # no «manos» ni una forma farmacéutica
+    assert r.form is None and r.content.measure.label == "50 ml"
+    assert r.display_name == "Crema de manos x 50 ml"
+
+
 def test_volumen_es_contenido_no_potencia():
     r = p("suero fisiologico 500 ml")  # regresión: antes era "potencia 500 ml"
     assert r.strengths == () and r.content.measure.label == "500 ml"

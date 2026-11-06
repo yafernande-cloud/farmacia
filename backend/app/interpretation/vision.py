@@ -47,8 +47,8 @@ class VisionStatus(StrEnum):
 
 # Atributos que un proveedor puede reportar. Cada uno es independiente de los demás.
 VISION_ATTRIBUTES = (
-    "ingredient", "product_name", "strength", "concentration", "content", "form", "packaging",
-    "release", *COMMERCIAL_FIELDS, "visible_quantity",
+    "ingredient", "product_name", "variant", "strength", "concentration", "content", "form",
+    "packaging", "release", *COMMERCIAL_FIELDS, "visible_quantity",
 )  # fmt: skip
 MIN_CONFIDENCE = 0.5
 
@@ -84,6 +84,14 @@ class VisionExtraction:
 
 class VisionUnavailable(RuntimeError):
     """No hay proveedor de visión conectado."""
+
+
+class VisionFailed(RuntimeError):
+    """El proveedor de visión respondió con un error interno. `code` nunca se muestra al usuario."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
 
 
 class VisionInterpreter(Protocol):
@@ -185,6 +193,9 @@ def read_extraction(ext: VisionExtraction) -> ImageReading:
             None, VisionStatus.NEEDS_REVIEW, [*unc, f"unparseable:{e.code}"], ignored
         )
     p = replace(_tag_image(p), name_anchor=anchor)
+    variant = (use.get("variant") or [None])[0]
+    if variant:
+        p = replace(p, variant=Attr(variant, Basis.INFERRED, "image"))
     if not p.strengths and not p.unassigned:
         unc.append("strength_not_visible")
     ent: dict[str, Attr] = {}
@@ -267,6 +278,7 @@ def merge_text_and_image(
         out, strengths=strengths, content=content, unassigned=unassigned, original_text=text.original_text,
         form=pick("form", text.form, image.form), release=pick("release", text.release, image.release),
         packaging=pick("packaging", text.packaging, image.packaging),
+        variant=pick("variant", text.variant, image.variant),
         requested_quantity=text.requested_quantity, requested_unit=text.requested_unit,
         **{k: pick(k, getattr(text, k), getattr(image, k)) for k in COMMERCIAL_FIELDS},
     )  # fmt: skip

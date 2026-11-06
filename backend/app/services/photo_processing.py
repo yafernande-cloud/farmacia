@@ -21,6 +21,7 @@ from app.core.errors import DomainError
 from app.domain.products import ParsedProduct, parse_shortage_text
 from app.interpretation.vision import (
     ImageReading,
+    VisionFailed,
     VisionInterpreter,
     VisionStatus,
     VisionUnavailable,
@@ -28,6 +29,7 @@ from app.interpretation.vision import (
     read_extraction,
 )
 from app.models import (
+    AppUser,
     Attachment,
     ChannelBinding,
     ChannelMessage,
@@ -36,7 +38,7 @@ from app.models import (
     TelegramAccount,
 )
 from app.services.actors import load_actor
-from app.services.channel import Reply, enqueue
+from app.services.channel import Reply, _fmt_quantity, enqueue
 from app.services.demand import Origin, record_interpreted_observation
 from app.services.events import advisory_lock, emit
 from app.services.provenance import allow_simulated_vision, org_kind
@@ -66,43 +68,64 @@ class PhotoOutcome:
     duplicate: bool = False
 
 
-def _reply_text(name, status, res, parsed: ParsedProduct | None, mode, conflicts, qty_note) -> str:
-    sim = " (lectura simulada: no es una IA real)" if mode == "simulated" else ""
-    foot = f"\n— Reportando como {name}"
+def _declared_text(res) -> str:
+    obs = res.observation
+    if obs is not None and obs.declared_quantity is not None:
+        return _fmt_quantity(obs.declared_quantity, obs.declared_unit)
+    return "1 unidad"
+
+
+def _not_identified(name: str, *, simulated: bool = False) -> str:
+    """Frase única para una foto que no se pudo leer. Nunca se presenta como registrada."""
+    sim = " (lectura simulada, no es una IA real)" if simulated else ""
+    return (
+        "📷 No pude identificar el producto de la fotografía.\n"
+        f"La dejé pendiente de revisión.{sim}\n"
+        f"👤 Reportado por: {name}"
+    )
+
+
+def _reply_text(
+    name, status, res, parsed: ParsedProduct | None, mode, conflicts, other_author=None
+) -> str:
+    sim = " (lectura simulada, no es una IA real)" if mode == "simulated" else ""
+    foot = f"\n👤 Reportado por: {name}"
     if conflicts:
         return (
-            "La foto y tu texto no coinciden; guardé ambos y quedó para revisión de compras."
-            + sim
-            + foot
+            "⚠️ La foto y tu texto no coinciden.\n"
+            f"Guardé ambos y quedó para revisión de compras.{sim}{foot}"
         )
     if res is None or parsed is None:
-        return (
-            "Guardé la foto, pero no pude identificar el producto con seguridad; queda para revisión de compras."
-            + sim
-            + foot
-        )
+        return _not_identified(name, simulated=mode == "simulated")
+    shown = res.item.display_name if res.item else parsed.display_name
     if res.outcome == "needs_review":
         return (
-            "Anoté el faltante de la foto, pero no puedo asegurar cuál producto es; queda para revisión de compras."
-            + qty_note
-            + sim
-            + foot
+            f"📷 Reconocí {shown}, pero no pude confirmarlo.\n"
+            f"Quedó pendiente de revisión.{sim}{foot}"
         )
-    shown = res.item.display_name if res.item else parsed.display_name
-    lab = f" ({parsed.laboratory.value})" if parsed.laboratory else ""
-    missing = []
+    if res.outcome == "blocked_in_cart":
+        return f"⚠️ {shown} está en carrito: no cambié la cantidad solicitada.{sim}{foot}"
+    qty = _declared_text(res)
+    if res.outcome == "attached_existing":
+        lead = f"✅ Anotado: {shown} — {qty} (ya estaba en tu lista)."
+    else:
+        lead = f"✅ Anotado: {shown} — {qty}."
+    if other_author and res.outcome == "created_item":
+        # Misma regla que un texto (D-135): el aviso es propio e independiente, nunca se fusiona.
+        lead += (
+            f"\n⚠️ {other_author} ya informó este producto. "
+            "Quedó como un reporte tuyo independiente."
+        )
+    missing: list[str] = []
     if parsed.name_anchor:
         missing.append("el principio activo")
-    if not parsed.strengths and not parsed.unassigned:
+    if parsed.form and not parsed.strengths and not parsed.unassigned:
         missing.append("la dosis")
-    tail = (f" No pude ver {' ni '.join(missing)}, así que queda por confirmar."
-            if missing else " Compras confirmará los datos leídos de la foto.")  # fmt: skip
-    verb = (
-        "Ya estaba en la lista; sumé tu aviso"
-        if res.outcome == "attached_existing"
-        else "Anoté el faltante"
-    )
-    return f"{verb}: {shown}{lab}.{tail}{qty_note}{sim}{foot}"
+    if missing:
+        lead += f" Falta confirmar {' y '.join(missing)}."
+    if status == "needs_review":
+        lead += " Quedó por confirmar lo leído de la foto."
+    return lead + sim + foot
 
 
 async def process_attachment(
@@ -136,6 +159,39 @@ async def process_attachment(
             a = await s2.get(Attachment, attachment_id)
             a.status, a.error, a.uncertainties = status, error, unc or []
         return PhotoOutcome(attachment_id, status)
+
+    async def fail_vision(code: str) -> PhotoOutcome:
+        """Fallo de lectura: la foto se conserva y queda para revisión; nunca se inventa nada.
+
+        No se reintenta con otra llamada al proveedor (el adaptador ya reintentó solo lo
+        transitorio): así una misma foto no consume cuota repetidamente.
+        """
+        async with sm() as s2, s2.begin():
+            a = await s2.get(Attachment, attachment_id)
+            binding = await s2.get(ChannelBinding, info["binding"])
+            actor = await load_actor(s2, info["author"])
+            name = actor.display_name if actor is not None else "auxiliar"
+            a.status, a.error = "needs_review", f"vision_failed:{code}"
+            a.uncertainties, a.processed_at = [f"vision_failed:{code}"], now
+            if binding is not None:
+                n = (
+                    await s2.execute(
+                        select(func.count())
+                        .select_from(OutboundMessage)
+                        .where(OutboundMessage.inbound_event_id == info["event_id"])
+                    )
+                ).scalar_one()
+                await enqueue(
+                    s2,
+                    binding,
+                    info["event_id"],
+                    [Reply(_not_identified(name))],
+                    start_seq=n,
+                )
+            emit(s2, org_id=info["org"], actor_id=info["author"], action="attachment.vision_failed",
+                 entity_type="attachment", entity_id=a.id, event_type="attachment.vision_failed",
+                 aggregate_version=None, payload={"code": code})  # fmt: skip
+        return PhotoOutcome(attachment_id, "needs_review")
 
     # ---- 2) obtener y guardar la imagen original (privada, tipo verificado por firma de bytes)
     try:
@@ -184,7 +240,8 @@ async def process_attachment(
                 info["event_id"],
                 [
                     Reply(
-                        f"Esa foto ya estaba registrada; no la anoté otra vez.\n— Reportando como {u.display_name}"
+                        "Esa foto ya estaba registrada; no la anoté otra vez.\n"
+                        f"👤 Reportado por: {u.display_name}"
                     )
                 ],
                 start_seq=n,
@@ -209,8 +266,10 @@ async def process_attachment(
             a.status, a.uncertainties = "pending", ["vision_unavailable"]
             a.attempts -= 1
         return PhotoOutcome(attachment_id, "pending")
+    except VisionFailed as e:
+        return await fail_vision(e.code)
     except Exception as e:  # noqa: BLE001
-        return await fail("error", f"vision_failed:{type(e).__name__}")
+        return await fail_vision(type(e).__name__)
 
     # ---- 4) mismas reglas que un texto: traducir, combinar con el pie de foto, registrar
     reading: ImageReading = read_extraction(ext)
@@ -253,7 +312,6 @@ async def process_attachment(
         binding = await s.get(ChannelBinding, info["binding"])
         actor = await load_actor(s, info["author"])
         res = None
-        qty_note = ""
         if parsed is not None and actor is not None:
             res = await record_interpreted_observation(
                 s, actor, parsed=parsed, raw_text=info["caption"] or "",
@@ -264,16 +322,20 @@ async def process_attachment(
                               branch_label=info["branch"]),
                 force_review=tuple(f"image_text_conflict:{c}" for c in conflicts),
                 ai_derived=ext.mode == "live",  # una lectura real de un modelo es `ai_derived`
+                apply_default_quantity=True,  # misma regla D-147 que un texto de Telegram
                 extra_interpretation={"vision": {"mode": ext.mode, "provider": ext.provider, "model": ext.model,
                                                  "legibility": ext.legibility, "uncertainties": reading.uncertainties,
                                                  "ignored": reading.ignored}},
             )  # fmt: skip
-            if parsed.requested_quantity is not None:
-                q = parsed.requested_quantity
-                qty_note = f" Anoté {q.normalize():f} como pedido sugerido (no cambia la cantidad)."
         identified = (
             reading.status is VisionStatus.IDENTIFIED and not conflicts and parsed is not None
         )
+        other_author = None
+        if res is not None and res.outcome == "created_item" and res.other_reports:
+            reported_by = res.other_reports[0].get("reported_by")
+            if reported_by:
+                other = await s.get(AppUser, uuid.UUID(reported_by))
+                other_author = other.display_name if other is not None else None
         att.status = "identified" if identified else "needs_review"
         att.extraction, att.extraction_mode = ext.to_dict(), ext.mode
         att.extraction_provenance = "ai_derived" if ext.mode == "live" else "simulated"
@@ -291,7 +353,7 @@ async def process_attachment(
             )
         ).scalar_one()
         await enqueue(s, binding, info["event_id"],
-                      [Reply(_reply_text(actor.display_name, att.status, res, parsed, ext.mode, conflicts, qty_note))],
+                      [Reply(_reply_text(actor.display_name, att.status, res, parsed, ext.mode, conflicts, other_author))],
                       start_seq=n)  # fmt: skip
         emit(s, org_id=info["org"], actor_id=info["author"], action="attachment.processed", entity_type="attachment",
              entity_id=att.id, event_type="attachment.processed", aggregate_version=None,
