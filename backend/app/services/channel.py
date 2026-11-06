@@ -12,7 +12,7 @@ Reglas (HLD §3.1, §7, §8):
 import html
 import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Literal
@@ -40,7 +40,13 @@ from app.services import coverage as coverage_svc
 from app.services import queries, sessions
 from app.services.access import AccountContext
 from app.services.actors import Actor, load_actor
-from app.services.demand import ObservationResult, Origin, item_in_cart, record_observation
+from app.services.demand import (
+    ObservationResult,
+    Origin,
+    item_in_cart,
+    record_interpreted_observation,
+    record_observation,
+)
 from app.services.events import advisory_lock, emit
 from app.services.provenance import org_kind, origin_for
 from app.services.quantities import apply_quantity_command
@@ -676,6 +682,8 @@ async def _ask_confirmation(
         "declared_quantity": None,
         "declared_unit": None,
     }
+    # Una foto conserva su origen y su lectura para cuando la persona confirme el duplicado.
+    data.update(pending.get("extra") or {})
     # La cantidad escrita, si la hubo, se conserva como dato declarado (nunca como pedido).
     parsed_qty = r.parsed.requested_quantity
     parsed_unit = r.parsed.requested_unit
@@ -778,6 +786,37 @@ async def _record_confirmed(
     """Registra el aviso que había quedado a la espera de confirmación. No suma cantidades."""
     account_id = uuid.UUID(info["account_id"]) if info.get("account_id") else None
     session_id = uuid.UUID(info["session_id"]) if info.get("session_id") else None
+    if info.get("source") == "telegram_photo":
+        # La foto se confirma con el MISMO mecanismo que un texto, conservando su origen,
+        # adjunto y lectura visual. No se vuelve a llamar al proveedor de visión.
+        parsed = ParsedProduct.from_dict(info["parsed"])
+        if declared_quantity is not None:
+            parsed = replace(
+                parsed,
+                requested_quantity=declared_quantity,
+                requested_unit=declared_unit or parsed.requested_unit,
+            )
+        attachment_id = info.get("attachment_id")
+        origin = Origin(
+            "telegram_photo",
+            info.get("basis_level") or "declared",
+            session_id,
+            msg.id,
+            uuid.UUID(attachment_id) if attachment_id else None,
+            account_id=account_id,
+            branch_label=info.get("branch_label"),
+        )  # fmt: skip
+        return await record_interpreted_observation(
+            session,
+            actor,
+            parsed=parsed,
+            raw_text=info.get("raw_text") or "",
+            idempotency_key=f"{info['key']}{key_suffix}",
+            origin=origin,
+            ai_derived=bool(info.get("ai_derived")),
+            apply_default_quantity=True,
+            extra_interpretation=info.get("vision_interpretation"),
+        )
     origin = Origin(
         "telegram_text", info.get("basis_level") or "declared", session_id, msg.id,
         account_id=account_id, branch_label=info.get("branch_label"),

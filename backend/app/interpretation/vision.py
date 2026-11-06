@@ -1,4 +1,6 @@
-"""Contrato de visión multimodal. NO hay modelo de visión conectado en esta fase.
+"""Contrato de visión multimodal y traducción determinista.
+
+El proveedor real es opcional (`VISION_PROVIDER=openai`, adaptador en `openai_vision.py`).
 
 Separación de responsabilidades (HLD §8, §17.3):
   * Un `VisionInterpreter` (futuro proveedor de IA con visión) solo DEVUELVE una `VisionExtraction`:

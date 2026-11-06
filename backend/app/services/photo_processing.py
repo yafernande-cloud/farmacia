@@ -6,8 +6,9 @@ Estados (`attachment.status`): pending → processing → identified | needs_rev
                   lo leído de una imagen siempre queda `inferred` hasta que compras lo confirme.
  * needs_review : borrosa, parcial, sin producto legible, o en conflicto con el texto.
  * error        : falló la descarga/lectura; se reintenta.
-`extraction_mode` deja explícito si la lectura fue `live` o `simulated`. HOY NO existe proveedor
-real: solo `none` (se guarda y queda pendiente) o `simulated` (demo/pruebas, etiquetado).
+`extraction_mode` deja explícito si la lectura fue `live` o `simulated`. `live` solo se usa con un
+proveedor real configurado (`VISION_PROVIDER=openai`); `simulated` queda para pruebas/demo y siempre
+se etiqueta como tal. Sin proveedor (`none`) la foto se guarda y queda pendiente.
 """
 
 import uuid
@@ -29,7 +30,6 @@ from app.interpretation.vision import (
     read_extraction,
 )
 from app.models import (
-    AppUser,
     Attachment,
     ChannelBinding,
     ChannelMessage,
@@ -38,7 +38,7 @@ from app.models import (
     TelegramAccount,
 )
 from app.services.actors import load_actor
-from app.services.channel import Reply, _fmt_quantity, enqueue
+from app.services.channel import Reply, _ask_confirmation, _fmt_quantity, enqueue
 from app.services.demand import Origin, record_interpreted_observation
 from app.services.events import advisory_lock, emit
 from app.services.provenance import allow_simulated_vision, org_kind
@@ -86,7 +86,7 @@ def _not_identified(name: str, *, simulated: bool = False) -> str:
 
 
 def _reply_text(
-    name, status, res, parsed: ParsedProduct | None, mode, conflicts, other_author=None
+    name, status, res, parsed: ParsedProduct | None, mode, conflicts
 ) -> str:
     sim = " (lectura simulada, no es una IA real)" if mode == "simulated" else ""
     foot = f"\n👤 Reportado por: {name}"
@@ -110,12 +110,6 @@ def _reply_text(
         lead = f"✅ Anotado: {shown} — {qty} (ya estaba en tu lista)."
     else:
         lead = f"✅ Anotado: {shown} — {qty}."
-    if other_author and res.outcome == "created_item":
-        # Misma regla que un texto (D-135): el aviso es propio e independiente, nunca se fusiona.
-        lead += (
-            f"\n⚠️ {other_author} ya informó este producto. "
-            "Quedó como un reporte tuyo independiente."
-        )
     missing: list[str] = []
     if parsed.name_anchor:
         missing.append("el principio activo")
@@ -312,30 +306,39 @@ async def process_attachment(
         binding = await s.get(ChannelBinding, info["binding"])
         actor = await load_actor(s, info["author"])
         res = None
+        key = f"tg:{info['binding']}:{info['event']}:photo"
+        vision_snapshot = {
+            "vision": {
+                "mode": ext.mode,
+                "provider": ext.provider,
+                "model": ext.model,
+                "legibility": ext.legibility,
+                "uncertainties": reading.uncertainties,
+                "ignored": reading.ignored,
+            }
+        }
+        origin = Origin(
+            "telegram_photo",
+            "account" if info["basis"] == "authorized_account" else "declared",
+            info["session"],
+            info["msg"],
+            attachment_id,
+            account_id=info["account"],
+            branch_label=info["branch"],
+        )
         if parsed is not None and actor is not None:
             res = await record_interpreted_observation(
                 s, actor, parsed=parsed, raw_text=info["caption"] or "",
-                idempotency_key=f"tg:{info['binding']}:{info['event']}:photo",
-                origin=Origin("telegram_photo",
-                              "account" if info["basis"] == "authorized_account" else "declared",
-                              info["session"], info["msg"], attachment_id, account_id=info["account"],
-                              branch_label=info["branch"]),
+                idempotency_key=key, origin=origin,
                 force_review=tuple(f"image_text_conflict:{c}" for c in conflicts),
                 ai_derived=ext.mode == "live",  # una lectura real de un modelo es `ai_derived`
                 apply_default_quantity=True,  # misma regla D-147 que un texto de Telegram
-                extra_interpretation={"vision": {"mode": ext.mode, "provider": ext.provider, "model": ext.model,
-                                                 "legibility": ext.legibility, "uncertainties": reading.uncertainties,
-                                                 "ignored": reading.ignored}},
+                confirmation_mode="telegram",  # mismo mecanismo de duplicados que un texto
+                extra_interpretation=vision_snapshot,
             )  # fmt: skip
         identified = (
             reading.status is VisionStatus.IDENTIFIED and not conflicts and parsed is not None
         )
-        other_author = None
-        if res is not None and res.outcome == "created_item" and res.other_reports:
-            reported_by = res.other_reports[0].get("reported_by")
-            if reported_by:
-                other = await s.get(AppUser, uuid.UUID(reported_by))
-                other_author = other.display_name if other is not None else None
         att.status = "identified" if identified else "needs_review"
         att.extraction, att.extraction_mode = ext.to_dict(), ext.mode
         att.extraction_provenance = "ai_derived" if ext.mode == "live" else "simulated"
@@ -352,9 +355,34 @@ async def process_attachment(
                 .where(OutboundMessage.inbound_event_id == info["event_id"])
             )
         ).scalar_one()
-        await enqueue(s, binding, info["event_id"],
-                      [Reply(_reply_text(actor.display_name, att.status, res, parsed, ext.mode, conflicts, other_author))],
-                      start_seq=n)  # fmt: skip
+        if res is not None and res.outcome == "needs_confirmation":
+            msg = await s.get(ChannelMessage, info["msg"])
+            pending = {
+                "segment": info["caption"] or parsed.display_name,
+                "key": key,
+                "result": res,
+                "origin": origin,
+                "basis_level": origin.identity_level,
+                "account_id": info["account"],
+                "branch_label": info["branch"],
+                "extra": {
+                    "source": "telegram_photo",
+                    "attachment_id": str(attachment_id),
+                    "raw_text": info["caption"] or "",
+                    "parsed": parsed.to_dict(),
+                    "ai_derived": ext.mode == "live",
+                    "vision_interpretation": vision_snapshot,
+                },
+            }
+            reply = await _ask_confirmation(
+                s, binding, actor, msg, pending,
+                info["basis"] == "authorized_account",
+            )  # fmt: skip
+        else:
+            reply = Reply(
+                _reply_text(actor.display_name, att.status, res, parsed, ext.mode, conflicts)
+            )
+        await enqueue(s, binding, info["event_id"], [reply], start_seq=n)  # fmt: skip
         emit(s, org_id=info["org"], actor_id=info["author"], action="attachment.processed", entity_type="attachment",
              entity_id=att.id, event_type="attachment.processed", aggregate_version=None,
              payload={"status": att.status, "mode": ext.mode, "observation": res.outcome if res else None},

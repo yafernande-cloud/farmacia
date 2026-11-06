@@ -2,11 +2,12 @@
 
 IMPORTANTE — qué se verifica y qué NO:
   * Telegram: SIMULADO (tests/tgsim.py). No se probó contra los servidores reales.
-  * Visión: SIMULADA (`SimulatedVisionInterpreter`, resultados escritos a mano, `mode="simulated"`).
-    Estas pruebas demuestran que, DADO lo que un proveedor de visión devolvería, el sistema registra,
-    separa procedencia y mantiene lo no verificable pendiente. NO demuestran que ninguna IA lea una
-    imagen: no hay proveedor de visión conectado. La foto real de Migranol aportada por el usuario
-    NO fue procesada por ningún modelo; su contenido se transcribió a mano en `MIGRANOL`.
+  * Visión: dobles controlados. La mayoría usa `SimulatedVisionInterpreter` (resultados escritos a
+    mano, `mode="simulated"`); el flujo `live` usa `LiveVision`, que devuelve una extracción como la
+    de OpenAI sin llamar al proveedor. El adaptador HTTP real se prueba aparte con MockTransport.
+    Ninguna prueba consume cuota ni demuestra que una IA lea una imagen real. La foto real de
+    Migranol aportada por el usuario NO fue procesada por ningún modelo; su contenido se transcribió
+    a mano en `MIGRANOL`.
 """
 
 import stat
@@ -479,23 +480,78 @@ async def test_foto_del_mismo_producto_ya_anotado_no_duplica_el_faltante(
     assert "(ya estaba en tu lista)" in tg_api.texts()[-1]
 
 
-async def test_foto_de_otro_auxiliar_avisa_quien_lo_reporto_y_no_fusiona(
+async def test_foto_de_otro_auxiliar_pide_confirmacion_y_crea_reporte_al_confirmar(
     photo_chat, sessions, seed, tg_api
 ):
     c = photo_chat(vision=LiveVision(CREMA))
     await c.pick("ana")
-    await c.send(photo_update, img(tg_api, 27))
-    await c.pick("luis")
-    await c.send(photo_update, img(tg_api, 28))
+    await c.send(photo_update, img(tg_api, 27), now=T0)
+    await c.pick("luis", now=mins(1))
+    await c.send(photo_update, img(tg_api, 28), now=mins(2))
+
+    # Antes de confirmar NO se crea nada para Luis: se reutiliza el mecanismo de texto.
+    assert len(await observations(sessions)) == 1
+    assert await count(sessions, DemandItem) == 1
+    async with sessions() as s:
+        (pending,) = (
+            await s.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.confirmation_status == "pending_other_report"
+                )
+            )
+        ).scalars().all()
+    reply = tg_api.texts()[-1]
+    assert "Ana ya informó" in reply
+    assert "¿También quieres reportarlo?" in reply
+    assert "reporte tuyo independiente" in reply
+    assert "Anotado" not in reply
+
+    await c.click(f"rp:ok:{pending.id}", now=mins(3))
 
     obs = await observations(sessions)
     assert [o.author_id for o in obs] == [seed["ana"], seed["luis"]]
     assert obs[0].demand_item_id != obs[1].demand_item_id  # reportes independientes
     assert await count(sessions, DemandItem) == 2
-    reply = tg_api.texts()[-1]
-    assert "Ana ya informó este producto." in reply
-    assert "Quedó como un reporte tuyo independiente." in reply
-    assert "👤 Reportado por: Luis" in reply
+    luis_obs = obs[1]
+    (luis_att,) = [a for a in await attachments(sessions) if a.id == luis_obs.attachment_id]
+    assert luis_obs.source == "telegram_photo" and luis_obs.raw_text == ""
+    assert luis_obs.match_status == "created_item"
+    assert (luis_obs.declared_quantity, luis_obs.declared_unit) == (1, "unit")
+    assert luis_att.status == "identified" and luis_att.author_id == seed["luis"]
+    assert luis_att.storage_key and luis_att.content_sha256 == sha256_hex(fake_jpeg(28))
+    final = tg_api.texts()[-1]
+    assert "✅ Anotado: Crema de manos, variante Berry Warm x 50 ml — 1 unidad." in final
+    assert "reporte independiente" in final
+
+
+async def test_foto_de_otro_auxiliar_cancelada_no_crea_reporte_y_conserva_la_foto(
+    photo_chat, sessions, seed, tg_api
+):
+    c = photo_chat(vision=LiveVision(CREMA))
+    await c.pick("ana")
+    await c.send(photo_update, img(tg_api, 29), now=T0)
+    await c.pick("luis", now=mins(1))
+    await c.send(photo_update, img(tg_api, 30), now=mins(2))
+    async with sessions() as s:
+        (pending,) = (
+            await s.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.confirmation_status == "pending_other_report"
+                )
+            )
+        ).scalars().all()
+
+    await c.click(f"rp:cancel:{pending.id}", now=mins(3))
+
+    assert len(await observations(sessions)) == 1  # solo el de Ana
+    assert await count(sessions, DemandItem) == 1
+    async with sessions() as s:
+        m = await s.get(ChannelMessage, pending.id)
+    assert m.confirmation_status == "cancelled"
+    luis_att = [a for a in await attachments(sessions) if a.author_id == seed["luis"]][0]
+    assert luis_att.status == "identified"  # la foto no se pierde ni se registra sola
+    assert luis_att.storage_key and luis_att.content_sha256 == sha256_hex(fake_jpeg(30))
+    assert "no registré ese aviso" in tg_api.texts()[-1]
 
 
 # ---------- duplicados, errores y seguridad ----------
@@ -522,10 +578,23 @@ async def test_otro_auxiliar_con_la_misma_foto_suma_aviso_sin_sumar_cantidad(
 ):
     c = photo_chat({"*": MIGRANOL})
     await c.pick("ana")
-    await c.send(photo_update, img(c.api, 9, "x1"))
-    await c.pick("luis")
+    await c.send(photo_update, img(c.api, 9, "x1"), now=T0)
+    await c.pick("luis", now=mins(1))
     c.api.files["x2"] = fake_jpeg(9)
-    await c.send(photo_update, "x2")
+    await c.send(photo_update, "x2", now=mins(2))
+    # La deduplicación de la imagen es por autor: para Luis la foto es nueva, pero el producto
+    # ya está reportado por Ana; se pregunta antes de crear su reporte.
+    obs = await observations(sessions)
+    assert [o.author_id for o in obs] == [seed["ana"]]
+    async with sessions() as s:
+        (pending,) = (
+            await s.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.confirmation_status == "pending_other_report"
+                )
+            )
+        ).scalars().all()
+    await c.click(f"rp:ok:{pending.id}", now=mins(3))
     obs = await observations(sessions)
     assert [o.author_id for o in obs] == [seed["ana"], seed["luis"]]
     # Modelo A: la foto de Luis no se adjunta al reporte de Ana; cada persona conserva el suyo.
