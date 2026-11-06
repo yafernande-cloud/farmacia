@@ -10,14 +10,21 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import DomainError
 from app.core.permissions import can_report
 from app.core.security import verify_pin
 from app.core.staff import absence_label
-from app.models import ActorSession, AppUser, AuxiliaryProfile, ChannelBinding
+from app.models import (
+    ActorSession,
+    AppUser,
+    AuxiliaryProfile,
+    ChannelBinding,
+    TelegramAccount,
+    TelegramAccountAuxiliary,
+)
 from app.services.events import advisory_lock, emit
 
 MAX_PIN_ATTEMPTS = 5
@@ -79,6 +86,52 @@ async def list_reporters(session: AsyncSession, org: uuid.UUID) -> list[AppUser]
         )
     ).scalars()  # fmt: skip
     return [u for u in rows if can_report(list(u.roles or []))]
+
+
+async def list_account_reporters(
+    session: AsyncSession, org: uuid.UUID, account_id: uuid.UUID
+) -> list[AppUser]:
+    """Auxiliares HABILITADOS en una cuenta compartida, con la elegibilidad vigente.
+
+    La asociación solo acota el selector; no concede permisos. Una persona desactivada en la
+    cuenta, inactiva, ausente o sin rol para reportar no aparece ni puede ser seleccionada.
+    """
+    rows = (
+        await session.execute(
+            select(AppUser)
+            .join(
+                TelegramAccountAuxiliary,
+                and_(
+                    TelegramAccountAuxiliary.app_user_id == AppUser.id,
+                    TelegramAccountAuxiliary.organization_id == AppUser.organization_id,
+                ),
+            )
+            .where(
+                TelegramAccountAuxiliary.organization_id == org,
+                TelegramAccountAuxiliary.account_id == account_id,
+                TelegramAccountAuxiliary.active,
+                AppUser.active,
+                AppUser.available,
+            )
+            .order_by(AppUser.display_name)
+        )
+    ).scalars()
+    return [u for u in rows if can_report(list(u.roles or []))]
+
+
+async def is_account_auxiliary(
+    session: AsyncSession, account_id: uuid.UUID, user_id: uuid.UUID
+) -> bool:
+    """¿La persona está habilitada (activa) en esa cuenta? La baja lógica nunca se borra."""
+    return (
+        await session.execute(
+            select(TelegramAccountAuxiliary.id).where(
+                TelegramAccountAuxiliary.account_id == account_id,
+                TelegramAccountAuxiliary.app_user_id == user_id,
+                TelegramAccountAuxiliary.active,
+            )
+        )
+    ).scalar_one_or_none() is not None
 
 
 async def _lock_chat(session: AsyncSession, binding: ChannelBinding) -> None:
@@ -192,6 +245,23 @@ async def select_auxiliary(
     if err is not None:  # un botón antiguo no puede elegir a quien ya no está disponible
         raise err
     assert user is not None
+    if binding.account_id is not None:
+        # El binding manda: un callback no puede elegir una cuenta distinta de la que autorizó el chat.
+        if account_id is not None and account_id != binding.account_id:
+            raise DomainError(
+                "ACCOUNT_MISMATCH",
+                "La cuenta indicada no corresponde a este chat.",
+                status_code=403,
+            )
+        account = await session.get(TelegramAccount, binding.account_id)
+        if account is not None and account.mode == "shared_device":
+            if not await is_account_auxiliary(session, binding.account_id, user_id):
+                # Mismo mensaje para persona inexistente, removida o de otra cuenta: no filtra datos.
+                raise DomainError(
+                    "AUXILIARY_NOT_ENABLED",
+                    "Esa persona no está habilitada para reportar en este teléfono.",
+                    status_code=403,
+                )
     level = identity_level or ("pin" if pin_verified else "declared")
     if level not in ("declared", "pin", "account"):
         raise DomainError("INVALID_IDENTITY_LEVEL", "Nivel de identidad inválido.", status_code=400)
@@ -269,6 +339,69 @@ async def revoke_person_sessions(
                 ActorSession.auxiliary_id == user_id,
                 ActorSession.ended_at.is_(None),
             )
+            .with_for_update(of=ActorSession)
+        )
+    ).all()
+    for sess, binding in rows:
+        await advisory_lock(session, f"chan:{binding.id}")
+        _end(session, binding, sess, now, "revoked", actor_id=by)
+    await session.flush()
+    return len(rows)
+
+
+async def revoke_account_person_sessions(
+    session: AsyncSession,
+    account_id: uuid.UUID,
+    user_id: uuid.UUID,
+    now: datetime,
+    *,
+    by: uuid.UUID | None = None,
+) -> int:
+    """Cierra las sesiones de UNA persona en los chats de UNA cuenta.
+
+    La misma persona puede estar habilitada en otra cuenta: esas sesiones no se tocan.
+    """
+    rows = (
+        await session.execute(
+            select(ActorSession, ChannelBinding)
+            .join(ChannelBinding, ChannelBinding.id == ActorSession.channel_binding_id)
+            .where(
+                ChannelBinding.account_id == account_id,
+                ActorSession.auxiliary_id == user_id,
+                ActorSession.ended_at.is_(None),
+            )
+            .order_by(ChannelBinding.id)
+            .with_for_update(of=ActorSession)
+        )
+    ).all()
+    for sess, binding in rows:
+        await advisory_lock(session, f"chan:{binding.id}")
+        _end(session, binding, sess, now, "revoked", actor_id=by)
+    await session.flush()
+    return len(rows)
+
+
+async def revoke_account_sessions(
+    session: AsyncSession,
+    account_id: uuid.UUID,
+    now: datetime,
+    *,
+    by: uuid.UUID | None = None,
+) -> int:
+    """Cierra todas las sesiones de los chats de una cuenta (cambio de configuración).
+
+    Se usa al pasar de un auxiliar a dos: la próxima persona debe elegir identidad y el bot no
+    puede asumir que sigue la misma.
+    """
+    rows = (
+        await session.execute(
+            select(ActorSession, ChannelBinding)
+            .join(ChannelBinding, ChannelBinding.id == ActorSession.channel_binding_id)
+            .where(
+                ChannelBinding.account_id == account_id,
+                ActorSession.ended_at.is_(None),
+            )
+            .order_by(ChannelBinding.id)
             .with_for_update(of=ActorSession)
         )
     ).all()

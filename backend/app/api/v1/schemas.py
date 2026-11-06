@@ -150,6 +150,21 @@ class ObservationOut(BaseModel):
     raw_text: str
     declared_quantity: Qty | None
     declared_unit: str | None
+    quantity_origin: Literal["explicit", "default"] | None = Field(
+        default=None,
+        description=(
+            "Procedencia de `declared_quantity`: «explicit» = la escribió la persona; «default» = "
+            "1 unidad genérica aplicada por la regla de cantidad predeterminada (D-147). null = "
+            "aviso sin cantidad (histórico) o cantidad no determinada."
+        ),
+    )
+    quantity_proposal: dict = Field(
+        default_factory=dict,
+        description=(
+            "Propuesta de cantidad confirmada en Telegram por una persona sin APPLY_QUANTITY. "
+            "Vacío si no hay propuesta. Nunca se aplica sola a la cantidad objetivo."
+        ),
+    )
     match_status: str
     candidates: list[Candidate] = []
     attributes: AttributesOut | None = Field(
@@ -188,10 +203,32 @@ class DemandItemOut(BaseModel):
         default=None, description="Autor del reporte; null solo en filas anteriores a la 0016."
     )
     reported_by_name: str | None = None
+    branch_label: str | None = Field(
+        default=None,
+        description="Sucursal de la cuenta al registrar el aviso (instantánea histórica).",
+    )
     declared_quantity: Qty | None = Field(
         default=None, description="Última cantidad declarada por el autor de este reporte."
     )
     declared_unit: str | None = None
+    requested_quantity: Qty | None = Field(
+        default=None,
+        description=(
+            "Cantidad SOLICITADA vigente (la última declarada). Es distinta de `target_quantity`: "
+            "compras decide la cantidad objetivo de compra."
+        ),
+    )
+    requested_unit: str | None = Field(
+        default=None, description="Unidad de `requested_quantity`."
+    )
+    requested_quantity_origin: Literal["explicit", "default"] | None = Field(
+        default=None,
+        description=(
+            "Procedencia de `requested_quantity`: «explicit» = informada por el auxiliar; "
+            "«default» = 1 unidad genérica aplicada porque no indicó cantidad (D-147); null = "
+            "histórico sin cantidad. Nunca describe la cantidad de compra (`target_quantity`)."
+        ),
+    )
     reported_at: datetime | None = Field(
         default=None, description="Fecha del primer aviso que sostiene este reporte."
     )

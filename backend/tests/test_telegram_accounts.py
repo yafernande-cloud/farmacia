@@ -26,6 +26,7 @@ from app.main import create_app
 from app.models import (
     ActorSession,
     AppUser,
+    Attachment,
     AuditEvent,
     ChannelBinding,
     ChannelMessage,
@@ -37,12 +38,13 @@ from app.models import (
     PurchaseCycle,
     TelegramAccessRequest,
     TelegramAccount,
+    TelegramAccountAuxiliary,
 )
 from app.services import access
 from app.services.actors import Actor
 from app.telegram.handler import after_handle, handle_update
 from tests.conftest import alembic_config
-from tests.tgsim import callback_update, text_update
+from tests.tgsim import callback_update, photo_update, text_update
 
 pytestmark = pytest.mark.db
 T0 = datetime.now(UTC).replace(second=0, microsecond=0)
@@ -161,18 +163,20 @@ async def approve(
     role="operator",
     who="admin",
     now=T0,
+    branch_label=None,
 ):
     async with sessions() as s, s.begin():
         return await access.approve_request(
             s, actor(farm, who), request_id, display_label=label, mode=mode,
             app_user_id=farm[person] if person else None, access_role=role, now=now,
+            branch_label=branch_label,
         )  # fmt: skip
 
 
-async def block(sessions, farm, account_id, *, who="admin", reason="prueba"):
+async def block(sessions, farm, account_id, *, who="admin", reason="prueba", now=None):
     async with sessions() as s, s.begin():
         return await access.block_account(
-            s, actor(farm, who), account_id, reason=reason, now=mins(10)
+            s, actor(farm, who), account_id, reason=reason, now=now or mins(10)
         )
 
 
@@ -421,6 +425,9 @@ async def test_aprobar_telefono_compartido_no_liga_persona_y_mantiene_selector(
         sessions, farm, req.id, mode="shared_device", person=None, label="Teléfono farmacia"
     )
     assert approval.account.mode == "shared_device" and approval.account.app_user_id is None
+    async with sessions() as s, s.begin():
+        await access.add_account_auxiliary(s, actor(farm), approval.account.id, farm["ana"])
+        await access.add_account_auxiliary(s, actor(farm), approval.account.id, farm["luis"])
 
     await c.text("/start", now=mins(1))
     await c.click(f"sel:{farm['luis']}", now=mins(2))
@@ -429,6 +436,54 @@ async def test_aprobar_telefono_compartido_no_liga_persona_y_mantiene_selector(
     (o,) = await observations(sessions)
     assert o.author_id == farm["luis"] and o.identity_level == "declared"
     assert o.account_id == approval.account.id
+
+
+async def test_aprobacion_avisa_automatico_si_hay_un_solo_auxiliar(farm, sessions, user, tg_api):
+    """D-146, punto 12: con un auxiliar no se pide «elige quién escribe»."""
+
+    async def last_notice() -> str:
+        async with sessions() as s:
+            (out,) = (
+                await s.execute(
+                    select(OutboundMessage).order_by(OutboundMessage.id.desc()).limit(1)
+                )
+            ).scalars().all()
+        return out.payload["text"]
+
+    c = user(55500044)
+    await c.text("/solicitar")
+    req = (await lookup(sessions, farm, code_of(tg_api.texts()[-1]))).request
+    acc = await approve(
+        sessions, farm, req.id, mode="shared_device", person=None, label="Teléfono farmacia"
+    )
+    # Sin auxiliares todavía no se puede prometer identidad automática ni pedir que elija.
+    without = await last_notice()
+    assert "elige quién escribe" not in without and "auxiliares habilitados" in without
+
+    async with sessions() as s, s.begin():
+        await access.add_account_auxiliary(s, actor(farm), acc.account.id, farm["ana"])
+    await block(sessions, farm, acc.account.id, now=mins(11))
+
+    await c.text("/solicitar", now=mins(12))
+    req2 = (await lookup(sessions, farm, code_of(tg_api.texts()[-1]), now=mins(12))).request
+    await approve(
+        sessions, farm, req2.id, mode="shared_device", person=None,
+        label="Teléfono farmacia", now=mins(12),
+    )  # fmt: skip
+    one = await last_notice()
+    assert "automáticamente a nombre de Ana" in one and "elige quién escribe" not in one
+
+    async with sessions() as s, s.begin():
+        await access.add_account_auxiliary(s, actor(farm), acc.account.id, farm["luis"])
+    await block(sessions, farm, acc.account.id, now=mins(13))
+
+    await c.text("/solicitar", now=mins(14))
+    req3 = (await lookup(sessions, farm, code_of(tg_api.texts()[-1]), now=mins(14))).request
+    await approve(
+        sessions, farm, req3.id, mode="shared_device", person=None,
+        label="Teléfono farmacia", now=mins(14),
+    )  # fmt: skip
+    assert "elige quién escribe" in await last_notice()
 
 
 async def test_personal_exige_persona_y_compartido_la_prohibe(farm, sessions):
@@ -598,6 +653,9 @@ async def test_telefono_real_6358481229_conserva_acceso_y_selector(
         binding = await s.get(ChannelBinding, real_seed["binding"])
         binding.account_id = acc.id
         acc_id = acc.id
+        admin = Actor(real_seed["pao"], real_seed["org"], "Pao", ["admin", "purchasing"])
+        await access.add_account_auxiliary(s, admin, acc.id, real_seed["ana"])
+        await access.add_account_auxiliary(s, admin, acc.id, real_seed["luis"])
 
     rt = make_rt(access_org=real_seed["org"])
     phone = UserChat(rt, tg_api, int(REAL_CHAT))
@@ -940,3 +998,451 @@ async def test_migracion_0007_reasocia_solo_vinculos_privados_reales(db_url, eng
     assert bindings[ids["privado"]].account_id == rows[0].id
     assert bindings[ids["grupo"]].account_id is None
     assert bindings[ids["simulado"]].account_id is None
+
+
+# ------------------------------------------------ T1: auxiliares por cuenta y sucursal
+
+
+async def shared_account(sessions, farm, uid, *, links=(), branch=None, label="Teléfono compartido"):
+    issued = await issue(
+        sessions, farm, user_id=str(uid), chat_id=str(uid), update_id=str(uid)
+    )
+    approval = await approve(
+        sessions, farm, issued.request.id, mode="shared_device", person=None,
+        label=label, branch_label=branch,
+    )
+    async with sessions() as s, s.begin():
+        for key in links:
+            await access.add_account_auxiliary(s, actor(farm), approval.account.id, farm[key])
+    return approval
+
+
+async def active_sessions(sessions, binding_id):
+    async with sessions() as s:
+        return (
+            await s.execute(
+                select(ActorSession).where(
+                    ActorSession.channel_binding_id == binding_id,
+                    ActorSession.ended_at.is_(None),
+                )
+            )
+        ).scalars().all()
+
+
+async def test_teclado_nuevo_y_cambiar_auxiliar_solo_con_varios(
+    farm, sessions, user, tg_api
+):
+    await shared_account(sessions, farm, 55500071, links=("ana",))
+    one = user(55500071)
+    await one.text("/start", now=mins(1))
+    labels = [
+        b["text"]
+        for row in tg_api.sent()[-1]["reply_markup"]["keyboard"]
+        for b in row
+    ]
+    assert "Ver faltantes" in labels and "Ver auxiliar activo" in labels
+    assert "Cambiar auxiliar" not in labels
+    assert "Finalizar reportes" not in labels  # /salir sigue como comando oculto
+
+    await shared_account(sessions, farm, 55500072, links=("ana", "luis"))
+    two = user(55500072)
+    await two.text("/start", now=mins(2))
+    await two.click(f"sel:{farm['luis']}", now=mins(2))
+    await two.text("hola", now=mins(3))
+    labels = [
+        b["text"]
+        for row in tg_api.sent()[-1]["reply_markup"]["keyboard"]
+        for b in row
+    ]
+    assert "Cambiar auxiliar" in labels and "Ver faltantes" in labels
+
+
+async def test_un_solo_auxiliar_se_identifica_automaticamente_y_conserva_sucursal(
+    farm, sessions, user, tg_api
+):
+    """Sin selector ni confirmación: único auxiliar, durante días, reinicios y «Finalizar»."""
+    a = await shared_account(sessions, farm, 55500060, links=("ana",), branch="Sucursal Centro")
+    c = user(55500060)
+
+    await c.text("/start", now=mins(1))
+    hello = tg_api.texts()[-1]
+    assert "Ana" in hello and "identificación automática" in hello
+    assert "¿Quién" not in hello
+
+    await c.text("falta ibuprofeno 400", now=mins(2))
+    async with sessions() as s:
+        first = (
+            await s.execute(
+                select(DemandObservation).where(DemandObservation.raw_text == "falta ibuprofeno 400")
+            )
+        ).scalar_one()
+    assert first.author_id == farm["ana"] and first.identity_level == "declared"
+    assert first.account_id == a.account.id and first.branch_label == "Sucursal Centro"
+
+    async with sessions() as s, s.begin():
+        await access.update_account(
+            s, actor(farm), a.account.id, branch_label="Sucursal Norte", update_branch=True
+        )
+
+    await c.text("falta paracetamol 500", now=mins(3))
+    async with sessions() as s:
+        second = (
+            await s.execute(
+                select(DemandObservation).where(DemandObservation.raw_text == "falta paracetamol 500")
+            )
+        ).scalar_one()
+        first = await s.get(DemandObservation, first.id)
+    assert second.branch_label == "Sucursal Norte"
+    assert first.branch_label == "Sucursal Centro"  # la instantánea no se reescribe
+    assert second.author_id == farm["ana"] and second.account_id == a.account.id
+
+    await c.text("finalizar reportes", now=mins(4))
+    assert "próximo mensaje se identifica automáticamente" in tg_api.texts()[-1]
+    assert await active_sessions(sessions, a.binding.id) == []
+
+    # Una semana después: ni la sesión ni el reinicio cambian la identificación automática.
+    await c.text("falta amoxicilina 500", now=mins(4 + 60 * 24 * 7))
+    async with sessions() as s:
+        third = (
+            await s.execute(
+                select(DemandObservation).where(DemandObservation.raw_text == "falta amoxicilina 500")
+            )
+        ).scalar_one()
+    assert third.author_id == farm["ana"] and third.branch_label == "Sucursal Norte"
+    assert "¿Quién" not in tg_api.texts()[-1]
+
+
+async def test_dos_auxiliares_solo_muestran_los_de_su_cuenta_y_rechazan_otra_cuenta(
+    farm, sessions, user, tg_api
+):
+    a = await shared_account(sessions, farm, 55500061, links=("ana", "luis"), branch="A")
+    b = await shared_account(sessions, farm, 55500062, links=("admin",), branch="B")
+    chat_a, chat_b = user(55500061), user(55500062)
+
+    await chat_a.text("/start", now=mins(1))
+    assert "¿Quién va a reportar ahora?" in tg_api.texts()[-1]
+    async with sessions() as s:
+        out = (
+            await s.execute(
+                select(OutboundMessage)
+                .where(OutboundMessage.channel_binding_id == a.binding.id)
+                .order_by(OutboundMessage.seq)
+            )
+        ).scalars().all()
+    with_buttons = [m for m in out if m.payload.get("buttons")]
+    labels = {b["text"] for row in with_buttons[-1].payload["buttons"] for b in row}
+    assert labels == {"Ana", "Luis"}  # solo los de esta cuenta
+
+    await chat_a.click(f"sel:{farm['admin']}", now=mins(2))
+    assert any(
+        "no está habilitada para reportar en este teléfono" in t
+        for t in tg_api.texts()[-3:]
+    )
+    assert await active_sessions(sessions, a.binding.id) == []
+
+    await chat_a.click(f"sel:{farm['luis']}", now=mins(3))
+    assert "Reportando como Luis" in tg_api.texts()[-1]
+    await chat_a.text("falta ibuprofeno 400", now=mins(4))
+
+    # La cuenta B tiene UN auxiliar: se identifica sola y no ve el reporte de A.
+    await chat_b.text("falta paracetamol 500", now=mins(5))
+    async with sessions() as s:
+        rows = (await s.execute(select(DemandObservation))).scalars().all()
+    by_text = {o.raw_text: o for o in rows}
+    assert by_text["falta ibuprofeno 400"].author_id == farm["luis"]
+    assert by_text["falta ibuprofeno 400"].account_id == a.account.id
+    assert by_text["falta paracetamol 500"].author_id == farm["admin"]
+    assert by_text["falta paracetamol 500"].account_id == b.account.id
+
+
+async def test_cuenta_sin_auxiliares_no_registra_ni_atribuye(
+    farm, sessions, user, tg_api
+):
+    empty = await shared_account(sessions, farm, 55500063)
+    other = await shared_account(sessions, farm, 55500064, links=("ana",))
+    c = user(55500063)
+
+    await c.text("falta ibuprofeno 400", now=mins(1))
+    assert "no tiene auxiliares disponibles para reportar" in tg_api.texts()[-1]
+    await c.text("/start", now=mins(2))
+    assert "no tiene auxiliares disponibles para reportar" in tg_api.texts()[-1]
+    await c._run(
+        photo_update(c.uid, c.chat_id, "foto-t1", from_id=55500063), now=mins(3)
+    )
+    assert "no tiene auxiliares disponibles para reportar" in tg_api.texts()[-1]
+
+    async with sessions() as s:
+        msgs = (
+            await s.execute(
+                select(ChannelMessage).where(ChannelMessage.channel_binding_id == empty.binding.id)
+            )
+        ).scalars().all()
+        atts = (
+            await s.execute(
+                select(Attachment).where(Attachment.organization_id == farm["org"])
+            )
+        ).scalars().all()
+        obs = (await s.execute(select(DemandObservation))).scalars().all()
+    assert msgs == [] and atts == [] and obs == []  # no queda nada pendiente de atribuir
+
+    # Otra cuenta no se ve afectada.
+    await user(55500064).text("falta paracetamol 500", now=mins(4))
+    async with sessions() as s:
+        obs = (await s.execute(select(DemandObservation))).scalars().all()
+    assert len(obs) == 1 and obs[0].account_id == other.account.id
+
+
+async def test_baja_revoca_solo_sus_sesiones_en_esa_cuenta_y_vuelve_al_unico_auxiliar(
+    farm, sessions, user, tg_api
+):
+    a = await shared_account(sessions, farm, 55500065, links=("ana", "luis"))
+    b = await shared_account(sessions, farm, 55500066, links=("luis",))
+    chat_a, chat_b = user(55500065), user(55500066)
+
+    await chat_a.click(f"sel:{farm['luis']}", now=mins(1))
+    await chat_b.text("falta ibuprofeno 400", now=mins(2))  # en B es automático
+    assert len(await active_sessions(sessions, a.binding.id)) == 1
+    assert len(await active_sessions(sessions, b.binding.id)) == 1
+
+    async with sessions() as s, s.begin():
+        result = await access.deactivate_account_auxiliary(
+            s, actor(farm), a.account.id, farm["luis"], reason="cambió de turno"
+        )
+    assert result["sessions_revoked"] == 1
+    assert await active_sessions(sessions, a.binding.id) == []
+    assert len(await active_sessions(sessions, b.binding.id)) == 1  # la otra cuenta no se toca
+
+    async with sessions() as s:
+        link = (
+            await s.execute(
+                select(TelegramAccountAuxiliary).where(
+                    TelegramAccountAuxiliary.account_id == a.account.id,
+                    TelegramAccountAuxiliary.app_user_id == farm["luis"],
+                )
+            )
+        ).scalar_one()
+    assert link.active is False and link.deactivated_at is not None
+    assert link.deactivation_reason == "cambió de turno"
+
+    # Un botón viejo no puede volver a elegir a la persona dada de baja.
+    await chat_a.click(f"sel:{farm['luis']}", now=mins(3))
+    assert any(
+        "no está habilitada para reportar en este teléfono" in t
+        for t in tg_api.texts()[-3:]
+    )
+    assert await active_sessions(sessions, a.binding.id) == []
+
+    # Queda un solo auxiliar: la siguiente persona se identifica sola y es Ana.
+    await chat_a.text("falta paracetamol 500", now=mins(4))
+    async with sessions() as s:
+        mine = (
+            await s.execute(
+                select(DemandObservation).where(
+                    DemandObservation.raw_text == "falta paracetamol 500"
+                )
+            )
+        ).scalar_one()
+    assert mine.author_id == farm["ana"] and mine.account_id == a.account.id
+    assert "¿Quién" not in tg_api.texts()[-1]
+
+
+async def test_pasar_de_uno_a_dos_revoca_la_sesion_y_vuelve_a_pedir_identidad(
+    farm, sessions, user, tg_api
+):
+    a = await shared_account(sessions, farm, 55500067, links=("ana",))
+    c = user(55500067)
+    await c.text("falta ibuprofeno 400", now=mins(1))
+    assert len(await active_sessions(sessions, a.binding.id)) == 1
+
+    async with sessions() as s, s.begin():
+        result = await access.add_account_auxiliary(s, actor(farm), a.account.id, farm["luis"])
+    assert result["sessions_revoked"] == 1
+    assert await active_sessions(sessions, a.binding.id) == []
+
+    await c.text("falta paracetamol 500", now=mins(2))
+    assert "¿Quién eres?" in tg_api.texts()[-1]
+    async with sessions() as s:
+        msgs = (
+            await s.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.channel_binding_id == a.binding.id
+                )
+            )
+        ).scalars().all()
+    pending = [m for m in msgs if m.attribution_status == "pending_attribution"]
+    assert len(pending) == 1 and pending[0].author_id is None
+
+
+async def test_convertir_a_personal_desactiva_asociaciones_sin_borrar_historial(
+    farm, sessions, user, tg_api
+):
+    a = await shared_account(sessions, farm, 55500068, links=("ana", "luis"))
+    await block(sessions, farm, a.account.id)
+
+    issued = await issue(sessions, farm, user_id="55500068", chat_id="55500068", update_id="personal-1")
+    personal = await approve(
+        sessions, farm, issued.request.id, mode="personal", person="luis", label="Luis"
+    )
+    assert personal.account.id == a.account.id and personal.account.mode == "personal"
+
+    async with sessions() as s:
+        links = (
+            await s.execute(
+                select(TelegramAccountAuxiliary).where(
+                    TelegramAccountAuxiliary.account_id == a.account.id
+                )
+            )
+        ).scalars().all()
+        history = await access_scope_aux(s, farm, a.account.id)
+    assert len(links) == 2 and all(not link.active for link in links)
+    assert all(link.deactivated_by == farm["admin"] for link in links)
+    assert all(link.deactivation_reason == "account_mode_personal" for link in links)
+    assert len(history) == 2  # siguen visibles como historial
+
+    # La cuenta personal usa su persona fija, no las asociaciones compartidas.
+    await user(55500068).text("falta ibuprofeno 400", now=mins(20))
+    async with sessions() as s:
+        obs = (await s.execute(select(DemandObservation))).scalars().all()
+    assert len(obs) == 1 and obs[0].author_id == farm["luis"]
+    assert obs[0].identity_level == "account"
+
+    # Volver a compartida no reactiva nada: cero accesos implícitos.
+    await block(sessions, farm, a.account.id)
+    issued = await issue(sessions, farm, user_id="55500068", chat_id="55500068", update_id="shared-2")
+    again = await approve(
+        sessions, farm, issued.request.id, mode="shared_device", person=None, label="Otra vez"
+    )
+    await user(55500068).text("falta paracetamol 500", now=mins(21))
+    assert "no tiene auxiliares disponibles para reportar" in tg_api.texts()[-1]
+    async with sessions() as s:
+        obs = (await s.execute(select(DemandObservation))).scalars().all()
+    assert len(obs) == 1 and again.account.id == a.account.id
+
+
+async def access_scope_aux(session, farm, account_id):
+    return (await access.list_account_auxiliaries(session, actor(farm), account_id))["auxiliaries"]
+
+
+async def test_servicio_de_auxiliares_valida_modo_persona_y_permiso(farm, sessions):
+    a = await shared_account(sessions, farm, 55500069)
+
+    async with sessions() as s, s.begin():
+        pending = AppUser(
+            organization_id=farm["org"], display_name="Solo admin", roles=["admin"]
+        )
+        s.add(pending)
+        await s.flush()
+        pending_id = pending.id
+
+    async with sessions() as s, s.begin():
+        with pytest.raises(DomainError) as e:
+            await access.add_account_auxiliary(s, actor(farm), a.account.id, pending_id)
+    assert e.value.code == "PERSON_CANNOT_REPORT"
+
+    async with sessions() as s, s.begin():
+        await access.add_account_auxiliary(s, actor(farm), a.account.id, farm["ana"])
+    async with sessions() as s, s.begin():
+        with pytest.raises(DomainError) as e:
+            await access.add_account_auxiliary(s, actor(farm), a.account.id, farm["ana"])
+    assert e.value.code == "AUXILIARY_ALREADY_ENABLED"
+
+    async with sessions() as s, s.begin():
+        with pytest.raises(DomainError) as e:
+            await access.deactivate_account_auxiliary(
+                s, actor(farm), a.account.id, farm["luis"]
+            )
+    assert e.value.code == "AUXILIARY_NOT_ENABLED"
+
+    async with sessions() as s, s.begin():
+        with pytest.raises(DomainError) as e:
+            await access.add_account_auxiliary(
+                s, actor(farm, "ana", ("auxiliary",)), a.account.id, farm["luis"]
+            )
+    assert e.value.code == "FORBIDDEN"
+
+    personal = await approve(
+        sessions, farm,
+        (await issue(sessions, farm, user_id="55500070", chat_id="55500070", update_id="p-111")).request.id,
+        mode="personal", person="ana", label="Personal",
+    )  # fmt: skip
+    async with sessions() as s, s.begin():
+        with pytest.raises(DomainError) as e:
+            await access.add_account_auxiliary(
+                s, actor(farm), personal.account.id, farm["luis"]
+            )
+    assert e.value.code == "ACCOUNT_NOT_SHARED"
+
+    async with sessions() as s, s.begin():
+        with pytest.raises(DomainError) as e:
+            await access.update_account(s, actor(farm), a.account.id)
+    assert e.value.code == "NOTHING_TO_UPDATE"
+
+
+async def test_api_configura_sucursal_y_auxiliares_de_una_cuenta(admin_api, sessions, user, tg_api):
+    c = user(55500071)
+    await c.text("/solicitar")
+    code = code_of(tg_api.texts()[-1])
+    req = (
+        await admin_api.post(
+            "/api/v1/telegram-access-requests/lookup",
+            json={"code": code}, headers=H(admin_api),
+        )
+    ).json()["request"]
+    account = (
+        await admin_api.post(
+            f"/api/v1/telegram-access-requests/{req['id']}/approve",
+            json={
+                "display_label": "Teléfono sucursal",
+                "mode": "shared_device",
+                "branch_label": "Sucursal Norte",
+            },
+            headers=H(admin_api),
+        )
+    ).json()
+    assert account["branch_label"] == "Sucursal Norte" and account["mode"] == "shared_device"
+
+    r = await admin_api.post(
+        f"/api/v1/telegram-accounts/{account['id']}/auxiliaries",
+        json={"app_user_id": str(admin_api.farm["ana"])},
+        headers=H(admin_api),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["active"] is True and r.json()["sessions_revoked"] == 0
+    assert r.json()["history_preserved"] is True
+
+    listing = (
+        await admin_api.get(
+            f"/api/v1/telegram-accounts/{account['id']}/auxiliaries", headers=H(admin_api)
+        )
+    ).json()
+    assert listing["branch_label"] == "Sucursal Norte"
+    assert [x["display_name"] for x in listing["auxiliaries"]] == ["Ana"]
+    assert listing["auxiliaries"][0]["active"] is True
+
+    r = await admin_api.patch(
+        f"/api/v1/telegram-accounts/{account['id']}",
+        json={"branch_label": "Sucursal Sur"},
+        headers=H(admin_api),
+    )
+    assert r.status_code == 200 and r.json()["branch_label"] == "Sucursal Sur"
+
+    r = await admin_api.patch(
+        f"/api/v1/telegram-accounts/{account['id']}", json={}, headers=H(admin_api)
+    )
+    assert r.status_code == 400 and r.json()["error"]["code"] == "NOTHING_TO_UPDATE"
+
+    r = await admin_api.post(
+        f"/api/v1/telegram-accounts/{account['id']}/auxiliaries/"
+        f"{admin_api.farm['ana']}/deactivate",
+        json={"reason": "prueba"},
+        headers=H(admin_api),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["active"] is False and r.json()["history_preserved"] is True
+    listing = (
+        await admin_api.get(
+            f"/api/v1/telegram-accounts/{account['id']}/auxiliaries", headers=H(admin_api)
+        )
+    ).json()
+    assert listing["auxiliaries"][0]["active"] is False
+    assert listing["auxiliaries"][0]["deactivation_reason"] == "prueba"

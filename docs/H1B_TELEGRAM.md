@@ -36,7 +36,9 @@ Teléfono compartido ──► Telegram ──► webhook (secreto de origen)  o
 ## 2. Sesiones de auxiliar (identidad DECLARADA)
 
 * Chat autorizado = fila `channel_binding`. Un chat desconocido se ignora y el bot le informa su ID.
-* «Reportando como Ana» aparece en cada confirmación; `¿Quién soy?` y `Cambiar auxiliar` siempre disponibles.
+* «Reportando como Ana» aparece en cada confirmación. El teclado ofrece «Ver faltantes», «Ver auxiliar activo» y
+  «Ayuda»; «Cambiar auxiliar» aparece solo cuando la cuenta tiene **dos o más** auxiliares habilitados (D-147). Los
+  alias antiguos «Ver lista» y «¿Quién soy?» siguen funcionando.
 * A lo más **una** sesión activa por chat (índice único parcial). Expira por **inactividad** (deslizante,
   `SESSION_IDLE_MINUTES`, 10 por defecto). Una sesión expirada no identifica a nadie.
 * Auditoría de `session.selected | changed | replaced | expired | manual` (los tres últimos con su motivo).
@@ -52,7 +54,22 @@ Teléfono compartido ──► Telegram ──► webhook (secreto de origen)  o
 Los botones de `/start` y «Cambiar auxiliar» se leen de PostgreSQL en cada consulta: solo personas **activas y disponibles** con rol que permite
 reportar. Estar de vacaciones, con licencia, de día libre o ausente por otro motivo las oculta; desactivarlas también. El backend lo valida
 **además**: un botón antiguo es rechazado («no está disponible para reportar (vacaciones)») y se muestran los botones vigentes; si la persona deja
-de estar disponible con una sesión abierta, esta se revoca y el siguiente mensaje queda pendiente de atribución. «Finalizar reportes» cierra la sesión.
+de estar disponible con una sesión abierta, esta se revoca y el siguiente mensaje queda pendiente de atribución.
+`/salir` cierra la sesión como comando oculto de compatibilidad; «Finalizar reportes» ya no se muestra en el teclado
+(D-147). «Ver faltantes» muestra todos los reportes activos de la farmacia con el nombre del auxiliar que reportó cada
+fila y su estado real («Pendiente de compra» o
+«En carrito»). Cada producto va en su propio bloque, con el nombre en negrita y los datos en líneas separadas; si el
+faltante está en un carrito activo, **solo el nombre** aparece tachado y el estado dice «🛒 En carrito», sin ocultar la
+fila. La cantidad solicitada por el auxiliar se corrige **solo por texto libre**, sin botones inline en
+ninguna etapa, y nunca se confunde con la cantidad objetivo de compras. Un aviso sin cantidad pide **1 unidad
+genérica** (nunca caja/frasco/sobre) y, si luego informa cajas, el bot pregunta por texto si son adicionales o el total;
+`cancelar` descarta la corrección sin cambiar nada. No suma unidades incompatibles ni cambia la cantidad con el
+faltante en carrito. Ningún mensaje de Telegram modifica `target_quantity` por sí solo: deja la propuesta a compras,
+aunque el auxiliar tenga `APPLY_QUANTITY`. Los mensajes al auxiliar no usan términos internos como «cantidad objetivo»
+ni «propuesta para compras». Los botones de selección de auxiliar y de confirmación de un reporte ajeno se mantienen. El aviso de aprobación de un teléfono compartido depende de los auxiliares
+habilitados: con uno
+solo indica que los faltantes se registran automáticamente a su nombre; con dos o más mantiene la elección de
+identidad.
 Se administra por `/api/v1/staff` (rol administrador). Pertenecer, estar disponible y tener sesión activa son tres estados distintos y se listan por separado.
 
 ### Cuentas autorizadas y teléfonos personales (multicuenta)

@@ -6,8 +6,15 @@
                                   autoriza un chat (el tipo de chat y de organización deben coincidir)
   list-telegram-accounts --org sim|real --by <app_user_id>
   list-telegram-requests --org sim|real --by <app_user_id> [--status pending|approved|rejected|expired]
+                                  (--org puede omitirse: la organización sale del administrador)
   block-telegram-account <account_id> --org sim|real --by <app_user_id> [--reason ...]
   reactivate-telegram-account <account_id> --org sim|real --by <app_user_id> [--reason ...]
+  approve-telegram-request <request_id> --by <app_user_id> --label "<nombre>"
+                                  [--mode shared_device|personal] [--branch "<sucursal>"]
+                                  [--role operator|admin] [--person <app_user_id>]
+                                  aprueba una solicitud usando la organización del administrador
+  add-telegram-auxiliary <account_id> --by <app_user_id> --person <app_user_id>
+                                  habilita a una persona en un teléfono compartido (no otorga roles)
   list-auth-subjects --org sim|real --by <app_user_id>
   link-auth-subject <app_user_id> --org sim|real --by <app_user_id> [--subject <sub>]
   unlink-auth-subject <app_user_id> --org sim|real --by <app_user_id> --confirm
@@ -183,10 +190,24 @@ async def _shared_account_for_chat(
     return acc.id
 
 
-async def _admin(which: str, actor_id: str) -> tuple[Actor, str]:
-    """Carga el actor administrador desde la base y su organización; el permiso lo valida el servicio."""
-    name, _ = ORGS[which]
+async def _admin(which: str | None, actor_id: str) -> tuple[Actor, str]:
+    """Carga el actor administrador desde la base; el permiso lo valida el servicio.
+
+    `which=None` usa la organización real del administrador, sin depender de los nombres fijos
+    de `ORGS`: así funciona también en una base desplegada donde la organización se llama distinto.
+    """
     async with AsyncSession(get_engine()) as s:
+        if which is None:
+            actor = await load_actor(s, _uuid(actor_id, "app_user_id"))
+            if actor is None:
+                raise SystemExit("El administrador indicado no existe.")
+            name = (
+                await s.execute(
+                    select(Organization.name).where(Organization.id == actor.organization_id)
+                )
+            ).scalar_one()
+            return actor, name
+        name, _ = ORGS[which]
         org = (
             await s.execute(select(Organization).where(Organization.name == name))
         ).scalar_one_or_none()
@@ -223,7 +244,7 @@ def _subject_arg(a: list[str]) -> str:
     return input("sub del usuario de Supabase (identificador, no una contraseña): ")
 
 
-async def list_telegram_accounts(which: str, a: list[str]) -> None:
+async def list_telegram_accounts(which: str | None, a: list[str]) -> None:
     by = _arg(a, "--by")
     if not by:
         raise SystemExit("Indica el administrador con --by <app_user_id>.")
@@ -242,7 +263,7 @@ async def list_telegram_accounts(which: str, a: list[str]) -> None:
     await dispose_engine()
 
 
-async def list_telegram_requests(which: str, a: list[str]) -> None:
+async def list_telegram_requests(which: str | None, a: list[str]) -> None:
     by = _arg(a, "--by")
     if not by:
         raise SystemExit("Indica el administrador con --by <app_user_id>.")
@@ -291,6 +312,72 @@ async def reactivate_telegram_account(account_id: str, which: str, a: list[str])
         raise SystemExit(getattr(e, "message", str(e))) from None
     print(f"Cuenta {r.account.id} rehabilitada en «{name}»: "
           f"{r.bindings_reactivated} chat(s) reactivado(s). El historial se conserva.")  # fmt: skip
+    await dispose_engine()
+
+
+async def approve_telegram_request(request_id: str, a: list[str]) -> None:
+    """Aprueba una solicitud pendiente con la identidad de la administradora indicada.
+
+    Se usa cuando todavía no hay pantalla web de accesos. La organización, la autora de la
+    aprobación y la auditoría salen del `app_user` de `--by`; no se inventa ninguna identidad.
+    """
+    by = _arg(a, "--by")
+    label = _arg(a, "--label")
+    if not by or not label:
+        raise SystemExit("Indica --by <app_user_id> y --label \"<nombre de la cuenta>\".")
+    mode = _arg(a, "--mode", "shared_device") or "shared_device"
+    if mode not in {"shared_device", "personal"}:
+        raise SystemExit("--mode debe ser shared_device o personal.")
+    person = _arg(a, "--person")
+    if mode == "personal" and not person:
+        raise SystemExit("Una cuenta personal requiere --person <app_user_id>.")
+    if mode == "shared_device" and person:
+        raise SystemExit("Un teléfono compartido no se liga a una persona; quita --person.")
+    role = _arg(a, "--role", "operator") or "operator"
+    if role not in {"operator", "admin"}:
+        raise SystemExit("--role debe ser operator o admin.")
+    actor, name = await _admin(None, by)
+    try:
+        async with AsyncSession(get_engine(), expire_on_commit=False) as s, s.begin():
+            r = await access.approve_request(
+                s,
+                actor,
+                _uuid(request_id, "request_id"),
+                display_label=label,
+                mode=mode,
+                app_user_id=_uuid(person, "app_user_id") if person else None,
+                access_role=role,
+                branch_label=_arg(a, "--branch"),
+            )
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(getattr(e, "message", str(e))) from None
+    print(
+        f"Solicitud aprobada en «{name}» por {actor.display_name}: cuenta {r.account.id} "
+        f"({r.account.mode}), chat {r.binding.external_chat_id}. "
+        "La persona ya recibe la confirmación por Telegram."
+    )
+    await dispose_engine()
+
+
+async def add_telegram_auxiliary(account_id: str, a: list[str]) -> None:
+    """Habilita a una persona en una cuenta compartida. No otorga roles ni permisos."""
+    by = _arg(a, "--by")
+    person = _arg(a, "--person")
+    if not by or not person:
+        raise SystemExit("Indica --by <admin_app_user_id> y --person <app_user_id>.")
+    actor, name = await _admin(None, by)
+    try:
+        async with AsyncSession(get_engine(), expire_on_commit=False) as s, s.begin():
+            r = await access.add_account_auxiliary(
+                s, actor, _uuid(account_id, "account_id"), _uuid(person, "app_user_id")
+            )
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(getattr(e, "message", str(e))) from None
+    print(
+        f"{r['app_user_id']} habilitado en la cuenta {r['account_id']} de «{name}» "
+        f"(reactivado: {'sí' if r['reactivated'] else 'no'}). La persona debe estar activa, "
+        "disponible y con un rol que permita reportar."
+    )
     await dispose_engine()
 
 
@@ -573,6 +660,11 @@ def _org_arg(a: list[str]) -> str:
     return a[a.index("--org") + 1]
 
 
+def _org_or_none(a: list[str]) -> str | None:
+    """`--org` opcional: sin él, la organización sale de la administradora de `--by`."""
+    return _org_arg(a) if "--org" in a else None
+
+
 def main() -> None:
     a = sys.argv[1:]
     if a == ["seed-demo"]:
@@ -582,13 +674,17 @@ def main() -> None:
     elif len(a) >= 2 and a[0] == "bind-telegram":
         asyncio.run(bind_telegram(a[1], _org_arg(a), _arg(a, "--kind", "private") or "private"))
     elif len(a) >= 2 and a[0] == "list-telegram-accounts":
-        asyncio.run(list_telegram_accounts(_org_arg(a), a))
+        asyncio.run(list_telegram_accounts(_org_or_none(a), a))
     elif len(a) >= 2 and a[0] == "list-telegram-requests":
-        asyncio.run(list_telegram_requests(_org_arg(a), a))
+        asyncio.run(list_telegram_requests(_org_or_none(a), a))
     elif len(a) >= 3 and a[0] == "block-telegram-account":
         asyncio.run(block_telegram_account(a[1], _org_arg(a), a))
     elif len(a) >= 3 and a[0] == "reactivate-telegram-account":
         asyncio.run(reactivate_telegram_account(a[1], _org_arg(a), a))
+    elif len(a) >= 2 and a[0] == "approve-telegram-request":
+        asyncio.run(approve_telegram_request(a[1], a))
+    elif len(a) >= 2 and a[0] == "add-telegram-auxiliary":
+        asyncio.run(add_telegram_auxiliary(a[1], a))
     elif len(a) >= 2 and a[0] == "list-auth-subjects":
         asyncio.run(list_auth_subjects(_org_arg(a), a))
     elif len(a) >= 2 and a[0] == "link-auth-subject":
@@ -614,10 +710,13 @@ def main() -> None:
     else:
         raise SystemExit(
             "Uso: python -m app.cli seed-demo | seed-real-test | bind-telegram <chat_id> --org sim|real "
-            "[--kind private|group] | list-telegram-accounts --org sim|real --by <id> | "
-            "list-telegram-requests --org sim|real --by <id> [--status ...] | "
+            "[--kind private|group] | list-telegram-accounts [--org sim|real] --by <id> | "
+            "list-telegram-requests [--org sim|real] --by <id> [--status ...] | "
             "block-telegram-account <id> --org sim|real --by <id> [--reason ...] | "
             "reactivate-telegram-account <id> --org sim|real --by <id> [--reason ...] | "
+            "approve-telegram-request <id> --by <admin_id> --label \"<nombre>\" "
+            "[--mode shared_device|personal] [--branch ...] [--role ...] [--person <id>] | "
+            "add-telegram-auxiliary <account_id> --by <admin_id> --person <id> | "
             "list-auth-subjects --org sim|real --by <id> | "
             "link-auth-subject <id> --org sim|real --by <id> [--subject <sub>] | "
             "unlink-auth-subject <id> --org sim|real --by <id> --confirm | "

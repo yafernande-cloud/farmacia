@@ -27,7 +27,14 @@ from app.interpretation.vision import (
     merge_text_and_image,
     read_extraction,
 )
-from app.models import Attachment, ChannelBinding, ChannelMessage, InboundEvent, OutboundMessage
+from app.models import (
+    Attachment,
+    ChannelBinding,
+    ChannelMessage,
+    InboundEvent,
+    OutboundMessage,
+    TelegramAccount,
+)
 from app.services.actors import load_actor
 from app.services.channel import Reply, enqueue
 from app.services.demand import Origin, record_interpreted_observation
@@ -117,10 +124,12 @@ async def process_attachment(
         att.status, att.attempts = "processing", att.attempts + 1
         msg = await s.get(ChannelMessage, att.channel_message_id)
         inbound = await s.get(InboundEvent, msg.inbound_event_id)
+        account = await s.get(TelegramAccount, msg.account_id) if msg.account_id else None
         info = dict(org=att.organization_id, file_id=att.provider_file_id, caption=att.caption,
                     author=att.author_id, key=att.storage_key, binding=msg.channel_binding_id,
                     session=msg.session_id, msg=msg.id, event=inbound.external_event_id, event_id=inbound.id,
-                    account=msg.account_id, basis=msg.attribution_basis)  # fmt: skip
+                    account=msg.account_id, branch=account.branch_label if account else None,
+                    basis=msg.attribution_basis)  # fmt: skip
 
     async def fail(status: str, error: str, unc: list[str] | None = None) -> PhotoOutcome:
         async with sm() as s2, s2.begin():
@@ -251,7 +260,8 @@ async def process_attachment(
                 idempotency_key=f"tg:{info['binding']}:{info['event']}:photo",
                 origin=Origin("telegram_photo",
                               "account" if info["basis"] == "authorized_account" else "declared",
-                              info["session"], info["msg"], attachment_id, account_id=info["account"]),
+                              info["session"], info["msg"], attachment_id, account_id=info["account"],
+                              branch_label=info["branch"]),
                 force_review=tuple(f"image_text_conflict:{c}" for c in conflicts),
                 ai_derived=ext.mode == "live",  # una lectura real de un modelo es `ai_derived`
                 extra_interpretation={"vision": {"mode": ext.mode, "provider": ext.provider, "model": ext.model,

@@ -76,6 +76,10 @@ def render(method: str, payload: dict, chat_id: str) -> tuple[str, dict]:
         "chat_id": int(chat_id) if str(chat_id).lstrip("-").isdigit() else chat_id,
         "text": payload["text"],
     }
+    if payload.get("parse_mode"):
+        # Solo lo usan respuestas con formato propio (p. ej. la lista con nombres en negrita);
+        # el texto dinámico se escapa antes de armar el HTML.
+        body["parse_mode"] = payload["parse_mode"]
     if payload.get("buttons"):
         body["reply_markup"] = {"inline_keyboard": [[{"text": b["text"], "callback_data": b["data"]} for b in row]
                                                     for row in payload["buttons"]]}  # fmt: skip

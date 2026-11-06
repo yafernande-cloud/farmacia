@@ -36,6 +36,9 @@ class AccountOut(BaseModel):
     id: uuid.UUID
     external_user_id: str = Field(description="ID de usuario de Telegram (no un teléfono)")
     display_label: str
+    branch_label: str | None = Field(
+        default=None, description="Sucursal de esta cuenta; se copia a cada aviso como histórico."
+    )
     mode: Literal["personal", "shared_device"]
     access_role: Literal["admin", "operator"] = Field(
         description="Tipo de cuenta para administración; NO otorga permisos de negocio"
@@ -77,6 +80,9 @@ class ExistingAccountOut(BaseModel):
 
     id: uuid.UUID
     display_label: str
+    branch_label: str | None = Field(
+        default=None, description="Sucursal de esta cuenta; se copia a cada aviso como histórico."
+    )
     mode: Literal["personal", "shared_device"]
     access_role: Literal["admin", "operator"]
     status: Literal["active", "blocked"]
@@ -98,6 +104,7 @@ class CodeLookupResponse(BaseModel):
 
 class ApproveIn(BaseModel):
     display_label: str = Field(min_length=1, max_length=100)
+    branch_label: str | None = Field(default=None, max_length=120)
     mode: Literal["personal", "shared_device"]
     app_user_id: uuid.UUID | None = Field(
         default=None, description="Obligatorio en modo personal; prohibido en compartido"
@@ -106,6 +113,51 @@ class ApproveIn(BaseModel):
         default="operator",
         description="Tipo de cuenta; no otorga permisos de negocio (salen de app_user.roles)",
     )
+
+
+class UpdateAccountIn(BaseModel):
+    display_label: str | None = Field(default=None, min_length=1, max_length=100)
+    branch_label: str | None = Field(default=None, max_length=120)
+
+
+class AccountAuxiliaryOut(BaseModel):
+    app_user_id: uuid.UUID
+    display_name: str
+    roles: list[str]
+    person_active: bool
+    person_available: bool
+    can_report: bool
+    active: bool
+    created_at: datetime
+    deactivated_at: datetime | None
+    deactivation_reason: str | None
+
+
+class AccountAuxiliariesOut(BaseModel):
+    account_id: uuid.UUID
+    mode: Literal["personal", "shared_device"]
+    branch_label: str | None
+    app_user_id: uuid.UUID | None = Field(
+        description="Persona fija en una cuenta personal; null en un teléfono compartido."
+    )
+    auxiliaries: list[AccountAuxiliaryOut]
+
+
+class AddAuxiliaryIn(BaseModel):
+    app_user_id: uuid.UUID
+
+
+class AuxiliaryChangeOut(BaseModel):
+    account_id: uuid.UUID
+    app_user_id: uuid.UUID
+    active: bool
+    sessions_revoked: int
+    history_preserved: bool = True
+    reactivated: bool | None = None
+
+
+class DeactivateAuxiliaryIn(BaseModel):
+    reason: str | None = Field(default=None, max_length=200)
 
 
 class RejectIn(BaseModel):
@@ -233,6 +285,7 @@ async def approve_request(
             mode=body.mode,
             app_user_id=body.app_user_id,
             access_role=body.access_role,
+            branch_label=body.branch_label,
         )
         return await _account_out(session, actor, approval.account.id)
 
@@ -295,3 +348,73 @@ async def reactivate_account(
 async def account_history(account_id: uuid.UUID, session: Session, actor: StrongActor):
     rows = await access.account_history(session, actor, account_id)
     return [HistoryEntryOut(**r) for r in rows]
+
+
+@router.patch(
+    "/telegram-accounts/{account_id}",
+    response_model=AccountOut,
+    responses=ERRORS,
+    summary="Editar nombre o sucursal de una cuenta (no cambia modo ni auxiliares)",
+)
+async def update_account(
+    account_id: uuid.UUID, body: UpdateAccountIn, session: Session, actor: StrongActor
+):
+    async with transaction(session):
+        await access.update_account(
+            session,
+            actor,
+            account_id,
+            display_label=body.display_label,
+            branch_label=body.branch_label,
+            update_display="display_label" in body.model_fields_set,
+            update_branch="branch_label" in body.model_fields_set,
+        )
+        return await _account_out(session, actor, account_id)
+
+
+@router.get(
+    "/telegram-accounts/{account_id}/auxiliaries",
+    response_model=AccountAuxiliariesOut,
+    responses=ERRORS,
+    summary="Auxiliares habilitados en una cuenta compartida, incluidos los dados de baja",
+)
+async def list_auxiliaries(account_id: uuid.UUID, session: Session, actor: StrongActor):
+    return AccountAuxiliariesOut(
+        **await access.list_account_auxiliaries(session, actor, account_id)
+    )
+
+
+@router.post(
+    "/telegram-accounts/{account_id}/auxiliaries",
+    response_model=AuxiliaryChangeOut,
+    responses=ERRORS,
+    summary="Habilitar (o reactivar) una persona en esta cuenta; no otorga roles ni permisos",
+)
+async def add_auxiliary(
+    account_id: uuid.UUID, body: AddAuxiliaryIn, session: Session, actor: StrongActor
+):
+    async with transaction(session):
+        result = await access.add_account_auxiliary(
+            session, actor, account_id, body.app_user_id
+        )
+    return AuxiliaryChangeOut(**result)
+
+
+@router.post(
+    "/telegram-accounts/{account_id}/auxiliaries/{app_user_id}/deactivate",
+    response_model=AuxiliaryChangeOut,
+    responses=ERRORS,
+    summary="Dar de baja a una persona SOLO en esta cuenta y revocar sus sesiones de esta cuenta",
+)
+async def deactivate_auxiliary(
+    account_id: uuid.UUID,
+    app_user_id: uuid.UUID,
+    body: DeactivateAuxiliaryIn,
+    session: Session,
+    actor: StrongActor,
+):
+    async with transaction(session):
+        result = await access.deactivate_account_auxiliary(
+            session, actor, account_id, app_user_id, reason=body.reason
+        )
+    return AuxiliaryChangeOut(**result)

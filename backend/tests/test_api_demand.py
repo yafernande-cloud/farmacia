@@ -1,5 +1,7 @@
 """API HTTP sobre PostgreSQL real: contratos, errores y los escenarios del demo."""
 
+from decimal import Decimal
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -44,6 +46,27 @@ async def command(api, item_id, version, op, value=None, unit=None, key=None, wh
 
 async def lst(api, who="pao"):
     return (await api.get("/api/v1/demand-items", headers=H(api, who))).json()
+
+
+async def test_api_expone_cantidad_solicitada_y_propuesta_sin_confundirlas_con_la_objetivo(
+    api, ctx
+):
+    """Pao ve lo que pidió el auxiliar y su propuesta; la cantidad objetivo sigue aparte."""
+    r = await ctx.report(
+        "ana",
+        "falta ibuprofeno 400 mg",
+        declared_quantity=Decimal(8),
+        declared_unit="box",
+        quantity_proposal={"operation": "SET", "value": "8", "unit": "box"},
+    )
+    body = (
+        await api.get(f"/api/v1/demand-items/{r.item.id}", headers=H(api, "pao"))
+    ).json()
+    assert body["requested_quantity"] == "8" and body["requested_unit"] == "box"
+    assert body["declared_quantity"] == "8"  # compatibilidad con el campo anterior
+    assert body["target_quantity"] is None  # Pao todavía no decidió cuánto comprar
+    (obs,) = body["observations"]
+    assert obs["quantity_proposal"] == {"operation": "SET", "value": "8", "unit": "box"}
 
 
 async def test_dos_auxiliares_conservan_reportes_independientes(api):
@@ -305,3 +328,26 @@ async def test_openapi_incluye_confirmacion_y_alias(api):
         "unassigned",
         "pending_validation",
     } <= set(props)
+
+
+async def test_api_expone_el_origen_de_la_cantidad_solicitada(api, ctx):
+    """D-147: Pao distingue una cantidad informada de la unidad predeterminada del bot."""
+    default = await ctx.report(
+        "ana", "falta loratadina 10 mg", confirmation_mode="telegram"
+    )
+    explicit = await ctx.report(
+        "ana", "falta omeprazol 20 mg", declared_quantity=Decimal(2),
+        declared_unit="box", confirmation_mode="telegram",
+    )  # fmt: skip
+    for result, expected in ((default, ("1", "unit", "default")),
+                             (explicit, ("2", "box", "explicit"))):  # fmt: skip
+        body = (
+            await api.get(f"/api/v1/demand-items/{result.item.id}", headers=H(api, "pao"))
+        ).json()
+        assert (
+            body["requested_quantity"], body["requested_unit"],
+            body["requested_quantity_origin"],
+        ) == expected  # fmt: skip
+        assert body["target_quantity"] is None  # solicitud del auxiliar ≠ cantidad de compra
+        (obs,) = body["observations"]
+        assert obs["quantity_origin"] == expected[2]

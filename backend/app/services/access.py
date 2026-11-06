@@ -24,7 +24,7 @@ from sqlalchemy.orm import aliased
 
 from app.core.errors import DomainError, not_found
 from app.core.invitations import code_hash, generate_code, normalize_code
-from app.core.permissions import Permission, require
+from app.core.permissions import Permission, can_report, require
 from app.models import (
     AppUser,
     AuditEvent,
@@ -34,6 +34,7 @@ from app.models import (
     TelegramAccessAttempt,
     TelegramAccessRequest,
     TelegramAccount,
+    TelegramAccountAuxiliary,
 )
 from app.services import sessions
 from app.services.actors import Actor
@@ -46,6 +47,7 @@ MODES = {MODE_PERSONAL, MODE_SHARED}
 ACCESS_ROLES = {"admin", "operator"}
 MAX_REASON = 200
 MAX_LABEL = 100
+MAX_BRANCH = 120
 
 # Decisión del usuario: los códigos de solicitud viven 30 minutos.
 CODE_TTL = timedelta(minutes=30)
@@ -66,6 +68,10 @@ class AccountContext:
     app_user_id: uuid.UUID | None
     access_role: str
     display_label: str
+    branch_label: str | None = None
+    # Auxiliares habilitados en la cuenta (solo cuenta compartida). `None` = no consultado.
+    # Con uno solo no se ofrece «Cambiar auxiliar»: no hay nada que elegir.
+    auxiliary_count: int | None = None
 
     @property
     def personal(self) -> bool:
@@ -137,6 +143,18 @@ def _clean_label(label: str | None) -> str:
     return value
 
 
+def _clean_branch(branch: str | None) -> str | None:
+    """Sucursal vacía = sin sucursal; se guarda recortada y con tope explícito."""
+    value = (branch or "").strip()
+    if len(value) > MAX_BRANCH:
+        raise DomainError(
+            "BRANCH_TOO_LONG",
+            f"La sucursal no puede superar {MAX_BRANCH} caracteres.",
+            status_code=400,
+        )
+    return value or None
+
+
 def _invalid_code() -> DomainError:
     # Un solo mensaje para código inexistente, vencido, usado o rechazado: no filtra cuál fue.
     return DomainError("INVALID_ACCESS_CODE", _INVALID_CODE, status_code=400)
@@ -174,6 +192,354 @@ async def _load_person(session: AsyncSession, org: uuid.UUID, user_id: uuid.UUID
             status_code=403,
         )
     return person
+
+
+async def _load_account(
+    session: AsyncSession,
+    actor: Actor,
+    account_id: uuid.UUID,
+    *,
+    lock: bool = False,
+) -> TelegramAccount:
+    require(actor.roles, Permission.MANAGE_ACCOUNTS)
+    stmt = select(TelegramAccount).where(
+        TelegramAccount.id == account_id,
+        TelegramAccount.organization_id == actor.organization_id,
+    )
+    if lock:
+        stmt = stmt.with_for_update()
+    account = (await session.execute(stmt)).scalar_one_or_none()
+    if account is None:
+        raise not_found("La cuenta de Telegram")
+    return account
+
+
+def _require_shared(account: TelegramAccount) -> None:
+    if account.mode != MODE_SHARED:
+        raise DomainError(
+            "ACCOUNT_NOT_SHARED",
+            "Esta cuenta es personal: su identidad ya está fijada y no usa auxiliares.",
+            status_code=409,
+        )
+
+
+async def _deactivate_active_auxiliaries(
+    session: AsyncSession,
+    account: TelegramAccount,
+    *,
+    actor_id: uuid.UUID | None,
+    now: datetime,
+    reason: str,
+) -> int:
+    rows = list(
+        (
+            await session.execute(
+                select(TelegramAccountAuxiliary)
+                .where(
+                    TelegramAccountAuxiliary.account_id == account.id,
+                    TelegramAccountAuxiliary.active,
+                )
+                .with_for_update()
+            )
+        ).scalars()
+    )
+    for link in rows:
+        link.active = False
+        link.deactivated_at, link.deactivated_by = now, actor_id
+        link.deactivation_reason = reason
+        emit(
+            session,
+            org_id=account.organization_id,
+            actor_id=actor_id,
+            action="telegram_account.auxiliary_deactivated",
+            entity_type="telegram_account",
+            entity_id=account.id,
+            event_type="telegram.account_auxiliary_deactivated",
+            aggregate_version=None,
+            payload={
+                "account_id": str(account.id),
+                "app_user_id": str(link.app_user_id),
+                "reason": reason,
+                "sessions_revoked": 0,
+                "account_mode_change": True,
+            },
+            before={"active": True},
+            after={"active": False},
+        )
+    await session.flush()
+    return len(rows)
+
+
+def _auxiliary_view(link: TelegramAccountAuxiliary, person: AppUser) -> dict:
+    return {
+        "app_user_id": person.id,
+        "display_name": person.display_name,
+        "roles": list(person.roles or []),
+        "person_active": person.active,
+        "person_available": person.available,
+        "can_report": can_report(list(person.roles or [])),
+        "active": link.active,
+        "created_at": link.created_at,
+        "deactivated_at": link.deactivated_at,
+        "deactivation_reason": link.deactivation_reason,
+    }
+
+
+async def list_account_auxiliaries(
+    session: AsyncSession, actor: Actor, account_id: uuid.UUID
+) -> dict:
+    """Auxiliares configurados en una cuenta, incluidos los dados de baja (historial visible)."""
+    account = await _load_account(session, actor, account_id)
+    rows = (
+        await session.execute(
+            select(TelegramAccountAuxiliary, AppUser)
+            .join(
+                AppUser,
+                (AppUser.id == TelegramAccountAuxiliary.app_user_id)
+                & (AppUser.organization_id == TelegramAccountAuxiliary.organization_id),
+            )
+            .where(
+                TelegramAccountAuxiliary.organization_id == actor.organization_id,
+                TelegramAccountAuxiliary.account_id == account.id,
+            )
+            .order_by(AppUser.display_name)
+        )
+    ).all()
+    return {
+        "account_id": account.id,
+        "mode": account.mode,
+        "branch_label": account.branch_label,
+        "app_user_id": account.app_user_id,
+        "auxiliaries": [_auxiliary_view(link, person) for link, person in rows],
+    }
+
+
+async def add_account_auxiliary(
+    session: AsyncSession,
+    actor: Actor,
+    account_id: uuid.UUID,
+    app_user_id: uuid.UUID,
+    *,
+    now: datetime | None = None,
+) -> dict:
+    """Habilita o reactiva una persona en una cuenta compartida. No concede roles."""
+    require(actor.roles, Permission.MANAGE_ACCOUNTS)
+    now = now or _now()
+    account = await _load_account(session, actor, account_id, lock=True)
+    _require_shared(account)
+
+    person = (
+        await session.execute(
+            select(AppUser).where(
+                AppUser.id == app_user_id,
+                AppUser.organization_id == actor.organization_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if person is None:
+        raise not_found("La persona")
+    if not person.active or not can_report(list(person.roles or [])):
+        raise DomainError(
+            "PERSON_CANNOT_REPORT",
+            f"{person.display_name} no está activa o no tiene un rol que permita reportar.",
+            status_code=422,
+        )
+
+    before_count = (
+        await session.execute(
+            select(func.count())
+            .select_from(TelegramAccountAuxiliary)
+            .where(
+                TelegramAccountAuxiliary.account_id == account.id,
+                TelegramAccountAuxiliary.active,
+            )
+        )
+    ).scalar_one()
+
+    link = (
+        await session.execute(
+            select(TelegramAccountAuxiliary)
+            .where(
+                TelegramAccountAuxiliary.account_id == account.id,
+                TelegramAccountAuxiliary.app_user_id == person.id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    reactivated = link is not None
+    if link is not None and link.active:
+        raise DomainError(
+            "AUXILIARY_ALREADY_ENABLED",
+            f"{person.display_name} ya está habilitada en esta cuenta.",
+            status_code=409,
+        )
+    if link is None:
+        link = TelegramAccountAuxiliary(
+            organization_id=actor.organization_id,
+            account_id=account.id,
+            app_user_id=person.id,
+            active=True,
+            created_at=now,
+            created_by=actor.id,
+        )
+        session.add(link)
+    else:
+        link.active = True
+        link.deactivated_at, link.deactivated_by = None, None
+        link.deactivation_reason = None
+
+    await session.flush()
+    emit(
+        session,
+        org_id=actor.organization_id,
+        actor_id=actor.id,
+        action=(
+            "telegram_account.auxiliary_reactivated"
+            if reactivated
+            else "telegram_account.auxiliary_added"
+        ),
+        entity_type="telegram_account",
+        entity_id=account.id,
+        event_type=(
+            "telegram.account_auxiliary_reactivated"
+            if reactivated
+            else "telegram.account_auxiliary_added"
+        ),
+        aggregate_version=None,
+        payload={
+            "account_id": str(account.id),
+            "app_user_id": str(person.id),
+            "display_name": person.display_name,
+            "sessions_revoked": 0,
+        },
+        before={"active": False} if reactivated else None,
+        after={"active": True, "display_name": person.display_name},
+    )
+
+    sessions_revoked = 0
+    if before_count == 1:
+        # 1 → 2: la próxima persona debe elegir; no se asume que sigue la misma.
+        sessions_revoked = await sessions.revoke_account_sessions(
+            session, account.id, now, by=actor.id
+        )
+    return {
+        "account_id": account.id,
+        "app_user_id": person.id,
+        "active": True,
+        "reactivated": reactivated,
+        "sessions_revoked": sessions_revoked,
+        "history_preserved": True,
+    }
+
+
+async def deactivate_account_auxiliary(
+    session: AsyncSession,
+    actor: Actor,
+    account_id: uuid.UUID,
+    app_user_id: uuid.UUID,
+    *,
+    reason: str | None = None,
+    now: datetime | None = None,
+) -> dict:
+    """Baja lógica en UNA cuenta y revocación de las sesiones de esa persona en esa cuenta."""
+    require(actor.roles, Permission.MANAGE_ACCOUNTS)
+    now = now or _now()
+    account = await _load_account(session, actor, account_id, lock=True)
+    _require_shared(account)
+    link = (
+        await session.execute(
+            select(TelegramAccountAuxiliary)
+            .where(
+                TelegramAccountAuxiliary.account_id == account.id,
+                TelegramAccountAuxiliary.app_user_id == app_user_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if link is None or not link.active:
+        raise DomainError(
+            "AUXILIARY_NOT_ENABLED",
+            "Esa persona no está habilitada en esta cuenta.",
+            status_code=409,
+        )
+    link.active = False
+    link.deactivated_at, link.deactivated_by = now, actor.id
+    link.deactivation_reason = _clean_reason(reason)
+    await session.flush()
+
+    sessions_revoked = await sessions.revoke_account_person_sessions(
+        session, account.id, app_user_id, now, by=actor.id
+    )
+    emit(
+        session,
+        org_id=actor.organization_id,
+        actor_id=actor.id,
+        action="telegram_account.auxiliary_deactivated",
+        entity_type="telegram_account",
+        entity_id=account.id,
+        event_type="telegram.account_auxiliary_deactivated",
+        aggregate_version=None,
+        payload={
+            "account_id": str(account.id),
+            "app_user_id": str(app_user_id),
+            "reason": link.deactivation_reason,
+            "sessions_revoked": sessions_revoked,
+        },
+        before={"active": True},
+        after={"active": False},
+    )
+    return {
+        "account_id": account.id,
+        "app_user_id": app_user_id,
+        "active": False,
+        "sessions_revoked": sessions_revoked,
+        "history_preserved": True,
+    }
+
+
+async def update_account(
+    session: AsyncSession,
+    actor: Actor,
+    account_id: uuid.UUID,
+    *,
+    display_label: str | None = None,
+    branch_label: str | None = None,
+    update_display: bool = False,
+    update_branch: bool = False,
+    now: datetime | None = None,
+) -> TelegramAccount:
+    """Edita nombre o sucursal; no cambia modo, autorización ni auxiliares."""
+    require(actor.roles, Permission.MANAGE_ACCOUNTS)
+    if not update_display and not update_branch:
+        raise DomainError(
+            "NOTHING_TO_UPDATE", "Indica al menos un campo para actualizar.", status_code=400
+        )
+    account = await _load_account(session, actor, account_id, lock=True)
+    before: dict = {}
+    after: dict = {}
+    if update_display:
+        before["display_label"] = account.display_label
+        account.display_label = _clean_label(display_label)
+        after["display_label"] = account.display_label
+    if update_branch:
+        before["branch_label"] = account.branch_label
+        account.branch_label = _clean_branch(branch_label)
+        after["branch_label"] = account.branch_label
+    emit(
+        session,
+        org_id=actor.organization_id,
+        actor_id=actor.id,
+        action="telegram_account.updated",
+        entity_type="telegram_account",
+        entity_id=account.id,
+        event_type="telegram.account_updated",
+        aggregate_version=None,
+        payload={"account_id": str(account.id), "fields": sorted(after)},
+        before=before,
+        after=after,
+    )
+    await session.flush()
+    return account
 
 
 async def _organization(session: AsyncSession, org_id: uuid.UUID) -> Organization:
@@ -464,12 +830,14 @@ async def approve_request(
     mode: str,
     app_user_id: uuid.UUID | None = None,
     access_role: str = "operator",
+    branch_label: str | None = None,
     now: datetime | None = None,
 ) -> Approval:
     """Aprueba una solicitud, crea/reutiliza la cuenta y habilita el chat. Todo en una transacción."""
     require(actor.roles, Permission.MANAGE_ACCOUNTS)
     now = now or _now()
     label = _clean_label(display_label)
+    branch = _clean_branch(branch_label)
     _validate_mode_role(mode, access_role)
 
     req = (
@@ -561,6 +929,7 @@ async def approve_request(
             provider=req.provider,
             external_user_id=req.external_user_id,
             display_label=label,
+            branch_label=branch,
             mode=mode,
             access_role=access_role,
             app_user_id=app_user_id,
@@ -573,11 +942,20 @@ async def approve_request(
         session.add(account)
     else:  # cuenta bloqueada: se reutiliza la fila para conservar su historial
         account.display_label = label
+        if branch is not None:
+            account.branch_label = branch
         account.mode, account.access_role = mode, access_role
         account.app_user_id, account.status = app_user_id, "active"
         account.blocked_at, account.blocked_by, account.block_reason = None, None, None
         account.reactivated_at, account.reactivated_by = now, actor.id
     await session.flush()
+
+    if mode == MODE_PERSONAL:
+        # Convertir a personal no puede dejar habilitaciones compartidas latentes que reaparezcan
+        # si la cuenta vuelve a ser compartida. Se conservan las filas como historial.
+        await _deactivate_active_auxiliaries(
+            session, account, actor_id=actor.id, now=now, reason="account_mode_personal"
+        )
 
     binding = ChannelBinding(
         organization_id=actor.organization_id,
@@ -597,24 +975,22 @@ async def approve_request(
          action="telegram_account.authorized", entity_type="telegram_account",
          entity_id=account.id, event_type="telegram.account_authorized", aggregate_version=None,
          payload={"account_id": str(account.id), "binding_id": str(binding.id), "mode": mode,
-                  "access_role": access_role,
+                  "access_role": access_role, "branch_label": branch,
                   "app_user_id": str(app_user_id) if app_user_id else None,
                   "request_id": str(req.id), "origin": account.origin},
-         after={"display_label": label, "mode": mode, "access_role": access_role,
-                "status": "active"})  # fmt: skip
+         after={"display_label": label, "branch_label": account.branch_label, "mode": mode,
+                "access_role": access_role, "status": "active"})  # fmt: skip
     emit(session, org_id=actor.organization_id, actor_id=actor.id,
          action="telegram_access_request.approved", entity_type="telegram_access_request",
          entity_id=req.id, event_type="telegram.access_request_approved", aggregate_version=None,
          payload={"request_id": str(req.id), "account_id": str(account.id),
                   "binding_id": str(binding.id), "mode": mode, "access_role": access_role})  # fmt: skip
-    _notify(
-        session, binding,
-        (
-            f"Tu acceso quedó autorizado. Desde ahora reportas como {account.display_label}."
-            if mode == MODE_PERSONAL
-            else "Este teléfono quedó autorizado. Al reportar, elige quién escribe."
-        ),
+    reporters = (
+        []
+        if mode == MODE_PERSONAL
+        else await sessions.list_account_reporters(session, actor.organization_id, account.id)
     )
+    _notify(session, binding, _authorized_message(mode, account, reporters))
     await session.flush()
     return Approval(account, binding, req)
 
@@ -654,6 +1030,29 @@ async def reject_request(
          payload={"request_id": str(req.id), "reason": req.reject_reason})  # fmt: skip
     await session.flush()
     return req
+
+
+def _authorized_message(
+    mode: str, account: TelegramAccount, reporters: list[AppUser]
+) -> str:
+    """Confirmación de aprobación (D-146, punto 12).
+
+    Con un solo auxiliar habilitado no hay nada que elegir: se informa que los faltantes se
+    registran a su nombre. Solo con dos o más se mantiene la selección de identidad.
+    """
+    if mode == MODE_PERSONAL:
+        return f"Tu acceso quedó autorizado. Desde ahora reportas como {account.display_label}."
+    if not reporters:
+        return (
+            "Este teléfono quedó autorizado. Todavía no tiene auxiliares habilitados: agrega al "
+            "menos uno para que pueda reportar."
+        )
+    if len(reporters) == 1:
+        return (
+            "Este teléfono quedó autorizado. Los faltantes se registrarán automáticamente a nombre "
+            f"de {reporters[0].display_name}."
+        )
+    return "Este teléfono quedó autorizado. Al reportar, elige quién escribe."
 
 
 def _notify(session: AsyncSession, binding: ChannelBinding, text: str) -> None:
@@ -955,6 +1354,7 @@ async def list_accounts(session: AsyncSession, actor: Actor) -> list[dict]:
             "id": a.id,
             "external_user_id": a.external_user_id,
             "display_label": a.display_label,
+            "branch_label": a.branch_label,
             "mode": a.mode,
             "access_role": a.access_role,
             "status": a.status,

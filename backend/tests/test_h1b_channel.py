@@ -20,6 +20,7 @@ from app.models import (
     InboundEvent,
     OutboundMessage,
 )
+from app.services.channel import TELEGRAM_TEXT_LIMIT
 from app.telegram.handler import after_handle, handle_update
 from tests.conftest import CHAT
 from tests.tgsim import callback_update, edited_update, text_update
@@ -171,7 +172,9 @@ async def test_luis_cambia_identidad_mismo_producto_dos_avisos_sin_sumar(
 # ---- D-135: confirmación explícita antes de tocar una cantidad ----
 
 
-async def test_pao_fija_el_total_y_suma_solo_con_botones(chat, sessions, seed, tg_api, ctx):
+async def test_la_correccion_por_texto_nunca_toca_la_cantidad_de_compra(
+    chat, sessions, seed, tg_api, ctx
+):
     from app.domain.quantities import QuantityOp, QuantityUnit
 
     await chat.pick("pao")
@@ -196,14 +199,17 @@ async def test_pao_fija_el_total_y_suma_solo_con_botones(chat, sessions, seed, t
         assert (
             await s.execute(select(func.count()).select_from(DemandObservation))
         ).scalar_one() == 1
-    assert "¿Son 8 en total o 3 más?" in tg_api.texts()[-1]
+    text = tg_api.texts()[-1]
+    assert "Ya tienes 5 cajas de Ibuprofeno 400 mg" in text
+    assert "Escribe la cantidad correcta" in text
+    assert _buttons(tg_api) == []  # la corrección no usa botones
 
-    await chat.click(f"rp:add:{pending.id}", now=mins(3))
+    await chat.text("3 cajas más", now=mins(3))
     (item,) = await ctx.items()
-    assert item.target_quantity == Decimal(8)  # ADD explícito: 5 + 3, nunca 5 + 8
-    assert "Cantidad actualizada: 8" in tg_api.texts()[-1]
+    assert item.target_quantity == Decimal(5)  # el texto nunca cambia la cantidad de compra
+    assert "Listo, actualicé tu solicitud de Ibuprofeno 400 mg a 8 cajas." in tg_api.texts()[-1]
 
-    # Si la cantidad declarada es menor, solo se ofrece fijar el total (SET).
+    # Otra cifra vuelve a preguntar antes de cambiar nada, también sin botones.
     await chat.text("necesitamos 6 cajas de ibuprofeno 400 mg", now=mins(4))
     async with sessions() as s:
         (pending,) = (
@@ -213,11 +219,12 @@ async def test_pao_fija_el_total_y_suma_solo_con_botones(chat, sessions, seed, t
                 .order_by(ChannelMessage.received_at.desc())
             )
         ).scalars().all()
-    assert "¿Fijo el total en 6?" in tg_api.texts()[-1]
-    assert all("Sumar" not in b["text"] for b in tg_api.last_buttons())
-    await chat.click(f"rp:set:{pending.id}", now=mins(5))
+    assert "¿Quieres agregar más o cambiar el total?" in tg_api.texts()[-1]
+    assert _buttons(tg_api) == []
+    await chat.text("en total 6 cajas", now=mins(5))
     (item,) = await ctx.items()
-    assert item.target_quantity == Decimal(6)
+    assert item.target_quantity == Decimal(5)  # sigue intacta la decisión de compra
+    assert "Listo, actualicé tu solicitud de Ibuprofeno 400 mg a 6 cajas." in tg_api.texts()[-1]
 
 
 async def test_el_auxiliar_solo_deja_una_propuesta_y_no_aplica_la_cantidad(
@@ -231,15 +238,7 @@ async def test_el_auxiliar_solo_deja_una_propuesta_y_no_aplica_la_cantidad(
     await ctx.qty(item.id, QuantityOp.SET, Decimal(5), QuantityUnit.BOX, version=item.version)
 
     await chat.text("necesitamos 8 cajas de ibuprofeno 400 mg", now=mins(2))
-    async with sessions() as s:
-        (pending,) = (
-            await s.execute(
-                select(ChannelMessage).where(
-                    ChannelMessage.confirmation_status == "pending_same_author_quantity"
-                )
-            )
-        ).scalars().all()
-    await chat.click(f"rp:add:{pending.id}", now=mins(3))
+    await chat.text("3 cajas más", now=mins(3))
 
     (item,) = await ctx.items()
     assert item.target_quantity == Decimal(5)  # Ana no aplica cantidades (D-124/D-135)
@@ -256,7 +255,143 @@ async def test_el_auxiliar_solo_deja_una_propuesta_y_no_aplica_la_cantidad(
         assert obs.author_id == seed["ana"]
         assert obs.quantity_proposal["operation"] == "ADD"
         assert obs.quantity_proposal["value"] == "3"
-    assert "no cambio cantidades" in tg_api.texts()[-1]
+    assert "Listo, actualicé tu solicitud de Ibuprofeno 400 mg a 8 cajas." in tg_api.texts()[-1]
+    assert _buttons(tg_api) == []  # toda la corrección se conversa por texto
+
+
+async def test_auxiliar_corrige_por_texto_libre_sin_otra_fila_ni_tocar_el_objetivo(
+    chat, sessions, seed, tg_api
+):
+    await chat.pick("ana")
+    await chat.text("2 cajas de omeprazol 20 mg", now=mins(1))
+    # Un segundo aviso del mismo autor abre la pregunta; todavía no se registra nada más.
+    await chat.text("5 cajas de omeprazol 20 mg", now=mins(2))
+    assert "¿Quieres agregar más o cambiar el total?" in tg_api.texts()[-1]
+    assert _buttons(tg_api) == []
+    async with sessions() as s:
+        assert (
+            await s.execute(select(func.count()).select_from(DemandObservation))
+        ).scalar_one() == 1
+        assert (await s.execute(select(func.count()).select_from(DemandItem))).scalar_one() == 1
+
+    # Una cantidad sola es ambigua: se pregunta y NO se modifica.
+    await chat.text("7", now=mins(3))
+    assert "¿Quieres agregar esa cantidad o cambiar el total?" in tg_api.texts()[-1]
+    assert _buttons(tg_api) == []
+    async with sessions() as s:
+        assert (
+            await s.execute(select(func.count()).select_from(DemandObservation))
+        ).scalar_one() == 1
+
+    # «En total» es explícito: corrige la cantidad solicitada sin tocar la objetivo.
+    await chat.text("en total 15 cajas", now=mins(4))
+    assert "Listo, actualicé tu solicitud de Omeprazol 20 mg a 15 cajas." in tg_api.texts()[-1]
+    async with sessions() as s:
+        (item,) = (await s.execute(select(DemandItem))).scalars().all()
+        assert item.target_quantity is None  # la auxiliar nunca aplica cantidades
+        obs = (
+            (await s.execute(select(DemandObservation).order_by(DemandObservation.created_at)))
+            .scalars()
+            .all()
+        )
+        assert len(obs) == 2  # misma fila/historial, sin un segundo reporte
+        assert obs[-1].demand_item_id == item.id
+        assert (obs[-1].declared_quantity, obs[-1].declared_unit) == (Decimal(15), "box")
+        assert obs[-1].quantity_proposal == {
+            "operation": "SET",
+            "value": "15",
+            "unit": "box",
+            "reason": "correccion_telegram",
+            "declared_quantity": "15",
+        }
+        pending = (
+            await s.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.confirmation_status == "pending_same_author_quantity"
+                )
+            )
+        ).scalar_one_or_none()
+        assert pending is None  # la confirmación quedó resuelta
+
+
+async def test_una_cifra_menor_tambien_se_confirma_antes_de_cambiar(
+    chat, sessions, seed, tg_api
+):
+    await chat.pick("ana")
+    await chat.text("5 cajas de omeprazol 20 mg", now=mins(1))
+    await chat.text("3 cajas de omeprazol 20 mg", now=mins(2))
+    assert "¿Quieres agregar más o cambiar el total?" in tg_api.texts()[-1]
+    assert _buttons(tg_api) == []
+    await chat.text("2", now=mins(3))
+    assert "Tienes 5 cajas de Omeprazol 20 mg y escribiste 2 cajas" in tg_api.texts()[-1]
+    assert _buttons(tg_api) == []
+    async with sessions() as s:
+        assert (
+            await s.execute(select(func.count()).select_from(DemandObservation))
+        ).scalar_one() == 1  # todavía no se modificó nada
+    await chat.text("en total 2 cajas", now=mins(4))
+    async with sessions() as s:
+        obs = (
+            (await s.execute(select(DemandObservation).order_by(DemandObservation.created_at)))
+            .scalars()
+            .all()
+        )
+        assert (obs[-1].declared_quantity, obs[-1].declared_unit) == (Decimal(2), "box")
+
+
+async def test_auxiliar_suma_por_texto_libre_sobre_su_cantidad_solicitada(
+    chat, sessions, seed, tg_api
+):
+    await chat.pick("ana")
+    await chat.text("2 cajas de omeprazol 20 mg", now=mins(1))
+    await chat.text("4 cajas de omeprazol 20 mg", now=mins(2))
+    assert "¿Quieres agregar más o cambiar el total?" in tg_api.texts()[-1]
+    # «más» es explícito: 2 solicitadas + 4 más = 6 solicitadas. No son 6 en total.
+    await chat.text("4 cajas más", now=mins(3))
+    assert "Listo, actualicé tu solicitud de Omeprazol 20 mg a 6 cajas." in tg_api.texts()[-1]
+    async with sessions() as s:
+        (item,) = (await s.execute(select(DemandItem))).scalars().all()
+        assert item.target_quantity is None
+        obs = (
+            (await s.execute(select(DemandObservation).order_by(DemandObservation.created_at)))
+            .scalars()
+            .all()
+        )
+        assert (obs[-1].declared_quantity, obs[-1].declared_unit) == (Decimal(6), "box")
+        assert obs[-1].quantity_proposal["operation"] == "ADD"
+        assert obs[-1].quantity_proposal["value"] == "4"
+
+
+async def test_auxiliar_corrige_su_solicitud_sin_sobrescribir_la_cantidad_de_pao(
+    chat, sessions, seed, tg_api, ctx
+):
+    from app.domain.quantities import QuantityOp, QuantityUnit
+
+    await chat.pick("ana")
+    await chat.text("falta ibuprofeno 400 mg", now=mins(1))
+    (item,) = await ctx.items()
+    await ctx.qty(item.id, QuantityOp.SET, Decimal(5), QuantityUnit.BOX, version=item.version)
+
+    await chat.text("8 cajas de ibuprofeno 400 mg", now=mins(2))
+    assert "¿Quieres agregar más o cambiar el total?" in tg_api.texts()[-1]
+    await chat.text("en total 8 cajas", now=mins(3))
+    assert "Listo, actualicé tu solicitud de Ibuprofeno 400 mg a 8 cajas." in tg_api.texts()[-1]
+    (item,) = await ctx.items()
+    assert item.target_quantity == Decimal(5)  # la decisión de compra de Pao no se tocó
+    async with sessions() as s:
+        obs = (
+            (
+                await s.execute(
+                    select(DemandObservation).order_by(DemandObservation.created_at.desc()).limit(1)
+                )
+            )
+            .scalars()
+            .one()
+        )
+        assert obs.demand_item_id == item.id
+        assert (obs.declared_quantity, obs.declared_unit) == (Decimal(8), "box")
+        assert obs.quantity_proposal["operation"] == "SET"
+        assert obs.quantity_proposal["value"] == "8"
 
 
 async def test_otro_autor_modifica_su_cantidad_y_crea_su_reporte_independiente(
@@ -577,7 +712,8 @@ async def test_comandos_identidad_lista_y_ayuda(chat, sessions, tg_api):
         await chat.text(t)
     await chat.text("Ver lista")
     lista = tg_api.sent()[-1]
-    assert "Faltantes activos: 4" in lista["text"] and lista["text"].count("\n") == 3  # página de 3
+    assert "📋 Faltantes activos (4)" in lista["text"]
+    assert "1. " in lista["text"] and "3. " in lista["text"] and "4. " not in lista["text"]
     assert lista["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "lst:1"
     await chat.click("lst:1")
     assert "4. " in tg_api.texts()[-1]
@@ -610,6 +746,286 @@ async def test_el_bot_nunca_aplica_cantidades(chat, sessions):
         assert (
             await s.execute(select(DemandItem))
         ).scalar_one().target_quantity is None  # …no aplicada
+
+
+async def test_respuesta_inmediata_muestra_la_cantidad_declarada_sin_aplicarla(
+    chat, sessions, tg_api
+):
+    await chat.pick("ana")
+    await chat.text("2 cajas de omeprazol 20 mg")
+    reply = tg_api.texts()[-1]
+    assert "Anotado: Omeprazol 20 mg — 2 cajas." in reply
+    assert "Reportando como Ana" in reply
+    (o,) = await observations(sessions)
+    assert (o.declared_quantity, o.declared_unit) == (Decimal(2), "box")  # declarada…
+    async with sessions() as s:
+        assert (
+            await s.execute(select(DemandItem))
+        ).scalar_one().target_quantity is None  # …nunca aplicada
+
+
+async def test_respuesta_inmediata_sin_cantidad_usa_unidad_predeterminada(
+    chat, sessions, tg_api
+):
+    """D-147: sin cantidad se pide 1 unidad genérica, nunca caja/frasco/sobre."""
+    await chat.pick("ana")
+    await chat.text("falta ibuprofeno 400 mg")
+    assert "Anotado: Ibuprofeno 400 mg — 1 unidad solicitada." in tg_api.texts()[-1]
+    (o,) = await observations(sessions)
+    assert (o.declared_quantity, o.declared_unit) == (Decimal(1), "unit")
+    assert (o.interpretation or {}).get("quantity_origin") == "default"
+    async with sessions() as s:
+        assert (
+            await s.execute(select(DemandItem))
+        ).scalar_one().target_quantity is None  # la unidad predeterminada no es cantidad de compra
+
+
+async def test_lista_muestra_la_cantidad_declarada_sin_volverla_objetivo(
+    chat, sessions, tg_api
+):
+    await chat.pick("ana")
+    await chat.text("2 cajas de omeprazol 20 mg", now=mins(1))
+    await chat.text("falta ibuprofeno 400 mg", now=mins(2))
+    await chat.text("/lista", now=mins(3))
+    text = tg_api.texts()[-1]
+    assert (
+        "<b>Omeprazol 20 mg</b>\n"
+        "   Cantidad: 2 cajas\n"
+        "   Reportado por: Ana\n"
+        "   Estado: Pendiente de compra\n"
+        "   1 aviso" in text
+    )
+    assert (
+        "<b>Ibuprofeno 400 mg</b>\n"
+        "   Cantidad: 1 unidad\n"
+        "   Reportado por: Ana\n"
+        "   Estado: Pendiente de compra\n"
+        "   1 aviso" in text
+    )
+    assert "aviso(s)" not in text
+    async with sessions() as s:
+        assert all(
+            i.target_quantity is None for i in (await s.execute(select(DemandItem))).scalars()
+        )  # la lista no convierte lo declarado en objetivo
+
+
+async def test_lista_muestra_el_estado_real_de_cobertura(chat, tg_api, monkeypatch):
+    """«Ver faltantes» traduce la cobertura vigente; la cobertura real se prueba en C5-A."""
+    from app.services import channel as channel_svc
+
+    await chat.pick("ana")
+    await chat.text("falta ibuprofeno 400 mg", now=mins(1))
+
+    async def in_cart(session, org, items):
+        return {i.id: {"replenishment_state": "in_quote"} for i in items}
+
+    monkeypatch.setattr(channel_svc.coverage_svc, "coverage_for_items", in_cart)
+    await chat.text("Ver faltantes", now=mins(2))
+    text = tg_api.texts()[-1]
+    assert "Estado: 🛒 En carrito" in text and "Pendiente de compra" not in text
+    assert "<s><b>Ibuprofeno 400 mg</b></s>" in text  # tachado solo en el nombre
+    assert "Cantidad: 1 unidad\n   Reportado por: Ana" in text  # el resto sigue visible
+
+    # Al retirarlo del carrito sin comprar, el mismo faltante vuelve a verse normal.
+    async def pending(session, org, items):
+        return {i.id: {"replenishment_state": "pending"} for i in items}
+
+    monkeypatch.setattr(channel_svc.coverage_svc, "coverage_for_items", pending)
+    await chat.text("Ver faltantes", now=mins(3))
+    text = tg_api.texts()[-1]
+    assert "Estado: Pendiente de compra" in text
+    assert "<s>" not in text and "<b>Ibuprofeno 400 mg</b>" in text
+    assert "Cantidad: 1 unidad" in text and "Reportado por: Ana" in text  # conserva todo
+
+
+async def test_lista_tacha_solo_el_reporte_que_esta_en_carrito(
+    chat, sessions, seed, tg_api, monkeypatch
+):
+    """D-135/D-147: dos autores, dos filas; solo la cubierta por el carrito se tacha."""
+    from app.services import channel as channel_svc
+
+    await chat.pick("ana")
+    await chat.text("2 cajas de omeprazol 20 mg", now=mins(1))
+    await chat.text("Cambiar auxiliar", now=mins(2))
+    await chat.pick("luis", now=mins(2))
+    await chat.text("6 cajas de omeprazol 20 mg", now=mins(3))
+    (pending,) = await _pending(sessions, "pending_other_report")
+    await chat.click(f"rp:ok:{pending.id}", now=mins(4))
+
+    async with sessions() as s:
+        items = (await s.execute(select(DemandItem))).scalars().all()
+    ana_item = next(i for i in items if i.reported_by == seed["ana"])
+
+    async def only_ana_in_cart(session, org, rows):
+        return {
+            i.id: {"replenishment_state": "in_quote" if i.id == ana_item.id else "pending"}
+            for i in rows
+        }
+
+    monkeypatch.setattr(channel_svc.coverage_svc, "coverage_for_items", only_ana_in_cart)
+    await chat.text("Ver faltantes", now=mins(5))
+
+    text = tg_api.texts()[-1]
+    blocks = text.split("\n\n")
+    ana_block = next(b for b in blocks if "Reportado por: Ana" in b)
+    luis_block = next(b for b in blocks if "Reportado por: Luis" in b)
+    assert "<s><b>Omeprazol 20 mg</b></s>" in ana_block
+    assert "Cantidad: 2 cajas" in ana_block and "Estado: 🛒 En carrito" in ana_block
+    assert "<s>" not in luis_block
+    assert "Cantidad: 6 cajas" in luis_block and "Estado: Pendiente de compra" in luis_block
+
+
+async def test_lista_muestra_cada_reporte_con_su_autor_y_su_cantidad(
+    chat, sessions, seed, tg_api
+):
+    """Dos personas por el mismo producto: dos filas, cada una con su autor y su cantidad."""
+    await chat.pick("ana")
+    await chat.text("2 cajas de omeprazol 20 mg", now=mins(1))
+    await chat.text("Cambiar auxiliar", now=mins(2))
+    await chat.pick("luis", now=mins(2))
+    await chat.text("6 cajas de omeprazol 20 mg", now=mins(3))
+    async with sessions() as s:
+        (pending,) = (
+            await s.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.confirmation_status == "pending_other_report"
+                )
+            )
+        ).scalars().all()
+    await chat.click(f"rp:ok:{pending.id}", now=mins(4))
+
+    await chat.text("Ver faltantes", now=mins(5))
+    text = tg_api.texts()[-1]
+    assert "Cantidad: 2 cajas\n   Reportado por: Ana" in text
+    assert "Cantidad: 6 cajas\n   Reportado por: Luis" in text
+    assert "📋 Faltantes activos (2)" in text
+    async with sessions() as s:
+        items = (await s.execute(select(DemandItem))).scalars().all()
+    assert {i.reported_by for i in items} == {seed["ana"], seed["luis"]}
+
+
+async def test_lista_prioriza_la_cantidad_objetivo(chat, sessions, tg_api, ctx):
+    from app.domain.quantities import QuantityOp, QuantityUnit
+
+    await chat.pick("ana")
+    await chat.text("2 cajas de omeprazol 20 mg", now=mins(1))
+    (item,) = await ctx.items()
+    await ctx.qty(
+        item.id, QuantityOp.SET, Decimal(5), QuantityUnit.BOX, version=item.version
+    )
+    await chat.text("/lista", now=mins(2))
+    text = tg_api.texts()[-1]
+    assert (
+        "<b>Omeprazol 20 mg</b>\n"
+        "   Cantidad: 5 cajas\n"
+        "   Reportado por: Ana\n"
+        "   Estado: Pendiente de compra\n"
+        "   1 aviso" in text
+    )
+    assert "solicitada" not in text
+
+
+async def test_lista_usa_negrita_y_un_bloque_por_producto(chat, tg_api):
+    await chat.pick("ana")
+    await chat.text("2 cajas de omeprazol 20 mg", now=mins(1))
+    await chat.text("5 cajas de omeprazol 20 mg", now=mins(2))
+    await chat.text("3 cajas más", now=mins(3))  # 2 + 3 = 5: segunda observación del mismo faltante
+    await chat.text("falta ibuprofeno 400 mg", now=mins(4))
+    await chat.text("Ver faltantes", now=mins(5))
+    msg = tg_api.sent()[-1]
+    text = msg["text"]
+    assert msg.get("parse_mode") == "HTML"
+    assert text.startswith("📋 Faltantes activos (2)\n\n1. <b>")
+    blocks = text.split("\n\n")
+    assert len(blocks) == 3  # encabezado + un bloque por producto
+    omeprazol = next(b for b in blocks if "<b>Omeprazol 20 mg</b>" in b)
+    ibuprofeno = next(b for b in blocks if "<b>Ibuprofeno 400 mg</b>" in b)
+    assert (
+        "   Cantidad: 5 cajas\n"
+        "   Reportado por: Ana\n"
+        "   Estado: Pendiente de compra\n"
+        "   2 avisos" in omeprazol
+    )
+    assert "   Cantidad: 1 unidad" in ibuprofeno
+    assert "   1 aviso" in ibuprofeno and "1 avisos" not in text
+    assert "aviso(s)" not in text
+    assert " · " not in omeprazol  # datos en líneas separadas, no amontonados
+    assert "<s>" not in text  # pendientes de compra: nombre normal, sin tachado
+    assert "Estado: Pendiente de compra" in text
+
+
+async def test_lista_escapa_caracteres_especiales_del_nombre(chat, sessions, tg_api):
+    await chat.pick("ana")
+    await chat.text("falta vitamina C", now=mins(1))
+    # El intérprete normaliza símbolos; se fija el nombre tal cual para probar el escape del canal.
+    async with sessions() as s, s.begin():
+        item = (await s.execute(select(DemandItem))).scalar_one()
+        item.display_name = "Vitamina C <500 mg> & zinc"
+    await chat.text("Ver faltantes", now=mins(2))
+    msg = tg_api.sent()[-1]
+    assert msg.get("parse_mode") == "HTML"
+    assert "<b>Vitamina C &lt;500 mg&gt; &amp; zinc</b>" in msg["text"]
+    # El nombre no rompe el HTML: no queda ningún «<» sin escapar dentro de la negrita.
+    name_line = next(line for line in msg["text"].split("\n") if line.startswith("1. "))
+    assert name_line.count("<b>") == 1 and name_line.count("</b>") == 1
+    assert "<s>" not in name_line  # pendiente: sin tachado
+    assert "<500" not in name_line and "&amp; zinc" in name_line
+
+
+async def test_lista_pagina_sin_repetir_y_dentro_del_limite(chat, tg_api):
+    await chat.pick("ana")
+    for n, product in enumerate(
+        ("omeprazol 20 mg", "paracetamol 500 mg", "ibuprofeno 400 mg", "loratadina 10 mg"), start=1
+    ):
+        await chat.text(f"falta {product}", now=mins(n))
+    await chat.text("Ver faltantes", now=mins(9))
+    first = tg_api.sent()[-1]
+    assert "📋 Faltantes activos (4)" in first["text"]
+    assert "1. " in first["text"] and "3. " in first["text"] and "4. " not in first["text"]
+    assert first["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "lst:1"
+
+    await chat.click("lst:1", now=mins(10))
+    second = tg_api.sent()[-1]
+    assert "4. " in second["text"] and "1. " not in second["text"]
+    assert "inline_keyboard" not in (second.get("reply_markup") or {})  # no hay página siguiente
+    assert len(first["text"]) <= TELEGRAM_TEXT_LIMIT
+    assert len(second["text"]) <= TELEGRAM_TEXT_LIMIT
+
+
+def test_los_mensajes_largos_se_parten_por_lineas_sin_perder_texto():
+    from app.services.channel import _split_telegram_text
+
+    text = "\n".join(["Dato del producto " * 8] * 60)  # supera el límite de la Bot API
+    chunks = _split_telegram_text(text)
+    assert len(chunks) > 1
+    assert all(len(chunk) <= TELEGRAM_TEXT_LIMIT for chunk in chunks)
+    assert "\n".join(chunks) == text  # solo se parte, no se pierde ni se reordena nada
+
+
+def test_los_mensajes_largos_conservan_el_html_balanceado():
+    from app.services.channel import _split_telegram_text
+
+    lines: list[str] = []
+    for n in range(1, 200):
+        lines += [
+            f"{n}. <s><b>Producto &amp; {n}</b></s>",
+            "   Cantidad: 1 caja",
+            "   Reportado por: Ana",
+            "   Estado: 🛒 En carrito",
+            "   1 aviso",
+            "",
+        ]
+    text = "\n".join(lines)
+    chunks = _split_telegram_text(text)
+    assert len(chunks) > 1
+    for chunk in chunks:
+        assert len(chunk) <= TELEGRAM_TEXT_LIMIT
+        # Cada trozo sigue siendo HTML válido: ninguna etiqueta queda abierta.
+        assert chunk.count("<b>") == chunk.count("</b>")
+        assert chunk.count("<s>") == chunk.count("</s>")
+    # No se pierde ni se reordena ninguna línea con contenido; solo puede cambiar una línea
+    # vacía justo en el corte entre mensajes.
+    assert [ln for ln in "\n".join(chunks).split("\n") if ln] == [ln for ln in text.split("\n") if ln]
 
 
 async def test_chat_no_autorizado_se_ignora_e_informa_su_id(make_rt, sessions, seed, tg_api):
@@ -714,3 +1130,285 @@ async def test_la_api_muestra_a_compras_el_candidato_de_catalogo_sin_confirmarlo
         and item["attributes"]["unassigned"][0]["label"] == "50000"
     )  # sin confirmar
     assert item["attributes"]["identity"]["pharmaceutical"]["complete"] is False
+
+
+# ---- D-147: cantidad predeterminada, correcciones y unidades (2026-11-05) ----
+
+
+def _buttons(tg_api):
+    """Botones inline del último mensaje; vacío cuando la respuesta solo lleva teclado fijo."""
+    rows = tg_api.sent()[-1].get("reply_markup", {}).get("inline_keyboard") or []
+    return [b["text"] for row in rows for b in row]
+
+
+async def _pending(sessions, status="pending_same_author_quantity"):
+    async with sessions() as s:
+        return (
+            await s.execute(
+                select(ChannelMessage)
+                .where(ChannelMessage.confirmation_status == status)
+                .order_by(ChannelMessage.received_at.desc())
+            )
+        ).scalars().all()
+
+
+async def test_d147_1_reporte_sin_cantidad_registra_una_unidad_generica(
+    chat, sessions, tg_api
+):
+    await chat.pick("ana")
+    await chat.text("falta loratadina 10 mg", now=mins(1))
+    assert "Anotado: Loratadina 10 mg — 1 unidad solicitada." in tg_api.texts()[-1]
+    (o,) = await observations(sessions)
+    assert (o.declared_quantity, o.declared_unit) == (Decimal(1), "unit")
+    assert o.interpretation["quantity_origin"] == "default"
+    (item,) = await ctx_items(sessions)
+    assert item.target_quantity is None  # la unidad predeterminada no es cantidad de compra
+
+
+async def ctx_items(sessions):
+    async with sessions() as s:
+        return (await s.execute(select(DemandItem))).scalars().all()
+
+
+async def test_d147_2_unidad_generica_mas_cajas_pide_aclaracion_sin_sumar(
+    chat, sessions, tg_api
+):
+    await chat.pick("ana")
+    await chat.text("falta loratadina 10 mg", now=mins(1))
+    await chat.text("10 cajas de loratadina 10 mg", now=mins(2))
+    text = tg_api.texts()[-1]
+    assert "Ya tienes 1 unidad de Loratadina 10 mg" in text
+    assert "¿Quieres agregar más o cambiar el total?" in text
+    assert "En total 5 cajas" in text and "5 cajas más" in text
+    assert _buttons(tg_api) == []  # sin botones: la respuesta se escribe
+    assert len(await observations(sessions)) == 1  # nada se registró todavía
+    (item,) = await ctx_items(sessions)
+    assert item.target_quantity is None
+
+
+async def test_d147_3_total_nuevo_confirmado_reemplaza_la_cantidad(
+    chat, sessions, tg_api
+):
+    await chat.pick("ana")
+    await chat.text("falta loratadina 10 mg", now=mins(1))
+    await chat.text("10 cajas de loratadina 10 mg", now=mins(2))
+    await chat.text("en total 10 cajas", now=mins(3))
+    obs = await observations(sessions)
+    assert len(obs) == 2 and (obs[-1].declared_quantity, obs[-1].declared_unit) == (
+        Decimal(10),
+        "box",
+    )
+    assert obs[-1].quantity_proposal["operation"] == "SET"
+    assert "Listo, actualicé tu solicitud de Loratadina 10 mg a 10 cajas." in tg_api.texts()[-1]
+    assert _buttons(tg_api) == []
+    (item,) = await ctx_items(sessions)
+    assert item.target_quantity is None
+    assert not await _pending(sessions)
+
+
+async def test_d147_4_adicional_confirmado_con_unidades_compatibles_suma(
+    chat, sessions, tg_api
+):
+    await chat.pick("ana")
+    await chat.text("falta loratadina 10 mg", now=mins(1))
+    await chat.text("10 cajas de loratadina 10 mg", now=mins(2))
+    await chat.text("en total 10 cajas", now=mins(3))
+    await chat.text("15 cajas de loratadina 10 mg", now=mins(4))
+    text = tg_api.texts()[-1]
+    assert "¿Quieres agregar más o cambiar el total?" in text
+    assert _buttons(tg_api) == []
+    await chat.text("5 cajas más", now=mins(5))
+    o = (await observations(sessions))[-1]  # la revisión más reciente
+    assert (o.declared_quantity, o.declared_unit) == (Decimal(15), "box")
+    assert o.quantity_proposal["operation"] == "ADD"
+    assert o.quantity_proposal["value"] == "5"
+    (item,) = await ctx_items(sessions)
+    assert item.target_quantity is None  # Telegram no toca la cantidad de compra
+
+
+async def test_d147_5_unidades_incompatibles_no_se_suman_ni_se_inventan(
+    chat, sessions, tg_api
+):
+    await chat.pick("ana")
+    await chat.text("2 cajas de loratadina 10 mg", now=mins(1))
+    await chat.text("3 frascos de loratadina 10 mg", now=mins(2))
+    assert "¿Quieres agregar más o cambiar el total?" in tg_api.texts()[-1]
+    assert _buttons(tg_api) == []
+    # «más» con unidades distintas se rechaza por texto: no hay equivalencia conocida.
+    await chat.text("3 frascos más", now=mins(3))
+    text = tg_api.texts()[-1]
+    assert "No puedo sumar cajas con frascos" in text
+    assert "En total 3 frascos" in text
+    assert _buttons(tg_api) == []
+    assert len(await observations(sessions)) == 1  # nada se sumó ni se inventó
+
+
+async def test_d147_6_correccion_por_texto_libre_antes_de_confirmar(
+    chat, sessions, tg_api
+):
+    await chat.pick("ana")
+    await chat.text("falta loratadina 10 mg", now=mins(1))
+    await chat.text("10 cajas de loratadina 10 mg", now=mins(2))
+    await chat.text("me equivoqué, son 5", now=mins(3))
+    assert "Listo, actualicé tu solicitud de Loratadina 10 mg a 5 cajas." in tg_api.texts()[-1]
+    assert _buttons(tg_api) == []
+    (o,) = (await observations(sessions))[-1:]
+    assert (o.declared_quantity, o.declared_unit) == (Decimal(5), "box")
+    assert o.quantity_proposal["operation"] == "SET"
+    assert not await _pending(sessions)
+    (item,) = await ctx_items(sessions)
+    assert item.target_quantity is None
+
+
+async def test_d147_7_repetir_el_mismo_aviso_no_incrementa(chat, sessions, tg_api):
+    await chat.pick("ana")
+    await chat.text("2 cajas de loratadina 10 mg", now=mins(1))
+    await chat.text("2 cajas de loratadina 10 mg", now=mins(2))
+    assert "la cantidad no cambió" in tg_api.texts()[-1]
+    obs = await observations(sessions)
+    assert len(obs) == 2 and obs[-1].declared_quantity == Decimal(2)
+    # La cantidad solicitada vigente sigue siendo la última declarada: 2 cajas, no 4.
+    async with sessions() as s:
+        from app.services import queries
+
+        (item,) = (await s.execute(select(DemandItem))).scalars().all()
+        meta = await queries.report_meta(s, item.organization_id, [item])
+    assert meta[item.id]["declared_quantity"] == 2
+
+
+async def test_d147_8_un_solo_faltante_con_historial_preservado(chat, sessions):
+    await chat.pick("ana")
+    await chat.text("falta loratadina 10 mg", now=mins(1))
+    await chat.text("10 cajas de loratadina 10 mg", now=mins(2))
+    await chat.text("en total 10 cajas", now=mins(3))
+    (item,) = await ctx_items(sessions)
+    obs = await observations(sessions)
+    assert len(obs) == 2
+    assert [o.demand_item_id for o in obs] == [item.id, item.id]
+    assert [o.interpretation.get("quantity_origin") for o in obs] == ["default", "explicit"]
+    assert item.target_quantity is None
+
+
+async def test_d147_9_solicitada_y_objetivo_siguen_separadas(chat, sessions, ctx):
+    await chat.pick("ana")
+    await chat.text("falta loratadina 10 mg", now=mins(1))
+    await chat.text("10 cajas de loratadina 10 mg", now=mins(2))
+    await chat.text("en total 10 cajas", now=mins(3))
+    from app.domain.quantities import QuantityOp, QuantityUnit
+
+    (item,) = await ctx_items(sessions)
+    assert item.target_quantity is None  # la auxiliar no cambió la compra
+    # Pao sí puede fijar la cantidad objetivo; la solicitada sigue siendo la de la auxiliar.
+    await ctx.qty(
+        item.id, QuantityOp.SET, Decimal(8), QuantityUnit.BOX, version=item.version
+    )
+    async with sessions() as s:
+        from app.services import queries
+
+        (fresh,) = (await s.execute(select(DemandItem))).scalars().all()
+        meta = await queries.report_meta(s, fresh.organization_id, [fresh])
+    assert fresh.target_quantity == Decimal(8) and fresh.quantity_unit == "box"
+    assert meta[fresh.id]["declared_quantity"] == 10  # solicitada por la auxiliar, intacta
+
+
+async def test_d147_10_en_carrito_no_se_cambia_la_cantidad(chat, sessions, tg_api, monkeypatch):
+    from app.services import demand as demand_svc
+
+    await chat.pick("ana")
+    await chat.text("2 cajas de loratadina 10 mg", now=mins(1))
+    await chat.text("5 cajas de loratadina 10 mg", now=mins(2))
+    (pending,) = await _pending(sessions)
+
+    async def in_cart(session, org, items):
+        return {i.id: {"replenishment_state": "in_quote"} for i in items}
+
+    monkeypatch.setattr(demand_svc.coverage_svc, "coverage_for_items", in_cart)
+    await chat.text("8 cajas de loratadina 10 mg", now=mins(3))
+    assert "está en carrito" in tg_api.texts()[-1]
+    assert len(await observations(sessions)) == 1
+    await chat.text("en total 12 cajas", now=mins(4))
+    assert "está en carrito" in tg_api.texts()[-1]
+    assert len(await observations(sessions)) == 1
+    assert (await _pending(sessions))[0].id == pending.id  # la pregunta original sigue vigente
+
+
+async def test_d147_11_reportes_independientes_por_auxiliar(chat, sessions, seed, tg_api):
+    await chat.pick("ana")
+    await chat.text("2 cajas de loratadina 10 mg", now=mins(1))
+    await chat.text("Cambiar auxiliar", now=mins(2))
+    await chat.pick("luis", now=mins(2))
+    await chat.text("3 cajas de loratadina 10 mg", now=mins(3))
+    (pending,) = await _pending(sessions, "pending_other_report")
+    await chat.click(f"rp:ok:{pending.id}", now=mins(4))
+    items = await ctx_items(sessions)
+    assert len(items) == 2 and {i.reported_by for i in items} == {seed["ana"], seed["luis"]}
+    by_author = {
+        o.author_id: o.declared_quantity
+        for o in await observations(sessions)
+        if o.demand_item_id is not None
+    }
+    assert by_author == {seed["ana"]: Decimal(2), seed["luis"]: Decimal(3)}
+    assert all(i.target_quantity is None for i in items)
+
+
+async def test_d147_12_historico_sin_cantidad_no_se_reescribe_y_pide_confirmacion(
+    chat, sessions, ctx, tg_api
+):
+    # Registro histórico: un faltante con cantidad NULL (como el caso real de Loratadina).
+    r = await ctx.report("ana", "falta loratadina 10 mg")
+    item_id = r.item.id
+    await chat.pick("ana")
+    await chat.text("10 cajas de loratadina 10 mg", now=mins(1))
+    assert "No tenías una cantidad anotada" in tg_api.texts()[-1]
+    assert _buttons(tg_api) == []
+    await chat.text("en total 10 cajas", now=mins(2))
+    obs = await observations(sessions)
+    assert len(obs) == 2 and len(await ctx_items(sessions)) == 1
+    historical = [o for o in obs if o.declared_quantity is None]
+    assert len(historical) == 1  # la observación histórica no se toca
+    confirmed = [o for o in obs if o.declared_quantity is not None]
+    assert [(o.declared_quantity, o.demand_item_id) for o in confirmed] == [
+        (Decimal(10), item_id)
+    ]
+    assert (await ctx_items(sessions))[0].target_quantity is None
+
+
+async def test_d147_13_cancelar_por_texto_no_cambia_la_cantidad_solicitada(
+    chat, sessions, tg_api
+):
+    await chat.pick("ana")
+    await chat.text("2 cajas de loratadina 10 mg", now=mins(1))
+    await chat.text("5 cajas de loratadina 10 mg", now=mins(2))
+    assert "¿Quieres agregar más o cambiar el total?" in tg_api.texts()[-1]
+    assert _buttons(tg_api) == []
+
+    await chat.text("Cancelar", now=mins(3))
+    assert "Cancelado: no cambié la cantidad solicitada." in tg_api.texts()[-1]
+    assert _buttons(tg_api) == []
+    obs = await observations(sessions)
+    assert len(obs) == 1 and (obs[0].declared_quantity, obs[0].declared_unit) == (
+        Decimal(2),
+        "box",
+    )
+    assert await _pending(sessions) == []
+
+
+async def test_d147_14_unidad_inicial_generica_se_aclara_por_texto_antes_de_sumar(
+    chat, sessions, tg_api
+):
+    await chat.pick("ana")
+    await chat.text("falta loratadina 10 mg", now=mins(1))  # 1 unidad genérica
+    await chat.text("10 cajas de loratadina 10 mg", now=mins(2))
+    await chat.text("10 cajas más", now=mins(3))
+    text = tg_api.texts()[-1]
+    assert "Para sumar necesito saber qué representa esa 1 unidad inicial de Loratadina 10 mg" in text
+    assert "¿Es 1 caja?" in text
+    assert _buttons(tg_api) == []
+    assert len(await observations(sessions)) == 1  # sin inventar equivalencias
+
+    await chat.text("sí, es 1 caja", now=mins(4))
+    obs = await observations(sessions)
+    assert len(obs) == 2
+    assert (obs[-1].declared_quantity, obs[-1].declared_unit) == (Decimal(11), "box")
+    assert obs[-1].quantity_proposal["operation"] == "ADD"
+    assert "Listo, actualicé tu solicitud de Loratadina 10 mg a 11 cajas." in tg_api.texts()[-1]

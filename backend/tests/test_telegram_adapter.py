@@ -173,7 +173,7 @@ async def test_las_respuestas_se_entregan_en_orden(make_rt, seed, tg_api, chan):
     tg_api.calls.clear()
     await c.text("Ver lista")
     await c.text("¿Quién soy?")
-    assert tg_api.texts()[0].startswith("Faltantes activos") and tg_api.texts()[1].startswith(
+    assert tg_api.texts()[0].startswith("📋 Faltantes activos") and tg_api.texts()[1].startswith(
         "Estás reportando"
     )
 

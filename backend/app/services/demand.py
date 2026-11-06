@@ -15,6 +15,7 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import DomainError, not_found
@@ -42,17 +43,24 @@ from app.models import (
     QuoteLine,
     QuoteLineAllocation,
 )
+from app.services import coverage as coverage_svc
 from app.services.actors import Actor
 from app.services.events import advisory_lock, emit, request_hash
 from app.services.interpretation import interpret_product, interpret_text
 from app.services.provenance import org_kind, origin_for
+
+# Cantidad predeterminada de un reporte de Telegram sin cantidad (D-147). Es una unidad genérica:
+# no se asume caja, frasco ni sobre. La API la expone con `quantity_origin="default"`.
+DEFAULT_QUANTITY = Decimal(1)
+DEFAULT_UNIT = "unit"
 
 
 @dataclass
 class ObservationResult:
     observation: DemandObservation | None
     item: DemandItem | None
-    # created_item | attached_existing | needs_review | resolved_manual | needs_confirmation
+    # created_item | attached_existing | needs_review | resolved_manual | needs_confirmation |
+    # blocked_in_cart
     outcome: str
     parsed: ParsedProduct
     replayed: bool = False
@@ -75,6 +83,8 @@ class Origin:
     channel_message_id: uuid.UUID | None = None
     attachment_id: uuid.UUID | None = None
     account_id: uuid.UUID | None = None  # cuenta de Telegram que envió (puede no ser la persona)
+    # Sucursal de esa cuenta al momento del aviso: se copia, no se consulta después (histórico).
+    branch_label: str | None = None
 
 
 def parsed_of_item(i: DemandItem) -> ParsedProduct:
@@ -279,6 +289,10 @@ async def _store(
     await advisory_lock(session, f"fam:{org}:{cycle.id}:{parsed.ingredient}")
     if declared_quantity is None:  # la cantidad escrita en el texto es solo una sugerencia
         declared_quantity, declared_unit = parsed.requested_quantity, parsed.requested_unit
+    # Procedencia de la cantidad: "explicit" = la escribió la persona; "default" = 1 unidad
+    # genérica aplicada por la regla de cantidad predeterminada (D-147). Se conserva en la
+    # observación para no confundirla con una cantidad informada (trazabilidad).
+    quantity_origin = "explicit" if declared_quantity is not None else None
 
     # La deduplicación solo considera las necesidades del MISMO autor. Las de otras personas se
     # leen aparte para informar y, en Telegram, pedir confirmación: nunca se adjunta el aviso.
@@ -296,27 +310,48 @@ async def _store(
     identical = [c for c, k in comps if k.relation is Relation.IDENTICAL]
 
     other_reports: list[dict] = []
+    declared_by_item = await _latest_declared_by_item(
+        session, org, [c.id for c in all_family]
+    )
     for c in all_family:
         if c.reported_by == actor.id:
             continue
         k = compare(parsed, parsed_of_item(c))
         if k.relation is Relation.INCOMPATIBLE:
             continue
-        other_reports.append(_other_report(c, k.relation.value))
+        other_reports.append(
+            _other_report(c, k.relation.value, declared_by_item.get(c.id))
+        )
     other_identical = [r for r in other_reports if r["relation"] == Relation.IDENTICAL.value]
 
     # Confirmación explícita en el canal: no se crea ni se adjunta nada todavía.
     if confirmation_mode == "telegram":
         if len(identical) == 1:
-            # Es su propio reporte: solo se pregunta si el aviso trae una cantidad y ya hay una
-            # cantidad conocida (¿total o adicional?). Nunca se adivina ni se suma.
             same = identical[0]
-            if declared_quantity is not None and same.target_quantity is not None:
+            previous = declared_by_item.get(same.id)
+            # Repetición exacta del mismo aviso (misma cantidad y unidad): es un aviso, no un
+            # cambio. Nunca se suma ni se pregunta por una cantidad que no cambió (D-147).
+            same_as_previous = bool(
+                previous is not None
+                and previous[0] == declared_quantity
+                and previous[1] == declared_unit
+            )
+            if declared_quantity is not None and not same_as_previous:
+                # Con el faltante en un carrito activo no se altera la cantidad solicitada.
+                if await item_in_cart(session, org, same):
+                    return ObservationResult(
+                        None, same, "blocked_in_cart", parsed, interpretation=interp
+                    )
+                # Cualquier cantidad nueva sobre un faltante propio se pregunta antes de cambiar
+                # nada: ¿es un total nuevo o una cantidad adicional? Nunca se suma sola y no se
+                # supone una equivalencia entre unidades distintas (D-147).
                 return ObservationResult(
                     None, same, "needs_confirmation", parsed, interpretation=interp,
-                    same_author_item=_other_report(same, Relation.IDENTICAL.value),
+                    same_author_item=_other_report(
+                        same, Relation.IDENTICAL.value, previous
+                    ),
                 )  # fmt: skip
-        elif other_identical:
+        if other_identical:
             # Otra persona ya reportó lo mismo. No se adjunta ni se suma: se pregunta si es un
             # reporte propio independiente (D-135).
             return ObservationResult(
@@ -352,7 +387,26 @@ async def _store(
         session.add(item)
         await session.flush()
 
+    # Cantidad predeterminada (D-147): un aviso por Telegram sin cantidad pide 1 unidad genérica.
+    # No se supone caja, frasco ni sobre: la unidad queda sin presentación hasta que alguien la
+    # informe. Aplica al reporte nuevo y también al aviso que se adjunta a un faltante que aún no
+    # tiene cantidad declarada (histórico sin cantidad), sin tocar observaciones anteriores. No
+    # aplica a la API ni reemplaza una cantidad ya conocida.
+    previous_for_item = declared_by_item.get(item.id) if item is not None else None
+    if (
+        declared_quantity is None
+        and confirmation_mode == "telegram"
+        and (
+            outcome == "created_item"
+            or (outcome == "attached_existing" and previous_for_item is None)
+        )
+    ):
+        declared_quantity, declared_unit = DEFAULT_QUANTITY, DEFAULT_UNIT
+        quantity_origin = "default"
+
     snapshot = interp.snapshot() | (extra_interpretation or {})
+    if quantity_origin is not None:
+        snapshot["quantity_origin"] = quantity_origin
     if reasons:
         snapshot["uncertainties"] = list(dict.fromkeys([*snapshot["uncertainties"], *reasons]))
     if other_reports:
@@ -363,6 +417,7 @@ async def _store(
         source=origin.source, identity_level=origin.identity_level, actor_session_id=origin.actor_session_id,
         channel_message_id=origin.channel_message_id, attachment_id=origin.attachment_id,
         account_id=origin.account_id,
+        branch_label=origin.branch_label,
         declared_quantity=declared_quantity, declared_unit=declared_unit,
         quantity_proposal=quantity_proposal or {},
         match_status=outcome, candidates=cands, policy_version=POLICY_VERSION,
@@ -389,15 +444,55 @@ async def _store(
     )
 
 
-def _other_report(item: DemandItem, relation: str) -> dict:
+def _other_report(
+    item: DemandItem, relation: str, declared: tuple | None = None
+) -> dict:
     return {
         "demand_item_id": str(item.id),
         "display_name": item.display_name,
         "reported_by": str(item.reported_by) if item.reported_by else None,
         "target_quantity": None if item.target_quantity is None else fmt(item.target_quantity),
         "quantity_unit": item.quantity_unit,
+        # Cantidad SOLICITADA vigente (la última declarada en este reporte). No es la objetivo.
+        "declared_quantity": None if declared is None else fmt(declared[0]),
+        "declared_unit": None if declared is None else declared[1],
         "relation": relation,
     }
+
+
+async def _latest_declared_by_item(
+    session, org, item_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, tuple]:
+    """Última cantidad declarada por faltante. Cada faltante pertenece a un solo autor (D-135)."""
+    if not item_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(
+                DemandObservation.demand_item_id,
+                DemandObservation.declared_quantity,
+                DemandObservation.declared_unit,
+            )
+            .where(
+                DemandObservation.organization_id == org,
+                DemandObservation.demand_item_id.in_(item_ids),
+                DemandObservation.declared_quantity.is_not(None),
+            )
+            .ext(distinct_on(DemandObservation.demand_item_id))
+            .order_by(
+                DemandObservation.demand_item_id,
+                DemandObservation.created_at.desc(),
+                DemandObservation.id.desc(),
+            )
+        )
+    ).all()
+    return {r[0]: (r[1], r[2]) for r in rows}
+
+
+async def item_in_cart(session, org, item: DemandItem) -> bool:
+    """¿El faltante está en un carrito activo? Mientras siga ahí no se cambia su cantidad (D-147)."""
+    cov = await coverage_svc.coverage_for_items(session, org, [item])
+    return cov.get(item.id, {}).get("replenishment_state") == "in_quote"
 
 
 async def _observation_by_key(session, org, key) -> DemandObservation | None:

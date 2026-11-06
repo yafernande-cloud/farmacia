@@ -201,6 +201,8 @@ class DemandObservation(Base):
     attachment_id: Mapped[uuid.UUID | None] = mapped_column()
     # Cuenta de Telegram que originó el aviso (NULL por API o vínculos legado).
     account_id: Mapped[uuid.UUID | None] = mapped_column()
+    # Sucursal de la cuenta en el momento del registro; no se reescribe si la cuenta cambia.
+    branch_label: Mapped[str | None] = mapped_column(String(120))
     idempotency_key: Mapped[str] = mapped_column(String(128))
     request_hash: Mapped[str] = mapped_column(String(64))
     # Procedencia del dato (NO es confianza ni confirmación farmacéutica):

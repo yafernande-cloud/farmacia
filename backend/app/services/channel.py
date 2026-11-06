@@ -9,6 +9,7 @@ Reglas (HLD §3.1, §7, §8):
 * Una respuesta nunca asegura que un producto ambiguo fue identificado.
 """
 
+import html
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -34,21 +35,28 @@ from app.models import (
     InboundEvent,
     OutboundMessage,
 )
+from app.services import coverage as coverage_svc
 from app.services import queries, sessions
 from app.services.access import AccountContext
 from app.services.actors import Actor, load_actor
-from app.services.demand import ObservationResult, Origin, record_observation
+from app.services.demand import ObservationResult, Origin, item_in_cart, record_observation
 from app.services.events import advisory_lock, emit
 from app.services.provenance import org_kind, origin_for
 from app.services.quantities import apply_quantity_command
 
-KEYBOARD = [["Ver lista", "Cambiar auxiliar"], ["Finalizar reportes", "¿Quién soy?"]]
+KEYBOARD = [["Ver faltantes", "Cambiar auxiliar"], ["Ver auxiliar activo", "Ayuda"]]
+# Con un solo auxiliar habilitado no hay nada que cambiar: el teclado no ofrece el selector.
+KEYBOARD_SINGLE = [["Ver faltantes", "Ver auxiliar activo"], ["Ayuda"]]
 # En un teléfono personal no hay selector de identidad: la cuenta autorizada ya la fija.
-KEYBOARD_PERSONAL = [["Ver lista", "¿Quién soy?"], ["Ayuda"]]
-CMD_LIST = {"/lista", "ver lista", "lista"}
+KEYBOARD_PERSONAL = [["Ver faltantes", "Ver auxiliar activo"], ["Ayuda"]]
+CMD_LIST = {"/lista", "ver lista", "lista", "ver faltantes", "faltantes"}
 CMD_CHANGE = {"/cambiar", "cambiar auxiliar", "cambiar"}
-CMD_WHO = {"/quien", "¿quién soy?", "quien soy", "¿quien soy?", "/yo"}
+CMD_WHO = {
+    "/quien", "¿quién soy?", "quien soy", "¿quien soy?", "/yo",
+    "ver auxiliar activo", "auxiliar activo", "¿quién está activo?", "quien esta activo",
+}  # fmt: skip
 CMD_HELP = {"/ayuda", "/help", "ayuda"}
+# «/salir» sigue disponible como comando de compatibilidad, aunque ya no está en el teclado.
 CMD_LOGOUT = {"/salir", "/finalizar", "finalizar reportes", "cerrar sesion", "cerrar sesión"}
 
 
@@ -64,6 +72,8 @@ class Reply:
     buttons: list[list[Button]] = field(default_factory=list)
     keyboard: list[list[str]] | None = None
     answer_callback_id: str | None = None
+    # Formato que entiende el canal (Telegram: "HTML"). Solo se usa en respuestas con etiquetas.
+    parse_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -115,11 +125,40 @@ def _is_personal(account: AccountContext | None) -> bool:
 
 
 def _keyboard(account: AccountContext | None) -> list[list[str]]:
-    return KEYBOARD_PERSONAL if _is_personal(account) else KEYBOARD
+    if _is_personal(account):
+        return KEYBOARD_PERSONAL
+    if account is not None and account.auxiliary_count is not None:
+        return KEYBOARD_SINGLE if account.auxiliary_count <= 1 else KEYBOARD
+    return KEYBOARD
 
 
 def _account_id(account: AccountContext | None) -> uuid.UUID | None:
     return account.account_id if account else None
+
+
+def _branch(account: AccountContext | None) -> str | None:
+    return account.branch_label if account else None
+
+
+_EMPTY_ACCOUNT = (
+    "Esta cuenta no tiene auxiliares disponibles para reportar en este momento. "
+    "Pide a la administración que revise quién está habilitado en este teléfono."
+)
+
+
+async def _selectable(
+    session, binding: ChannelBinding, account: AccountContext | None
+) -> list[AppUser]:
+    """Quiénes se pueden elegir: SOLO los habilitados en esta cuenta compartida.
+
+    Un vínculo legado sin cuenta conserva el selector de la organización (compatibilidad
+    histórica); una cuenta compartida nunca ve personas de otra cuenta.
+    """
+    if account is not None and not account.personal:
+        return await sessions.list_account_reporters(
+            session, binding.organization_id, account.account_id
+        )
+    return await sessions.list_reporters(session, binding.organization_id)
 
 
 def _selector(auxs: list[AppUser], text: str) -> Reply:
@@ -157,14 +196,71 @@ def _pending_note(pending: list[dict]) -> str:
     return f" Falta confirmar {' y '.join(dict.fromkeys(notes))}." if notes else ""
 
 
+_UNIT_LABELS = {
+    "box": ("caja", "cajas"),
+    "package": ("paquete", "paquetes"),
+    "unit": ("unidad", "unidades"),
+    "bottle": ("frasco", "frascos"),
+}
+
+
+def _fmt_quantity(value, unit: str | None) -> str:
+    """Cantidad declarada con su unidad, en el vocabulario que usa la persona («2 cajas»)."""
+    n = Decimal(str(value)).normalize()
+    number = f"{n:f}"
+    labels = _UNIT_LABELS.get(unit)
+    if labels is None:
+        return number
+    return f"{number} {labels[0] if n == 1 else labels[1]}"
+
+
+def _avisos(count) -> str:
+    """«1 aviso» / «N avisos», sin la forma «aviso(s)»."""
+    return f"{count} aviso" if int(count) == 1 else f"{count} avisos"
+
+
+def _one_line(value: str) -> str:
+    """Colapsa espacios y saltos de línea: una etiqueta HTML nunca debe quedar partida."""
+    return " ".join(str(value).split())
+
+
+def _declared_text(r: ObservationResult) -> str:
+    """Lo que la persona declaró. Nunca se presenta como cantidad objetivo ni se aplica."""
+    obs = r.observation
+    value = obs.declared_quantity if obs is not None else None
+    unit = obs.declared_unit if obs is not None else None
+    if value is None:
+        value, unit = r.parsed.requested_quantity, r.parsed.requested_unit
+    return "Cantidad no indicada" if value is None else _fmt_quantity(value, unit)
+
+
+def _quantity_origin(r: ObservationResult) -> str | None:
+    """Cómo se estableció la cantidad: escrita por la persona (`explicit`) o predeterminada."""
+    obs = r.observation
+    return (obs.interpretation or {}).get("quantity_origin") if obs is not None else None
+
+
 def line_for(r: ObservationResult, raw: str) -> str:
     note = _pending_note(r.parsed.pending_validation if r.item else [])
     if r.outcome == "created_item" and r.item:
-        return f"Anotado: {r.item.display_name}. Cantidad pendiente.{note}"
+        qty = _declared_text(r)
+        if _quantity_origin(r) == "default":
+            qty += " solicitada"
+        return f"Anotado: {r.item.display_name} — {qty}.{note}"
     if r.outcome == "attached_existing" and r.item:
+        if _quantity_origin(r) == "default":
+            return (
+                f"Anotado: {r.item.display_name} — 1 unidad solicitada "
+                f"(no tenías cantidad anotada).{note}"
+            )
         return (
             f"{r.item.display_name} ya estaba en tu lista; registré tu aviso "
             f"(la cantidad no cambió).{note}"
+        )
+    if r.outcome == "blocked_in_cart" and r.item:
+        return (
+            f"{r.item.display_name} está en carrito: no cambié la cantidad solicitada. "
+            "Para corregirla, pide a compras que lo retire del carrito."
         )
     if r.outcome == "needs_confirmation":
         return f"Guardé tu aviso de {r.parsed.display_name}; falta que confirmes cómo seguimos."
@@ -225,13 +321,61 @@ async def _personal_identity(
     return sess, actor, None
 
 
+async def _single_auxiliary_identity(
+    session, binding, account: AccountContext, person: AppUser, now: datetime, idle: timedelta,
+    event_id: uuid.UUID | None = None,
+) -> tuple[ActorSession | None, Actor | None, DomainError | None]:  # fmt: skip
+    """Con UN solo auxiliar habilitado no se pregunta quién es: se identifica automáticamente.
+
+    No depende de la sesión anterior ni de su vencimiento: tras «Finalizar reportes», un reinicio
+    o días sin uso, el siguiente mensaje vuelve a identificar a la misma persona. Sigue siendo
+    identificación declarada (el teléfono compartido no autentica a nadie).
+    """
+    err = sessions.ineligibility(person)
+    if err is not None:
+        return None, None, err
+    sess = await sessions.active_session(session, binding, now, idle)
+    if (
+        sess is None
+        or sess.auxiliary_id != person.id
+        or sess.account_id != account.account_id
+    ):
+        sess = await sessions.select_auxiliary(
+            session, binding, person.id, now, idle, event_id=event_id,
+            identity_level="declared", account_id=account.account_id,
+        )  # fmt: skip
+    else:
+        await sessions.touch(session, sess, now, idle)
+    actor = await load_actor(session, person.id)
+    if actor is None:
+        return None, None, DomainError(
+            "PERSON_NOT_FOUND", "La persona ya no está activa.", status_code=403
+        )
+    return sess, actor, None
+
+
 async def _resolve_identity(
     session, binding, account: AccountContext | None, now: datetime, idle: timedelta,
     event_id: uuid.UUID | None = None,
 ) -> tuple[ActorSession | None, Actor | None, DomainError | None]:  # fmt: skip
     if _is_personal(account):
         return await _personal_identity(session, binding, account, now, idle, event_id)
+    if account is not None:
+        auxs = await sessions.list_account_reporters(
+            session, binding.organization_id, account.account_id
+        )
+        if len(auxs) == 1:
+            return await _single_auxiliary_identity(
+                session, binding, account, auxs[0], now, idle, event_id
+            )
     sess = await sessions.active_session(session, binding, now, idle)  # expira si corresponde
+    if sess is not None and account is not None:
+        if not await sessions.is_account_auxiliary(
+            session, account.account_id, sess.auxiliary_id
+        ):
+            # Baja en esta cuenta: la sesión deja de identificar aunque no se haya revocado.
+            await sessions.end_session(session, binding, now)
+            sess = None
     actor = await _auxiliary_actor(session, sess) if sess else None
     if sess and actor is None:  # el auxiliar dejó de estar habilitado
         await sessions.end_session(session, binding, now)
@@ -250,6 +394,7 @@ def _identity_error_text(err: DomainError | None) -> str:
 async def _record_segments(session, binding, actor: Actor, sess, msg: ChannelMessage, text: str,
                            key_prefix: str, cfg: ChannelConfig, basis_level: str = "declared",
                            account_id: uuid.UUID | None = None,
+                           branch_label: str | None = None,
                            confirm: bool = True) -> tuple[list[str], list[dict]]:
     """Registra cada segmento. Devuelve (líneas de respuesta, confirmaciones pendientes).
 
@@ -262,7 +407,10 @@ async def _record_segments(session, binding, actor: Actor, sess, msg: ChannelMes
     pending: list[dict] = []
     for i, seg in enumerate(segs):
         key = f"{key_prefix}:{i}"
-        origin = Origin("telegram_text", basis_level, sess.id, msg.id, account_id=account_id)
+        origin = Origin(
+            "telegram_text", basis_level, sess.id, msg.id, account_id=account_id,
+            branch_label=branch_label,
+        )  # fmt: skip
         try:
             r = await record_observation(
                 session, actor, text=seg, idempotency_key=key, ai=cfg.ai,
@@ -277,6 +425,7 @@ async def _record_segments(session, binding, actor: Actor, sess, msg: ChannelMes
                         "origin": origin,
                         "basis_level": basis_level,
                         "account_id": account_id,
+                        "branch_label": branch_label,
                     }
                 )
                 continue
@@ -337,6 +486,90 @@ def _parse_quantity_text(text: str, default_unit: str | None) -> tuple[Decimal, 
     return (value, unit) if unit in {u.value for u in QuantityUnit} else None
 
 
+_ADD_MARKERS = {
+    "mas", "más", "adicional", "adicionales", "sumar", "sumale", "súmale", "sumando",
+    "agregar", "agrega", "agregale", "agrégale", "anadir", "añadir", "añade", "anade",
+}  # fmt: skip
+_SET_MARKERS = {
+    "total", "en", "corregir", "corrijo", "correccion", "corrección", "fijar", "fijo",
+    "dejar", "dejalo", "déjalo", "poner", "pon", "quedar", "queda", "quedan", "seria",
+    "sería", "serian", "serían", "mejor",
+}  # fmt: skip
+# Marcadores que fijan la operación sin ambigüedad («en total 15», «me equivoqué, son 5»).
+_SET_OP_MARKERS = {"total", "corregir", "corrijo", "fijar", "fijo", "poner", "pon"}
+_CORRECTION_MARKERS = {
+    "equivoque", "equivoqué", "equivocado", "equivocada", "error", "confundi", "confundí",
+    "rectificar", "rectifico", "rectificacion", "rectificación",
+}  # fmt: skip
+_CANCEL_WORDS = {
+    "cancelar", "cancela", "cancelen", "cancelalo", "cáncelalo", "olvidalo", "olvídalo",
+    "dejalo", "déjalo", "nada",
+}  # fmt: skip
+_AFFIRM_WORDS = {
+    "si", "sí", "correcto", "correcta", "exacto", "exacta", "claro", "dale", "eso", "asi",
+    "así",
+}  # fmt: skip
+# Ayuda fija de la corrección por texto: la conversación de cantidades no usa botones (D-147).
+_CORRECTION_HELP = (
+    'Escribe la cantidad correcta, por ejemplo: "En total 5 cajas" o "5 cajas más".'
+)
+# Palabras que no convierten un texto en un reporte de producto: solo expresan una cantidad.
+_QTY_ONLY_WORDS = (
+    _ADD_MARKERS
+    | _SET_MARKERS
+    | _CORRECTION_MARKERS
+    | set(_UNIT_WORDS)
+    | {
+        "de", "del", "la", "el", "los", "las", "un", "una", "unos", "unas", "son", "es",
+        "y", "o", "por", "favor", "ahora", "entonces", "creo", "digamos", "tengo", "tiene",
+        "tenemos", "hay", "anotado", "anotadas", "anotados", "solicitado", "solicitadas",
+        "solicitados", "pedido", "pedidas", "pedidos", "quiero", "queremos", "sean", "sera",
+        "será", "van", "va", "hacen", "hace", "falta", "faltan", "mas", "más",
+        "me", "mi", "si", "sí", "perdon", "perdón", "disculpa", "disculpas",
+    }
+)  # fmt: skip
+
+
+def _parse_quantity_revision(
+    text: str, default_unit: str | None
+) -> tuple[Decimal, str, str | None] | None:
+    """Cantidad + operación explícita si la persona la escribió («5 más», «en total 15»).
+
+    Sin marcador, la operación queda ambigua y se pregunta antes de cambiar nada.
+    """
+    parsed = _parse_quantity_text(text, default_unit)
+    if parsed is None:
+        return None
+    words = set(re.findall(r"[a-záéíóúñ]+", (text or "").lower()))
+    has_add = bool(words & _ADD_MARKERS)
+    has_set = bool(words & (_SET_OP_MARKERS | _CORRECTION_MARKERS))
+    op = None
+    if has_add and not has_set:
+        op = "add"
+    elif has_set and not has_add:
+        op = "set"
+    # Con marcadores contradictorios («en total 5 más») la operación sigue siendo ambigua.
+    return parsed[0], parsed[1], op
+
+
+def _is_quantity_revision_text(text: str) -> bool:
+    """¿El texto solo expresa una cantidad? Evita confundir un producto nuevo con una corrección."""
+    words = re.findall(r"[a-záéíóúñ]+", (text or "").lower())
+    return bool(_QTY_RE.search(text or "")) and all(w in _QTY_ONLY_WORDS for w in words)
+
+
+def _is_cancel_text(text: str) -> bool:
+    """¿El texto es solo una negativa a la pregunta pendiente? No cambia ninguna cantidad."""
+    words = re.findall(r"[a-záéíóúñ]+", (text or "").lower())
+    return bool(words) and all(w in _CANCEL_WORDS for w in words)
+
+
+def _is_affirmation_text(text: str) -> bool:
+    """¿El texto es solo una afirmación? Sirve para confirmar por texto una aclaración de unidad."""
+    words = re.findall(r"[a-záéíóúñ]+", (text or "").lower())
+    return bool(words) and all(w in _AFFIRM_WORDS for w in words)
+
+
 def _fmt_qty(value: Decimal | str | None) -> str:
     """Formatea una cantidad ya validada; acepta `Decimal` o el texto serializado del reporte."""
     return "?" if value is None else f"{Decimal(str(value)).normalize():f}"
@@ -350,9 +583,15 @@ async def _author_name(session, org, user_id) -> str | None:
 
 
 async def _ask_confirmation(
-    session, binding, actor: Actor, msg: ChannelMessage, pending: dict, personal: bool
-) -> Reply:
-    """Deja el mensaje `pending_confirmation` y devuelve la pregunta con botones explícitos."""
+    session, binding, actor: Actor, msg: ChannelMessage, pending: dict, personal: bool,
+    keyboard: list[list[str]] | None = None,
+) -> Reply:  # fmt: skip
+    """Deja el mensaje `pending_confirmation` y devuelve la pregunta.
+
+    La corrección de cantidades del mismo autor se responde solo por texto; el aviso de otro
+    autor conserva sus botones (Confirmar/Modificar/Cancelar), porque no es una corrección.
+    """
+    keyboard = keyboard or (KEYBOARD_PERSONAL if personal else KEYBOARD)
     org = binding.organization_id
     r: ObservationResult = pending["result"]
     data = {
@@ -360,6 +599,7 @@ async def _ask_confirmation(
         "key": pending["key"],
         "basis_level": pending["basis_level"],
         "account_id": str(pending["account_id"]) if pending["account_id"] else None,
+        "branch_label": pending.get("branch_label"),
         "session_id": str(pending["origin"].actor_session_id)
         if pending["origin"].actor_session_id
         else None,
@@ -379,47 +619,50 @@ async def _ask_confirmation(
         item = r.same_author_item
         raw_target = item.get("target_quantity")
         target = Decimal(str(raw_target)) if raw_target is not None else None
+        raw_previous = item.get("declared_quantity")
+        previous = Decimal(str(raw_previous)) if raw_previous is not None else None
+        # Referencia para preguntar «¿total o adicional?»: manda la cantidad objetivo; si no hay,
+        # la cantidad solicitada anterior del mismo autor. Así la propuesta que ve compras es
+        # coherente con la cantidad sobre la que se aplicaría.
+        baseline = target if target is not None else previous
+        baseline_unit = (
+            item.get("quantity_unit") if target is not None else item.get("declared_unit")
+        )
         data.update(
             {
                 "kind": "same_author",
                 "same_item_id": str(item["demand_item_id"]),
-                "target_quantity": _fmt_qty(target),
+                "target_quantity": None if target is None else _fmt_qty(target),
                 "target_unit": item.get("quantity_unit"),
+                "previous_declared_quantity": None if previous is None else _fmt_qty(previous),
+                "previous_declared_unit": item.get("declared_unit"),
+                "baseline_quantity": None if baseline is None else _fmt_qty(baseline),
+                "baseline_unit": baseline_unit,
             }
         )
         msg.attribution_status = "pending_confirmation"
         msg.confirmation_status = "pending_same_author_quantity"
         msg.confirmation_data = data
-        name = actor.display_name
+        data["unit_mismatch"] = (baseline_unit or "unit") != (unit or "unit")
+        name = item.get("display_name")
+        # La corrección de cantidades se conversa SOLO por texto: sin botones inline (D-147).
         if declared is None:
             return Reply(
-                f"Ya tienes {_fmt_qty(target)} {item.get('quantity_unit') or ''} anotado de "
-                f"{item.get('display_name')}. No pude leer una cantidad en tu aviso. ¿Qué hago?",
-                [[Button("Solo registrar aviso", f"rp:log:{msg.id}"),
-                  Button("Cancelar", f"rp:cancel:{msg.id}")]],
-                KEYBOARD_PERSONAL if personal else KEYBOARD,
+                f"Ya tienes {_fmt_quantity(baseline, baseline_unit)} de {name}. "
+                f"{_CORRECTION_HELP}",
+                keyboard=keyboard,
             )
-        diff = declared - (target or Decimal(0))
-        buttons = []
-        if target is not None and diff > 0:
-            buttons.append(Button(f"Sumar {_fmt_qty(diff)}", f"rp:add:{msg.id}"))
-        buttons.append(Button(f"Total {_fmt_qty(declared)}", f"rp:set:{msg.id}"))
-        buttons.append(Button("Solo registrar aviso", f"rp:log:{msg.id}"))
-        buttons.append(Button("Cancelar", f"rp:cancel:{msg.id}"))
-        rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
-        if diff > 0:
-            question = (
-                f"Tú ya tienes {_fmt_qty(target)} {item.get('quantity_unit') or ''} anotado de "
-                f"{item.get('display_name')}, {name}. Tu aviso dice {_fmt_qty(declared)} "
-                f"{unit or ''}. ¿Son {_fmt_qty(declared)} en total o {_fmt_qty(diff)} más?"
+        if baseline is None:
+            return Reply(
+                f"No tenías una cantidad anotada de {name}. Escribe la cantidad que quieres "
+                'solicitar, por ejemplo: "5 cajas".',
+                keyboard=keyboard,
             )
-        else:
-            question = (
-                f"Tú ya tienes {_fmt_qty(target)} {item.get('quantity_unit') or ''} anotado de "
-                f"{item.get('display_name')}, {name}. Tu aviso dice {_fmt_qty(declared)} "
-                f"{unit or ''}. ¿Fijo el total en {_fmt_qty(declared)}?"
-            )
-        return Reply(question, rows, KEYBOARD_PERSONAL if personal else KEYBOARD)
+        return Reply(
+            f"Ya tienes {_fmt_quantity(baseline, baseline_unit)} de {name}. "
+            f"¿Quieres agregar más o cambiar el total? {_CORRECTION_HELP}",
+            keyboard=keyboard,
+        )
 
     other = r.other_reports[0]
     author = await _author_name(session, org, other.get("reported_by"))
@@ -433,11 +676,17 @@ async def _ask_confirmation(
     msg.confirmation_status = "pending_other_report"
     msg.confirmation_data = data
     qty = other.get("target_quantity")
-    qty_text = (
-        "cantidad pendiente"
-        if qty is None
-        else f"{_fmt_qty(qty)} {other.get('quantity_unit') or ''}".strip()
-    )
+    declared_qty = other.get("declared_quantity")
+    parts = []
+    if qty is not None:
+        parts.append(
+            f"pedida para compra: {_fmt_qty(qty)} {other.get('quantity_unit') or ''}".strip()
+        )
+    if declared_qty is not None:
+        parts.append(
+            f"solicitada: {_fmt_qty(declared_qty)} {other.get('declared_unit') or ''}".strip()
+        )
+    qty_text = ", ".join(parts) if parts else "cantidad no indicada"
     who = author or "otra persona"
     return Reply(
         f"Ya hay un reporte de {who} por {other.get('display_name')} ({qty_text}). "
@@ -448,7 +697,7 @@ async def _ask_confirmation(
             [Button("Modificar cantidad", f"rp:new:{msg.id}"),
              Button("Cancelar", f"rp:cancel:{msg.id}")],
         ],
-        KEYBOARD_PERSONAL if personal else KEYBOARD,
+        keyboard,
     )
 
 
@@ -474,7 +723,7 @@ async def _record_confirmed(
     session_id = uuid.UUID(info["session_id"]) if info.get("session_id") else None
     origin = Origin(
         "telegram_text", info.get("basis_level") or "declared", session_id, msg.id,
-        account_id=account_id,
+        account_id=account_id, branch_label=info.get("branch_label"),
     )  # fmt: skip
     return await record_observation(
         session,
@@ -525,10 +774,7 @@ async def _apply_or_propose(
             if after is not None
             else "Cantidad actualizada."
         )
-    return (
-        "Registré tu aviso y dejé la propuesta para que compras aplique la cantidad. "
-        "Yo no cambio cantidades."
-    )
+    return "Registré tu aviso. Compras revisará la cantidad solicitada."
 
 
 async def _on_report_confirmation(
@@ -575,17 +821,90 @@ async def _on_report_confirmation(
             keyboard=_keyboard(account),
         )]
 
+    if action == "base":
+        # La persona aclaró que la unidad genérica previa equivale a una unidad de la nueva
+        # presentación («esa 1 unidad es 1 caja»). Ahora sí se puede sumar, sin inventar nada.
+        if info.get("kind") != "same_author" or not info.get("needs_baseline_unit"):
+            return [Reply("Ese botón no corresponde a este aviso.", keyboard=_keyboard(account))]
+        baseline = Decimal(info["baseline_quantity"]) if info.get("baseline_quantity") else None
+        declared = Decimal(info["declared_quantity"]) if info.get("declared_quantity") else None
+        unit = info.get("declared_unit") or "unit"
+        if baseline is None or declared is None:
+            return [Reply("No pude aplicar esa cantidad. Revisa la lista.", keyboard=_keyboard(account))]
+        new_total = baseline + declared
+        proposal = {
+            "operation": QuantityOp.ADD.value,
+            "value": str(declared),
+            "unit": unit,
+            "reason": "confirmacion_telegram",
+            "declared_quantity": str(new_total),
+        }
+        info.pop("needs_baseline_unit", None)
+        info["declared_quantity"] = _fmt_qty(new_total)
+        info["unit_mismatch"] = False
+        msg.confirmation_data = info
+        await _record_confirmed(
+            session, actor, msg, info, declared_quantity=new_total, declared_unit=unit,
+            quantity_proposal=proposal,
+        )  # fmt: skip
+        if can_apply_quantity(actor.roles):
+            await _apply_or_propose(session, actor, info, QuantityOp.ADD, declared, unit)
+        await _resolve_pending_message(session, msg, "resolved")
+        return [Reply(
+            f"Listo, actualicé tu solicitud a {_fmt_quantity(new_total, unit)}.",
+            keyboard=_keyboard(account),
+        )]
+
     operation = {"set": QuantityOp.SET, "add": QuantityOp.ADD}.get(action)
     if operation is not None:
         if info.get("kind") != "same_author":
             return [Reply("Ese botón no corresponde a este aviso.", keyboard=_keyboard(account))]
+        if info.get("needs_baseline_unit"):
+            return [Reply(
+                "Antes de sumar necesito saber qué representa esa unidad inicial. "
+                "Responde «es 1 caja» o escribe el total, por ejemplo: «En total 5 cajas».",
+                keyboard=_keyboard(account),
+            )]
         target = Decimal(info.get("target_quantity") or "0") if info.get("target_quantity") else None
+        previous = (
+            Decimal(info.get("previous_declared_quantity") or "0")
+            if info.get("previous_declared_quantity")
+            else None
+        )
+        baseline = (
+            Decimal(info["baseline_quantity"])
+            if info.get("baseline_quantity")
+            else (target if target is not None else previous)
+        )
         declared = Decimal(info["declared_quantity"]) if info.get("declared_quantity") else None
-        unit = info.get("declared_unit") or info.get("target_unit") or "unit"
+        unit = (
+            info.get("declared_unit")
+            or info.get("baseline_unit")
+            or info.get("previous_declared_unit")
+            or info.get("target_unit")
+            or "unit"
+        )
+        if operation is QuantityOp.ADD and info.get("unit_mismatch"):
+            # Unidades distintas: no se suman. Solo se puede aclarar la unidad genérica previa.
+            if (info.get("baseline_unit") or "") != "unit" or declared is None:
+                return [Reply(
+                    "No puedo sumar unidades distintas. Escribe el total correcto, por "
+                    "ejemplo: «En total 10 cajas», o «Cancelar».",
+                    keyboard=_keyboard(account),
+                )]
+            info["needs_baseline_unit"] = True
+            msg.confirmation_data = info
+            return [Reply(
+                f"Para sumar necesito saber qué representa esa "
+                f"{_fmt_quantity(baseline, info.get('baseline_unit'))} inicial. "
+                f"¿Es 1 {_UNIT_LABELS.get(unit, ('unidad', 'unidades'))[0]}? Responde "
+                "«sí» o escribe el total, por ejemplo: «En total 10 cajas».",
+                keyboard=_keyboard(account),
+            )]
         if operation is QuantityOp.ADD:
-            if declared is None or target is None or declared <= target:
+            if declared is None or baseline is None or declared <= baseline:
                 return [Reply("No hay una cantidad adicional que sumar.", keyboard=_keyboard(account))]
-            value = declared - target
+            value = declared - baseline
         else:
             if declared is None:
                 return [Reply("No hay una cantidad que fijar.", keyboard=_keyboard(account))]
@@ -630,6 +949,170 @@ async def _awaiting_quantity_message(session, binding, actor: Actor) -> ChannelM
     ).scalar_one_or_none()
 
 
+async def _pending_same_author_message(
+    session, binding, actor: Actor
+) -> ChannelMessage | None:
+    return (
+        await session.execute(
+            select(ChannelMessage)
+            .where(
+                ChannelMessage.channel_binding_id == binding.id,
+                ChannelMessage.author_id == actor.id,
+                ChannelMessage.confirmation_status == "pending_same_author_quantity",
+            )
+            .order_by(ChannelMessage.received_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def _revise_pending_quantity(
+    session, binding, actor: Actor, msg: ChannelMessage, text: str,
+    account: AccountContext | None, event_id: str,
+) -> Reply | None:  # fmt: skip
+    """Corrige la cantidad solicitada por texto libre, antes o después de confirmar.
+
+    No crea otra fila ni cambia la cantidad objetivo de un auxiliar. Si la operación es ambigua
+    («5», sin «total» ni «más»), pregunta y no modifica nada hasta la confirmación.
+    """
+    info = dict(msg.confirmation_data or {})
+    default_unit = (
+        info.get("declared_unit") or info.get("baseline_unit")
+        or info.get("previous_declared_unit") or info.get("target_unit") or "unit"
+    )  # fmt: skip
+    target = Decimal(info["target_quantity"]) if info.get("target_quantity") else None
+    previous = (
+        Decimal(info["previous_declared_quantity"])
+        if info.get("previous_declared_quantity")
+        else None
+    )
+    baseline = (
+        Decimal(info["baseline_quantity"])
+        if info.get("baseline_quantity")
+        else (target if target is not None else previous)
+    )
+    baseline_unit = (
+        info.get("baseline_unit") or info.get("previous_declared_unit")
+        or info.get("target_unit") or "unit"
+    )  # fmt: skip
+    keyboard = _keyboard(account)
+    item_name = None
+    item = await session.get(DemandItem, uuid.UUID(info["same_item_id"]))
+    if item is not None:
+        item_name = item.display_name
+    item_name = item_name or info.get("segment") or "el producto"
+
+    if item is not None and await item_in_cart(session, item.organization_id, item):
+        return Reply(
+            f"{item_name} está en carrito: no cambié la cantidad solicitada. Si "
+            "corresponde, pide a compras que lo retire del carrito.",
+            keyboard=keyboard,
+        )
+
+    async def finish(
+        new_total: Decimal, final_unit: str, operation: QuantityOp, proposal_value: Decimal
+    ) -> Reply:
+        """Registra la corrección como cantidad solicitada; la compra no se toca desde Telegram."""
+        info["declared_quantity"] = _fmt_qty(new_total)
+        info["declared_unit"] = final_unit
+        info.pop("needs_baseline_unit", None)
+        msg.confirmation_data = info
+        proposal = {
+            "operation": operation.value,
+            "value": str(proposal_value),
+            "unit": final_unit,
+            "reason": "correccion_telegram",
+            "declared_quantity": str(new_total),
+        }
+        await _record_confirmed(
+            session, actor, msg, info, declared_quantity=new_total, declared_unit=final_unit,
+            quantity_proposal=proposal, key_suffix=f":rev:{event_id}",
+        )  # fmt: skip
+        await _resolve_pending_message(session, msg, "resolved")
+        return Reply(
+            f"Listo, actualicé tu solicitud de {item_name} a "
+            f"{_fmt_quantity(new_total, final_unit)}.",
+            keyboard=keyboard,
+        )
+
+    parsed = _parse_quantity_revision(text, default_unit)
+    if parsed is None:
+        if info.get("needs_baseline_unit") and _is_affirmation_text(text):
+            add_value = Decimal(info["declared_quantity"])
+            add_unit = info.get("declared_unit") or "unit"
+            return await finish(
+                (baseline or Decimal(0)) + add_value, add_unit, QuantityOp.ADD, add_value
+            )
+        return None
+    value, unit, op = parsed
+    unit_one = _UNIT_LABELS.get(unit, ("unidad", "unidades"))[0]
+
+    if info.get("needs_baseline_unit"):
+        add_value = Decimal(info["declared_quantity"])
+        add_unit = info.get("declared_unit") or "unit"
+        if unit == add_unit and value == 1:
+            return await finish(
+                (baseline or Decimal(0)) + add_value, add_unit, QuantityOp.ADD, add_value
+            )
+        if op == "add" and unit != add_unit:
+            plural = _UNIT_LABELS.get(add_unit, ("unidad", "unidades"))[1]
+            return Reply(
+                f"No puedo convertir {_fmt_quantity(value, unit)} a "
+                f"{_fmt_quantity(add_value, add_unit)}: no conozco esa equivalencia. "
+                f'Escribe el total correcto, por ejemplo: "En total {_fmt_qty(add_value)} '
+                f'{plural}", o "Cancelar".',
+                keyboard=keyboard,
+            )
+        # Cualquier otra cifra se toma como el total corregido, nunca como una suma.
+        return await finish(value, unit, QuantityOp.SET, value)
+
+    if op is None:
+        if baseline is None or (unit == baseline_unit and value == baseline):
+            op = "set"
+        else:
+            # Sin «más» ni «total» no se puede decidir: se pregunta por texto y no se toca nada.
+            info["declared_quantity"] = _fmt_qty(value)
+            info["declared_unit"] = unit
+            info["unit_mismatch"] = unit != baseline_unit
+            msg.confirmation_data = info
+            return Reply(
+                f"Tienes {_fmt_quantity(baseline, baseline_unit)} de {item_name} y escribiste "
+                f"{_fmt_quantity(value, unit)}. ¿Quieres agregar esa cantidad o cambiar el total? "
+                f"{_CORRECTION_HELP}",
+                keyboard=keyboard,
+            )
+
+    if op == "add" and baseline is None:
+        op = "set"
+    if op == "add":
+        assert baseline is not None
+        if unit != baseline_unit:
+            plural = _UNIT_LABELS.get(unit, ("unidad", "unidades"))[1]
+            if baseline_unit == "unit":
+                # La unidad inicial es genérica: antes de sumar hay que saber qué representa.
+                info["declared_quantity"] = _fmt_qty(value)
+                info["declared_unit"] = unit
+                info["needs_baseline_unit"] = True
+                msg.confirmation_data = info
+                return Reply(
+                    f"Para sumar necesito saber qué representa esa 1 unidad inicial de "
+                    f"{item_name}. ¿Es 1 {unit_one}? Responde «sí, es 1 {unit_one}» o escribe "
+                    f'el total, por ejemplo: "En total {_fmt_qty(value)} {plural}".',
+                    keyboard=keyboard,
+                )
+            from_label = _UNIT_LABELS.get(
+                baseline_unit, ("unidad", "unidades")
+            )[1]
+            return Reply(
+                f"No puedo sumar {from_label} con {plural}. Tienes "
+                f"{_fmt_quantity(baseline, baseline_unit)} de {item_name}; escribe el total "
+                f'correcto, por ejemplo: "En total {_fmt_qty(value)} {plural}", o "Cancelar".',
+                keyboard=keyboard,
+            )
+        return await finish(baseline + value, unit, QuantityOp.ADD, value)
+    return await finish(value, unit, QuantityOp.SET, value)
+
+
 async def _apply_new_quantity(
     session, binding, actor: Actor, msg: ChannelMessage, text: str, now: datetime,
     cfg: ChannelConfig, account: AccountContext | None,
@@ -667,6 +1150,12 @@ async def handle_event(session: AsyncSession, binding: ChannelBinding, ev: Chann
     keyboard = _keyboard(account)
     ack = [Reply("", answer_callback_id=ev.callback_id)] if ev.callback_id else []
 
+    if account is not None and not personal:
+        # Cero auxiliares habilitados: esta cuenta no registra nada y no guarda mensajes
+        # pendientes que después podrían atribuirse por error. Otras cuentas no se ven afectadas.
+        if not await sessions.list_account_reporters(session, org, account.account_id):
+            return ack + [Reply(_EMPTY_ACCOUNT, keyboard=keyboard)]
+
     if ev.kind == "edited":
         return [
             Reply(
@@ -689,7 +1178,7 @@ async def handle_event(session: AsyncSession, binding: ChannelBinding, ev: Chann
         if sess is None:
             if personal:
                 return [Reply(f"Hola. {_identity_error_text(err)}", keyboard=keyboard)]
-            auxs = await sessions.list_reporters(session, org)
+            auxs = await _selectable(session, binding, account)
             if not auxs:
                 return [_selector(auxs, "Hola.")]
             return [
@@ -699,7 +1188,9 @@ async def handle_event(session: AsyncSession, binding: ChannelBinding, ev: Chann
                     keyboard,
                 )
             ]
-        return [await _whoami(session, sess, cfg, prefix="Hola de nuevo. ", personal=personal)]
+        auxs = [] if personal else await _selectable(session, binding, account)
+        return [await _whoami(session, sess, cfg, prefix="Hola de nuevo. ", personal=personal,
+                              automatic=len(auxs) == 1)]  # fmt: skip
     if ev.kind == "text":
         if low in CMD_LIST:
             return [await _list_reply(session, org, 0, cfg, keyboard)]
@@ -713,18 +1204,25 @@ async def handle_event(session: AsyncSession, binding: ChannelBinding, ev: Chann
                         keyboard=keyboard,
                     )
                 ]
-            return [
-                _selector(
-                    await sessions.list_reporters(session, org), "¿Quién va a reportar ahora?"
-                )
-            ]
+            auxs = await _selectable(session, binding, account)
+            if len(auxs) == 1:
+                return [
+                    Reply(
+                        f"Este teléfono tiene un solo auxiliar habilitado: {auxs[0].display_name}. "
+                        "La identidad se identifica automáticamente; no hay nada que elegir.",
+                        keyboard=keyboard,
+                    )
+                ]
+            return [_selector(auxs, "¿Quién va a reportar ahora?")]
         if low in CMD_WHO:
             sess, _actor, err = await _resolve_identity(
                 session, binding, account, now, cfg.idle, event_id=inbound.id
             )
             if sess is None:
                 return [Reply(_identity_error_text(err), keyboard=keyboard)]
-            return [await _whoami(session, sess, cfg, personal=personal)]
+            auxs = [] if personal else await _selectable(session, binding, account)
+            return [await _whoami(session, sess, cfg, personal=personal,
+                                  automatic=len(auxs) == 1)]  # fmt: skip
         if low in CMD_HELP:
             return [Reply(_HELP_PERSONAL if personal else _HELP, keyboard=keyboard)]
         if low in CMD_LOGOUT:
@@ -737,14 +1235,20 @@ async def handle_event(session: AsyncSession, binding: ChannelBinding, ev: Chann
                     )
                 ]
             done = await sessions.end_session(session, binding, now)
-            return [
-                Reply(
-                    "Reportes finalizados: nadie queda identificado. Para volver a reportar, elige tu nombre en «Cambiar auxiliar»."
-                    if done
-                    else "No había una sesión activa.",
-                    keyboard=keyboard,
+            auxs = await _selectable(session, binding, account)
+            if len(auxs) == 1:
+                text = (
+                    "Reportes finalizados: nadie queda identificado. Este teléfono tiene un solo "
+                    "auxiliar habilitado, así que tu próximo mensaje se identifica automáticamente."
                 )
-            ]
+            else:
+                text = (
+                    "Reportes finalizados: nadie queda identificado. Para volver a reportar, elige "
+                    "tu nombre en «Cambiar auxiliar»."
+                    if done
+                    else "No había una sesión activa."
+                )
+            return [Reply(text, keyboard=keyboard)]
 
     sess, actor, err = await _resolve_identity(
         session, binding, account, now, cfg.idle, event_id=inbound.id
@@ -769,7 +1273,7 @@ async def handle_event(session: AsyncSession, binding: ChannelBinding, ev: Chann
                           Button("Descartar", "att:no")]],
                 keyboard=keyboard,
             )]  # fmt: skip
-        return [_selector(await sessions.list_reporters(session, org),
+        return [_selector(await _selectable(session, binding, account),
                           "Guardé tu mensaje, pero no lo anoto a nombre de nadie hasta saber quién eres. ¿Quién eres?")]  # fmt: skip
 
     intent = classify_intent(text)
@@ -783,6 +1287,18 @@ async def handle_event(session: AsyncSession, binding: ChannelBinding, ev: Chann
         return [
             await _apply_new_quantity(session, binding, actor, waiting, text, now, cfg, account)
         ]
+    # Corrección por texto libre de una cantidad que está esperando confirmación. Solo se toma
+    # un texto que exprese SOLO una cantidad; un producto nuevo sigue su flujo normal.
+    revising = await _pending_same_author_message(session, binding, actor)
+    if revising is not None and _is_cancel_text(text):
+        await _resolve_pending_message(session, revising, "cancelled")
+        return [Reply("Cancelado: no cambié la cantidad solicitada.", keyboard=keyboard)]
+    if revising is not None and _is_quantity_revision_text(text):
+        revised = await _revise_pending_quantity(
+            session, binding, actor, revising, text, account, ev.event_id
+        )
+        if revised is not None:
+            return [revised]
     if intent is Intent.CHITCHAT or intent is Intent.EMPTY:
         return [
             Reply(
@@ -793,13 +1309,14 @@ async def handle_event(session: AsyncSession, binding: ChannelBinding, ev: Chann
     if intent is Intent.QUESTION:
         return [
             Reply(
-                "No registro preguntas. Para anotar un faltante escribe el producto; para consultar, usa «Ver lista».",
+                "No registro preguntas. Para anotar un faltante escribe el producto; para consultar, usa «Ver faltantes».",
                 keyboard=keyboard,
             )
         ]
     lines, pending = await _record_segments(
         session, binding, actor, sess, msg, text, f"tg:{binding.id}:{ev.event_id}", cfg,
         basis_level="account" if personal else "declared", account_id=_account_id(account),
+        branch_label=_branch(account),
     )  # fmt: skip
     replies: list[Reply] = []
     if lines:
@@ -808,7 +1325,9 @@ async def handle_event(session: AsyncSession, binding: ChannelBinding, ev: Chann
         )
     if pending:
         replies.append(
-            await _ask_confirmation(session, binding, actor, msg, pending[0], personal)
+            await _ask_confirmation(
+                session, binding, actor, msg, pending[0], personal, keyboard
+            )
         )
     return replies or [Reply("No pude interpretar el mensaje.", keyboard=keyboard)]
 
@@ -827,18 +1346,20 @@ def _selector_buttons(auxs: list[AppUser]) -> list[list[Button]]:
 
 _HELP = (
     "Escribe lo que falta («falta ibuprofeno 400 mg») o envía una foto del envase. "
-    "«Ver lista» muestra lo que ya está anotado; «Cambiar auxiliar» cambia quién reporta."
+    "«Ver faltantes» muestra todos los faltantes activos de la farmacia; «Ver auxiliar activo» "
+    "dice quién está reportando."
 )
 _HELP_PERSONAL = (
     "Escribe lo que falta («falta ibuprofeno 400 mg») o envía una foto del envase. "
-    "«Ver lista» muestra lo que ya está anotado. Esta cuenta está vinculada a una persona: "
-    "no necesitas elegir identidad en cada mensaje."
+    "«Ver faltantes» muestra todos los faltantes activos de la farmacia. Esta cuenta está "
+    "vinculada a una persona: no necesitas elegir identidad en cada mensaje."
 )
 
 
 async def _whoami(
-    session, sess: ActorSession | None, cfg: ChannelConfig, prefix: str = "", personal: bool = False
-) -> Reply:
+    session, sess: ActorSession | None, cfg: ChannelConfig, prefix: str = "", personal: bool = False,
+    automatic: bool = False,
+) -> Reply:  # fmt: skip
     if sess is None:
         return Reply(
             "Nadie ha elegido identidad todavía (o la sesión expiró). Usa «Cambiar auxiliar».",
@@ -850,6 +1371,12 @@ async def _whoami(
             f"{prefix}Estás reportando como {u.display_name} (cuenta de Telegram autorizada; "
             "la identidad se fija automáticamente).",
             keyboard=KEYBOARD_PERSONAL,
+        )
+    if automatic:
+        return Reply(
+            f"{prefix}Estás reportando como {u.display_name} (identificación automática: este "
+            "teléfono tiene un solo auxiliar habilitado).",
+            keyboard=KEYBOARD_SINGLE,
         )
     mins = int(cfg.idle.total_seconds() // 60)
     return Reply(f"{prefix}Estás reportando como {u.display_name} (identidad declarada; "
@@ -864,22 +1391,43 @@ async def _list_reply(
     )
     if not total:
         return Reply("La lista de faltantes está vacía.", keyboard=keyboard)
-    lines = [
-        f"Faltantes activos: {total}" + (f" · {pending} aviso(s) por revisar" if pending else "")
-    ]
+    header = f"📋 Faltantes activos ({total})"
+    if pending:
+        header += f" · {_avisos(pending)} por revisar"
+    declared = await queries.latest_declared_quantities(session, org, [i.id for i in items])
+    reporters = await queries.reporter_names(session, org, items)
+    cov = await coverage_svc.coverage_for_items(session, org, items)
+    blocks: list[str] = []
     for n, i in enumerate(items, start=page * cfg.page_size + 1):
-        cnt, _, who = agg.get(i.id, (0, None, []))
-        qty = (
-            "cantidad pendiente"
-            if i.target_quantity is None
-            else f"{i.target_quantity.normalize():f} {i.quantity_unit}"
-        )
-        lines.append(
-            f"{n}. {i.display_name} · {qty} · {cnt} aviso(s)"
-            + (f" ({', '.join(who)})" if who else "")
+        cnt = agg.get(i.id, (0, None, []))[0]
+        if i.target_quantity is not None:
+            qty = _fmt_quantity(i.target_quantity, i.quantity_unit)
+        elif declared.get(i.id):
+            value, unit = declared[i.id]
+            qty = _fmt_quantity(value, unit)
+        else:
+            qty = "Cantidad no indicada"
+        # Estado real de reposición (contrato §12.7.4): lo cotizado en un carrito activo está
+        # «En carrito»; lo demás sigue «Pendiente de compra». No cierra nada ni cambia D-139.
+        # Es la MISMA condición que ya define el estado: el tachado es solo su representación.
+        in_cart = cov.get(i.id, {}).get("replenishment_state") == "in_quote"
+        state = "🛒 En carrito" if in_cart else "Pendiente de compra"
+        # Quién reportó esta fila (D-135): cada persona tiene su propio faltante. Se muestra
+        # siempre, no solo cuando las observaciones traen varios autores.
+        reporter = reporters.get(i.id) or "auxiliar no registrado"
+        # Nombre en negrita real de Telegram (parse_mode HTML); todo lo dinámico se escapa.
+        # Solo el nombre se tacha cuando el faltante está en un carrito activo.
+        name = html.escape(_one_line(i.display_name), quote=False)
+        name_html = f"<s><b>{name}</b></s>" if in_cart else f"<b>{name}</b>"
+        blocks.append(
+            f"{n}. {name_html}\n"
+            f"   Cantidad: {html.escape(_one_line(qty), quote=False)}\n"
+            f"   Reportado por: {html.escape(_one_line(reporter), quote=False)}\n"
+            f"   Estado: {html.escape(_one_line(state), quote=False)}\n"
+            f"   {_avisos(cnt)}"
         )
     buttons = [[Button("Ver más", f"lst:{page + 1}")]] if more else []
-    return Reply("\n".join(lines), buttons, keyboard)
+    return Reply("\n\n".join([header, *blocks]), buttons, keyboard, parse_mode="HTML")
 
 
 async def _on_callback(session, binding, ev, inbound, now, cfg,
@@ -918,7 +1466,7 @@ async def _on_callback(session, binding, ev, inbound, now, cfg,
                     keyboard=keyboard,
                 ),
                 _selector(
-                    await sessions.list_reporters(session, org), "¿Quién va a reportar ahora?"
+                    await _selectable(session, binding, account), "¿Quién va a reportar ahora?"
                 ),
             ]
         u = await session.get(AppUser, sess.auxiliary_id)
@@ -952,7 +1500,7 @@ async def _on_pending_decision(session, binding, inbound, accept: bool, now, cfg
     if sess is None or actor is None:
         if personal:
             return [Reply(_identity_error_text(err), keyboard=keyboard)]
-        return [_selector(await sessions.list_reporters(session, binding.organization_id),
+        return [_selector(await _selectable(session, binding, account),
                           "Primero necesito saber quién eres.")]  # fmt: skip
     org = binding.organization_id
     pend = await _pending_messages(session, binding)
@@ -988,6 +1536,7 @@ async def _on_pending_decision(session, binding, inbound, accept: bool, now, cfg
             seg_lines, seg_pending = await _record_segments(
                 session, binding, actor, sess, m, m.text or "", f"tg:{binding.id}:{orig}", cfg,
                 basis_level="account" if personal else "declared", account_id=m.account_id,
+                branch_label=_branch(account),
             )  # fmt: skip
             lines += seg_lines
             if seg_pending:
@@ -1021,7 +1570,9 @@ async def _on_pending_decision(session, binding, inbound, accept: bool, now, cfg
     if hold is not None:
         hold_msg, hold_pending = hold
         replies.append(
-            await _ask_confirmation(session, binding, actor, hold_msg, hold_pending, personal)
+            await _ask_confirmation(
+                session, binding, actor, hold_msg, hold_pending, personal, keyboard
+            )
         )
     return replies
 
@@ -1060,7 +1611,7 @@ async def _on_photo(session, binding, ev, inbound, sess, actor, now, cfg,
                           Button("Descartar", "att:no")]],
                 keyboard=keyboard,
             )]  # fmt: skip
-        return [_selector(await sessions.list_reporters(session, org),
+        return [_selector(await _selectable(session, binding, account),
                           "Guardé la foto, pero no la anoto a nombre de nadie hasta saber quién eres. ¿Quién eres?")]  # fmt: skip
     await sessions.touch(session, sess, now, cfg.idle)
     base = (f"Recibí la foto, {actor.display_name}. " + ("La estoy revisando y te aviso." if cfg.vision_enabled
@@ -1069,6 +1620,35 @@ async def _on_photo(session, binding, ev, inbound, sess, actor, now, cfg,
 
 
 # ------------------------------------------------------------------ salida
+
+
+# La Bot API acepta 4096 caracteres por mensaje; se deja margen para no rozar el límite.
+TELEGRAM_TEXT_LIMIT = 4000
+
+
+def _split_telegram_text(text: str, limit: int = TELEGRAM_TEXT_LIMIT) -> list[str]:
+    """Parte un texto largo por líneas para respetar el límite de la Bot API.
+
+    Los trozos conservan el orden y no cortan líneas cortas; una línea que por sí sola supera el
+    límite se corta en seco (caso extremo, no ocurre con las listas paginadas).
+    """
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            chunks.append(current)
+        while len(line) > limit:
+            chunks.append(line[:limit])
+            line = line[limit:]
+        current = line
+    chunks.append(current)
+    return chunks
 
 
 async def enqueue(session: AsyncSession, binding: ChannelBinding, inbound_event_id: uuid.UUID | None,
@@ -1081,12 +1661,22 @@ async def enqueue(session: AsyncSession, binding: ChannelBinding, inbound_event_
                                         payload={"callback_query_id": r.answer_callback_id}))  # fmt: skip
             seq += 1
         if r.text:
-            session.add(OutboundMessage(
-                organization_id=binding.organization_id, channel_binding_id=binding.id,
-                inbound_event_id=inbound_event_id, seq=seq, method="sendMessage",
-                payload={"text": r.text, "buttons": [[{"text": b.text, "data": b.data} for b in row] for row in r.buttons],
-                         "keyboard": r.keyboard},
-            ))  # fmt: skip
-            seq += 1
+            # Telegram limita cada mensaje a 4096 caracteres: se parte por líneas y los botones
+            # y el teclado viajan en el último trozo, para no perder la navegación.
+            chunks = _split_telegram_text(r.text)
+            for idx, chunk in enumerate(chunks):
+                last = idx == len(chunks) - 1
+                session.add(OutboundMessage(
+                    organization_id=binding.organization_id, channel_binding_id=binding.id,
+                    inbound_event_id=inbound_event_id, seq=seq, method="sendMessage",
+                    payload={
+                        "text": chunk,
+                        "buttons": [[{"text": b.text, "data": b.data} for b in row] for row in r.buttons]
+                        if last else [],
+                        "keyboard": r.keyboard if last else None,
+                        "parse_mode": r.parse_mode,
+                    },
+                ))  # fmt: skip
+                seq += 1
     await session.flush()
     return seq

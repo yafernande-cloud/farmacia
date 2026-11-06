@@ -65,13 +65,14 @@ async def report_meta(
             ).all()
         )
     declared = {
-        r[0]: (r[1], r[2])
+        r[0]: (r[1], r[2], (r[3] or {}).get("quantity_origin"))
         for r in (
             await session.execute(
                 select(
                     DemandObservation.demand_item_id,
                     DemandObservation.declared_quantity,
                     DemandObservation.declared_unit,
+                    DemandObservation.interpretation,
                 )
                 .where(
                     DemandObservation.organization_id == org,
@@ -87,6 +88,26 @@ async def report_meta(
             )
         ).all()
     }
+    branches = dict(
+        (
+            await session.execute(
+                select(
+                    DemandObservation.demand_item_id, DemandObservation.branch_label
+                )
+                .where(
+                    DemandObservation.organization_id == org,
+                    DemandObservation.demand_item_id.in_(ids),
+                    DemandObservation.branch_label.is_not(None),
+                )
+                .ext(distinct_on(DemandObservation.demand_item_id))
+                .order_by(
+                    DemandObservation.demand_item_id,
+                    DemandObservation.created_at.desc(),
+                    DemandObservation.id.desc(),
+                )
+            )
+        ).all()
+    )
     first = dict(
         (
             await session.execute(
@@ -105,13 +126,70 @@ async def report_meta(
         i.id: {
             "reported_by": i.reported_by,
             "reported_by_name": names.get(i.reported_by),
+            "branch_label": branches.get(i.id),
             "cancelled_by_name": names.get(i.cancelled_by),
-            "declared_quantity": declared.get(i.id, (None, None))[0],
-            "declared_unit": declared.get(i.id, (None, None))[1],
+            "declared_quantity": declared.get(i.id, (None, None, None))[0],
+            "declared_unit": declared.get(i.id, (None, None, None))[1],
+            # «explicit» = lo escribió la persona; «default» = 1 unidad genérica (D-147).
+            "requested_quantity_origin": declared.get(i.id, (None, None, None))[2],
             "reported_at": first.get(i.id),
         }
         for i in items
     }
+
+
+async def latest_declared_quantities(
+    session: AsyncSession, org, item_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, tuple]:
+    """Cantidad DECLARADA más reciente por faltante. No es la cantidad objetivo de compra."""
+    if not item_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(
+                DemandObservation.demand_item_id,
+                DemandObservation.declared_quantity,
+                DemandObservation.declared_unit,
+            )
+            .where(
+                DemandObservation.organization_id == org,
+                DemandObservation.demand_item_id.in_(item_ids),
+                DemandObservation.declared_quantity.is_not(None),
+            )
+            .ext(distinct_on(DemandObservation.demand_item_id))
+            .order_by(
+                DemandObservation.demand_item_id,
+                DemandObservation.created_at.desc(),
+                DemandObservation.id.desc(),
+            )
+        )
+    ).all()
+    return {r[0]: (r[1], r[2]) for r in rows}
+
+
+async def reporter_names(
+    session: AsyncSession, org, items: list[DemandItem]
+) -> dict[uuid.UUID, str | None]:
+    """Nombre de quien reportó cada faltante (D-135), desde `demand_item.reported_by`.
+
+    La lista muestra al autor real de cada fila y no depende de las observaciones: dos personas
+    que reportan el mismo producto tienen filas propias con su nombre y su cantidad.
+    """
+    if not items:
+        return {}
+    user_ids = {i.reported_by for i in items if i.reported_by}
+    names: dict = {}
+    if user_ids:
+        names = dict(
+            (
+                await session.execute(
+                    select(AppUser.id, AppUser.display_name).where(
+                        AppUser.organization_id == org, AppUser.id.in_(user_ids)
+                    )
+                )
+            ).all()
+        )
+    return {i.id: names.get(i.reported_by) for i in items}
 
 
 async def last_texts(

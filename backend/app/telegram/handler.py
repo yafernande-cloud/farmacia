@@ -175,12 +175,26 @@ async def _on_unidentified(
     )
 
 
-def _context(access: access_svc.Access) -> AccountContext | None:
+async def _context(session: AsyncSession, access: access_svc.Access) -> AccountContext | None:
     """La cuenta solo fija identidad y teclado cuando el vínculo es SUYO (personal o compartido)."""
     a = access.account
     if a is None or access.binding.account_id != a.id:
         return None
-    return AccountContext(a.id, a.mode, a.app_user_id, a.access_role, a.display_label)
+    # Se consulta la lista vigente para no ofrecer «Cambiar auxiliar» cuando no hay elección.
+    count = 0
+    if a.mode != access_svc.MODE_PERSONAL:
+        count = len(
+            await access_svc.sessions.list_account_reporters(session, a.organization_id, a.id)
+        )
+    return AccountContext(
+        a.id,
+        a.mode,
+        a.app_user_id,
+        a.access_role,
+        a.display_label,
+        a.branch_label,
+        auxiliary_count=count,
+    )
 
 
 async def handle_update(
@@ -270,7 +284,7 @@ async def _process(
                 )
             binding = access.binding
             replies = await handle_event(
-                s, binding, ev, inbound, now, rt.cfg, account=_context(access)
+                s, binding, ev, inbound, now, rt.cfg, account=await _context(s, access)
             )
             await enqueue(s, binding, inbound.id, replies)
             inbound.status, inbound.processed_at, inbound.error = "processed", now, None

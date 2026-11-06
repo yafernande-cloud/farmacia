@@ -109,6 +109,29 @@ con `status='rejected'`, no crea preferencias ficticias ni copia sujetos. `rejec
 interna conserva las clases retiradas en `preference_order_trace.retired_subject_kinds`; esa información no se expone
 en la API pública.
 
+**Corrección de interfaz de Telegram (2026-11-05; D-147):** precisa §10.5 y §12.7 sin cambiar compras ni D-139. El
+mismo auxiliar corrige su **cantidad solicitada** únicamente por **texto libre** (`5`, `5 cajas más`,
+`en total 15 cajas`): la conversación de corrección no usa botones inline en ninguna etapa; una cifra sola se pregunta
+como total o adicional por texto y no modifica nada hasta que la persona responde. `cancelar` descarta la corrección
+pendiente sin cambiar la cantidad. La corrección vive en el
+mismo faltante del autor, con historial, y el auxiliar nunca cambia la cantidad objetivo. Un aviso de Telegram sin
+cantidad pide **1 unidad genérica** (`quantity_origin="default"`), nunca una presentación supuesta; los registros
+históricos sin cantidad no se reescriben y un aviso posterior con cantidad se pregunta como total o adicional. Nunca
+se suman unidades distintas: si la cantidad previa es la unidad genérica y la persona escribe `más`, se aclara por
+texto qué representa antes de calcular, y sin equivalencia válida solo se ofrece fijar el total. Con el faltante en
+carrito no se cambia su cantidad solicitada desde Telegram. Ningún mensaje de Telegram modifica automáticamente
+`target_quantity`, tampoco con `APPLY_QUANTITY`: el texto libre deja la propuesta para compras. Los mensajes al
+auxiliar no mencionan «cantidad objetivo» ni «propuesta para compras»; esos conceptos quedan en la API y en la base.
+Los botones de otros flujos (selección de auxiliar y confirmación de un reporte de otra persona) se mantienen. La API expone
+`requested_quantity`/`requested_unit`, `requested_quantity_origin` (y `quantity_origin` por observación) y
+`quantity_proposal` separados de `target_quantity`. «Ver faltantes» muestra
+todos los reportes activos, con el nombre del auxiliar que reportó cada fila, y su estado real («Pendiente de
+compra»/«En carrito»), sin alterar la cobertura
+implementada. El teclado usa «Ver faltantes», «Ver auxiliar activo» y «Ayuda»; «Cambiar auxiliar» aparece solo con dos
+o más auxiliares y «Finalizar reportes» sale del teclado (`/salir` queda como comando oculto de compatibilidad).
+El aviso de aprobación de un teléfono compartido depende de los auxiliares habilitados: con uno solo informa que los
+faltantes se registran automáticamente a su nombre; con dos o más mantiene la elección de identidad (D-146, punto 12).
+
 **Corrección de alcance (2026-11-02; enmienda a D-127):** para la demo, la compra es **todo o nada**. Se registra
 completa —todos los productos y cantidades seleccionados— o no se registra; al registrarse, los faltantes cubiertos se
 cierran y se liberan para nuevos reportes por Telegram. **No hay compras parciales por productos ni cantidades**; no
@@ -1574,22 +1597,43 @@ Mientras un faltante está **`active`**, la conversación del bot sigue estas re
 
 1. **Identifica** quién reporta, qué producto y qué cantidad, y **conserva lo escrito** (`original_text`).
 2. **El reporte es de cada persona (D-135).** Si el mismo producto lo reportó **otra persona**, el bot informa quién y
-   con qué cantidad, y pregunta si quiere **su propio reporte independiente**. No adjunta el aviso al faltante ajeno,
-   no lo fusiona y no suma cantidades: cada persona conserva su registro. La pregunta es determinista, no de un modelo.
+   con qué cantidad **objetivo** y **solicitada** (si existe), y pregunta si quiere **su propio reporte independiente**.
+   No adjunta el aviso al faltante ajeno, no lo fusiona y no suma cantidades: cada persona conserva su registro. La
+   pregunta es determinista, no de un modelo.
 3. **Confirmación del otro autor:** los botones son **Confirmar mi reporte**, **Modificar cantidad** y **Cancelar**.
    - Confirmar crea un **reporte propio** (con su propia cantidad pedida, si la declaró) y deja constancia de que no se
      sumó al de la otra persona.
    - Modificar pide escribir la cantidad; el reporte se crea con la cantidad **declarada**, nunca aplicada como pedido
      hasta que una persona con `APPLY_QUANTITY` lo decida.
    - Cancelar descarta el mensaje sin crear nada; no se borra la evidencia y el mensaje queda `discarded`.
-4. **Mismo autor, misma necesidad:** si ya existe **su** faltante idéntico y la cantidad pedida es conocida, el bot
-   pregunta **Total (SET)**, **Sumar (ADD)**, **solo registrar aviso** o **Cancelar**. El valor del `ADD` es la
-   diferencia entre lo declarado y lo ya pedido; el `SET` fija el total declarado. **Nunca se suma solo**, ni por el
-   texto ni por repetir el aviso. Si la cantidad pedida es desconocida, no hay nada que sumar ni fijar: el aviso se
-   registra y la cantidad declarada queda como dato, no como pedido.
-5. **Sin permiso para aplicar cantidades** (por ejemplo, `auxiliary`), el botón deja una **propuesta**
-   (`quantity_proposal`) en la observación para que la administración la aplique; el bot no cambia la cantidad. Si la
-   persona sí tiene `APPLY_QUANTITY`, el cambio es explícito, auditado y con la semántica `SET`/`ADD` existente.
+4. **Mismo autor, misma necesidad (D-147).** Si ya existe **su** faltante idéntico, el bot pregunta por **texto** si
+   la cifra es **adicional (ADD)** o **total nuevo (SET)**; si no hay cantidad previa, pide la cantidad que quiere
+   solicitar. Esta conversación **no usa botones inline** en ninguna etapa. El valor del `ADD` es la diferencia entre
+   lo declarado y la referencia; el `SET` fija el total declarado. **Nunca se suma solo**, ni por el texto ni por
+   repetir el aviso: la misma cantidad y unidad se registran como aviso sin incrementar. El auxiliar responde por
+   **texto libre**: `5`, `5 cajas más`, `en total 15 cajas`, `me equivoqué, son 5` o `cancelar`. `más`/`adicional` es
+   `ADD`; `total`/`en total`/corrección es `SET`; `cancelar` descarta la corrección pendiente sin cambiar la cantidad.
+   Una cifra sola o una operación contradictoria es **ambigua**: se vuelve a preguntar por texto y **no se modifica
+   nada** hasta que la persona responda. La corrección se registra en el **mismo faltante del autor**, como nueva
+   observación; no crea otra fila.
+   **Unidad predeterminada:** un aviso de Telegram nuevo sin cantidad registra **1 unidad genérica**
+   (`quantity_origin="default"`), sin suponer caja, frasco ni sobre; un aviso adjunto a un faltante histórico sin
+   cantidad también la recibe en una observación nueva, sin reescribir el historial. **Unidades incompatibles:** no se
+   suma 1 unidad genérica con 10 cajas ni cajas con frascos. Si la referencia es la unidad genérica y la persona
+   escribe `más`, se pregunta por texto qué representa esa unidad inicial («¿Es 1 caja?») y solo entonces se calcula
+   el total; si no hay equivalencia válida, solo se ofrece escribir el total. No se inventan presentaciones ni
+   conversiones.
+   **En carrito:** mientras el faltante esté en un carrito activo (`in_quote`), un aviso o corrección no cambia su
+   cantidad solicitada; el bot lo informa y sugiere pedir a compras que lo retire. Sin compra vuelve a «Pendiente de
+   compra» al salir del carrito, según la cobertura vigente.
+5. **Separación solicitada ≠ objetivo (D-147).** Los mensajes de Telegram **nunca** modifican automáticamente
+   `demand_item.target_quantity`; una acción de texto libre **no** es autorización para cambiarla, **tampoco** cuando
+   el actor tiene `APPLY_QUANTITY`. La corrección registra la **cantidad solicitada** vigente —que la API expone como
+   `requested_quantity`/`requested_unit` con su procedencia `requested_quantity_origin`/`quantity_origin`— y deja una
+   **propuesta** (`quantity_proposal`) para que compras la revise. Como la corrección ya no ofrece botones, **ninguna
+   respuesta de esta conversación** aplica la cantidad de compra, aunque el actor tenga `APPLY_QUANTITY`. Los mensajes
+   al auxiliar no mencionan la cantidad objetivo ni la propuesta: son conceptos internos y de la API. Compras ve
+   siempre la solicitud, su procedencia, la propuesta y la cantidad objetivo por separado.
 6. Mientras el faltante siga `active`, **no se inicia otro ciclo** para el mismo producto y la misma persona; cada
    persona puede tener **su** reporte activo. Un reporte `cancelled` deja de bloquear uno nuevo de esa persona.
 7. Al **registrar una compra** que cubre la cantidad pedida, el faltante se cierra (`fulfilled`, no «recibido») y el
@@ -1960,7 +2004,9 @@ Sin tabla ni endpoint nuevos para listar:
 | `is_pending` | boolean | `true` mientras el ciclo siga abierto (falta compra confirmada) o si la cantidad es desconocida; **no** indica que falte cotizar y cotizar no lo apaga |
 | `replenishment_state` | string | `pending` \| `in_quote` \| `purchased` \| `fulfilled` \| `cancelled` |
 | `reported_by`, `reported_by_name` | uuid \| null, text \| null | Autor del reporte independiente (D-135) |
-| `declared_quantity`, `declared_unit` | numeric \| null, text \| null | Cantidad **declarada**, nunca aplicada como pedido |
+| `declared_quantity`, `declared_unit` | numeric \| null, text \| null | Cantidad **declarada**, nunca aplicada como pedido (campo conservado por compatibilidad) |
+| `requested_quantity`, `requested_unit` | numeric \| null, text \| null | **Cantidad solicitada vigente** (la última declarada y confirmada, D-147). Es distinta de `target_quantity`; compras decide esta última |
+| `requested_quantity_origin` | `explicit` \| `default` \| null | Procedencia de la solicitada: escrita por la persona, 1 unidad genérica predeterminada (D-147) o histórico sin cantidad. `ObservationOut.quantity_origin` da lo mismo por aviso |
 | `reported_at` | datetime | Primera observación del reporte |
 | `cancelled_at`, `cancelled_by_name`, `cancellation_reason` | datetime \| null, text \| null, text \| null | Cancelación lógica, con su motivo |
 | `pending_only` | filtro | `true` devuelve solo los faltantes `active` con saldo **sin cubrir** (`pending_quantity > 0`); lo ya cubierto por cotización se ve en su estado `in_quote`, no como «sin gestionar» |
@@ -2022,9 +2068,15 @@ la mercadería llegue (D-126) y ninguno se produce por cotizar (D-127).
 3. **Aviso durante una compra registrada:** el mensaje informa la cobertura y no aplica ninguna cantidad. Para pedir
    **más** cantidad hace falta un comando explícito `ADD`/`SET`/`CLEAR`, con el permiso correspondiente; nunca una
    suma implícita (AC35).
-4. **Consulta de estado:** los usuarios autorizados pueden consultar con `estado <texto>` (determinista, sin IA) o
-   desde «Ver lista». La respuesta muestra el estado de reposición y las cantidades conocidas; si hay ambigüedad,
-   lista candidatos en vez de adivinar.
+4. **Consulta de estado (D-147):** los usuarios autorizados consultan con «Ver faltantes» (o `/lista`); la respuesta
+   incluye **todos los reportes activos de la farmacia** y muestra la cantidad conocida y el estado real de reposición:
+   **«Pendiente de compra»** o **«🛒 En carrito»** cuando la cobertura vigente lo pone en un carrito activo. Cada fila
+   indica **siempre** el auxiliar que la reportó; si dos personas reportan el mismo producto se ven dos filas, cada una
+   con su nombre y su cantidad. **Representación visual:** el nombre va en negrita y, si el faltante está en un carrito
+   activo, **solo el nombre** se muestra tachado (`<s>`, parse_mode HTML); la fila no se oculta ni cambia de estado, y
+   el tachado depende de la **misma** cobertura que define «En carrito», por faltante y no por producto. Si hay
+   ambigüedad, lista candidatos en vez de adivinar. No cierra ni modifica nada y no altera D-139: la cobertura sigue
+   siendo la implementada (cotizaciones `draft`).
 5. **Solo lectura:** la consulta de estado no crea, no modifica y no cierra nada. El bot **no** registra compras, **no**
    aplica cantidades y **no** confirma llegadas (§10.4).
 6. **Después de `fulfilled`:** un nuevo aviso del mismo producto crea un **nuevo** faltante (nuevo ciclo), con su

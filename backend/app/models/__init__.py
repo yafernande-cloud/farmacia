@@ -2,6 +2,7 @@ from app.models.authorization import (
     TelegramAccessAttempt,
     TelegramAccessRequest,
     TelegramAccount,
+    TelegramAccountAuxiliary,
     WebAccessRequest,
 )
 from app.models.catalog import (
@@ -68,5 +69,6 @@ __all__ = [
     "PharmaIdentity", "ProductAlias", "PurchaseCycle", "QuantityEvent", "ReferencePrice",
     "SearchResult", "SearchRun", "SearchSourceResult",
     "ShippingTermsSnapshot", "Source", "Supplier", "SupplierProductMapping", "TelegramAccessAttempt",
-    "TelegramAccessRequest", "TelegramAccount", "TradeItem", "TradeItemAlias", "WebAccessRequest",
+    "TelegramAccessRequest", "TelegramAccount", "TelegramAccountAuxiliary", "TradeItem",
+    "TradeItemAlias", "WebAccessRequest",
 ]  # fmt: skip

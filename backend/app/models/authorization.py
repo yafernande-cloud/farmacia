@@ -145,6 +145,8 @@ class TelegramAccount(Base):
     provider: Mapped[str] = mapped_column(String(20), server_default="telegram")
     external_user_id: Mapped[str] = mapped_column(String(64))
     display_label: Mapped[str] = mapped_column(String(100))
+    # Sucursal de esta cuenta/teléfono. Se copia a cada observación para conservar el histórico.
+    branch_label: Mapped[str | None] = mapped_column(String(120))
     mode: Mapped[str] = mapped_column(String(20))
     access_role: Mapped[str] = mapped_column(String(10), server_default="operator")
     app_user_id: Mapped[uuid.UUID | None] = mapped_column()
@@ -158,6 +160,53 @@ class TelegramAccount(Base):
     block_reason: Mapped[str | None] = mapped_column(String(200))
     reactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reactivated_by: Mapped[uuid.UUID | None] = mapped_column()
+
+
+class TelegramAccountAuxiliary(Base):
+    """Persona HABILITADA para reportar desde una cuenta de teléfono compartido.
+
+    No otorga roles ni permisos: la persona igual debe estar activa, disponible y tener un rol que
+    permita reportar. Es una asociación explícita por cuenta, con baja lógica e historial auditado.
+    Las cuentas personales no usan esta tabla: su identidad ya está fijada en `app_user_id`.
+    """
+
+    __tablename__ = "telegram_account_auxiliary"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id"),
+        UniqueConstraint("account_id", "app_user_id", name="uq_telegram_account_auxiliary_pair"),
+        ForeignKeyConstraint(["organization_id"], ["organization.id"]),
+        ForeignKeyConstraint(
+            ["account_id", "organization_id"],
+            ["telegram_account.id", "telegram_account.organization_id"],
+        ),
+        ForeignKeyConstraint(
+            ["app_user_id", "organization_id"], ["app_user.id", "app_user.organization_id"]
+        ),
+        ForeignKeyConstraint(
+            ["created_by", "organization_id"], ["app_user.id", "app_user.organization_id"]
+        ),
+        ForeignKeyConstraint(
+            ["deactivated_by", "organization_id"], ["app_user.id", "app_user.organization_id"]
+        ),
+        # Activo no tiene baja; inactivo siempre conserva cuándo y quién lo dio de baja.
+        CheckConstraint(
+            "(active AND deactivated_at IS NULL AND deactivated_by IS NULL) OR "
+            "(NOT active AND deactivated_at IS NOT NULL AND deactivated_by IS NOT NULL)",
+            name="desactivacion_coherente",
+        ),
+        Index("ix_telegram_account_auxiliary_active", "account_id", "active"),
+        Index("ix_telegram_account_auxiliary_org", "organization_id"),
+    )  # fmt: skip
+    id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
+    organization_id: Mapped[uuid.UUID] = mapped_column()
+    account_id: Mapped[uuid.UUID] = mapped_column()
+    app_user_id: Mapped[uuid.UUID] = mapped_column()
+    active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
+    created_by: Mapped[uuid.UUID | None] = mapped_column()
+    deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deactivated_by: Mapped[uuid.UUID | None] = mapped_column()
+    deactivation_reason: Mapped[str | None] = mapped_column(String(200))
 
 
 class TelegramAccessAttempt(Base):

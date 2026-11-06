@@ -75,16 +75,24 @@ Asistente de compras con IA (demo → producción). Idioma de trabajo y UI: espa
   `roles = ['admin']`, `active` y `auth_subject` en un solo paso; **nunca** enlaza ni sobrescribe una fila existente
   (409 `USER_ALREADY_EXISTS` / `DUPLICATE_NAME`). `superadmin` (`is_superadmin`) es **control técnico** de la
   propietaria, no un perfil funcional: ve todas las organizaciones y otorga/revoca acceso, pero **no aprueba en nombre
-  de una farmacia**. Aprobar **no** crea cuenta ni vínculo de Telegram: en teléfono personal manda la cuenta y el
-  selector del compartido es identificación declarada, no una lista de autorizados; no se agrega bandera por persona
-  ni se toca el bot (eso sería T1). El acceso aprobado queda **sin vencimiento automático**
+  de una farmacia**. Aprobar **no** crea cuenta ni vínculo de Telegram: la identificación de Telegram se configura
+  aparte, por cuenta (`telegram_account_auxiliary`, T1/D-146). El acceso aprobado queda **sin vencimiento automático**
   (`web_access_expires_at = NULL`) hasta revocación, desactivación o vencimiento fijado explícitamente. La seguridad es
   **JWT de Supabase validado + persona activa + rol `admin` + organización del `Actor` + `StrongActor` con su semántica
   vigente** (D-086/D-099), que **no es MFA ni una segunda autenticación**; MFA real queda para H5. La revisión de
   interpretaciones de IA sigue siendo de `admin` (P-7 resuelto).
+- **Telegram T1 (D-146, implementado en código; migración `0020` no aplicada a `farmacia`):** un solo bot atiende
+  varias cuentas autorizadas; la lista de auxiliares habilitados es **por cuenta** (`telegram_account_auxiliary`,
+  explícita, con baja lógica e historial) y **no** otorga roles ni permisos: la persona igual debe estar activa,
+  disponible y tener un rol que permita reportar. Un solo auxiliar habilita → identificación automática, sin selector y
+  sin depender de la sesión; dos o más → selector solo con los de esa cuenta; cero → no registra reportes y avisa a esa
+  cuenta sin afectar a las demás. Desactivar a una persona revoca solo sus sesiones en esa cuenta; pasar una cuenta a
+  personal desactiva sus asociaciones sin borrar historial. La **sucursal** vive en la cuenta (`branch_label`) y se
+  copia como **instantánea** en cada `demand_observation`. Callbacks viejos o manipulados no pueden elegir personas
+  retiradas ni de otra cuenta. La pantalla de Configuración de Telegram de Lovable queda para T3/T4.
 - **Permisos (D-124, aprobado y no implementado):** hoy `admin` **no** tiene `REPORT_SHORTAGE` y
-  `sessions.list_reporters` lo excluye del selector del bot. La ampliación se implementa en la fase que habilite
-  T1/C5-A; no se cambia la matriz "de paso".
+  `sessions.list_reporters` lo excluye del selector del bot. **T1 se implementó sin D-124** (D-146); la ampliación sigue
+  pendiente, no se cambia la matriz "de paso".
 - **Productos (D-015 a D-024):** jamás asumir una unidad ni un rol (un número suelto NO es mg). Separar potencia,
   contenido, presentación y cantidad solicitada. Cada atributo lleva procedencia `explicit|inferred|confirmed`;
   solo una persona autorizada o un alias verificado confirma. Guardar siempre lo escrito (`original_text`) y normalizar
@@ -131,13 +139,18 @@ Asistente de compras con IA (demo → producción). Idioma de trabajo y UI: espa
   interpretación: elegibilidad primero, estados no aplicados sin efecto comercial, auditoría *best effort* en
   `GET /articles/{id}` y obligatoria en comparación, traza con modelo/prompt/estado; **sin migración**; 4 pruebas
   nuevas) y **D-144** (retiro explícito de preferencias por clase: `retired_subject_kinds` en interpretación y traza,
-  migración **`0019`**, resolución temporal de nuevas/reemplazos/retiros y 12 pruebas nuevas).
-- **Aplicado a `farmacia`:** solo hasta **0008** (32 tablas). Las `0009`–`0019` existen en el código y **no** están
+  migración **`0019`**, resolución temporal de nuevas/reemplazos/retiros y 12 pruebas nuevas) y **T1** (auxiliares
+  explícitos por cuenta de Telegram, identificación automática con uno solo, selector por cuenta, sucursal con
+  instantánea en cada observación; migración **`0020`**; **D-146**; 44 pruebas focalizadas en
+  `tests/test_telegram_accounts.py`, todas en la base aislada `farmacia_t1_test`). **D-124 sigue aprobada y sin
+  implementar.**
+- **Aplicado a `farmacia`:** solo hasta **0008** (32 tablas). Las `0009`–`0020` existen en el código y **no** están
   aplicadas allí. `farmacia_demo` tiene aplicadas **`0012`–`0015`** (2026-11-02, cada una con respaldo `pg_dump`
-  verificado; 47 tablas) y es la base donde se prueban C3, C4 y C5-A con el catálogo ficticio; **`0016`–`0019` no están
-  aplicadas** en ninguna base fuera de `farmacia_test` y no se aplican sin autorización explícita.
+  verificado; 47 tablas) y es la base donde se prueban C3, C4 y C5-A con el catálogo ficticio; **`0016`–`0020` no están
+  aplicadas** en ninguna base fuera de `farmacia_test` y `farmacia_t1_test` (ambas aisladas y en head) y no se aplican
+  sin autorización explícita.
 - **Solo documental (aprobado, sin código):** contrato v0.2 **revisión 10-A6** en lo que falta —compras registradas y su
-  cierre, historial, búsqueda de cadenas E15, y la incorporación de C9 y C11— y las decisiones **D-113 a D-145**. E10 y
+  cierre, historial, búsqueda de cadenas E15, y la incorporación de C9 y C11— y las decisiones **D-113 a D-146**. E10 y
   O1 **sí** están implementados (C5-A); los reportes independientes y las asignaciones (D-135) también; la integridad de
   asignaciones (D-137) también. **A6 (preferencias que ordenan ofertas vía «Enseñar a la IA») está aprobada (D-142) con
   sus fases 1, 2 y 3A implementadas** y **precisada por D-143**; el **retiro explícito quedó implementado por D-144**:
@@ -157,8 +170,9 @@ Asistente de compras con IA (demo → producción). Idioma de trabajo y UI: espa
   (mantenedor de proveedores con URL, contacto comercial, cuentas,
   credenciales y estado de conexión)** sigue aprobado y **sin código ni migración**: no hay conectores reales, cuentas
   operativas ni credenciales almacenadas. La recepción está fuera del MVP (D-126).
-- **Sin empezar:** C5-B (`0020`), **la conexión de O2 con Lovable** (el backend de O2 está implementado,
-  A6 Fase 3B), C5-C (`0021`), C5-D (`0022`, bloqueado), T1, C6/C6a y H2–H6.
+- **Sin empezar:** C5-B (`0021`), **la conexión de O2 con Lovable** (el backend de O2 está implementado,
+  A6 Fase 3B), C5-C (`0022`), C5-D (`0023`, bloqueado), la pantalla de Configuración de Telegram de Lovable (T3/T4),
+  C6/C6a y H2–H6. **T1 backend está implementado** (migración `0020`, D-146); D-124 sigue pendiente.
 
 ## Metodología
 Por fases con informe (objetivo, alcance, archivos, implementación, pruebas, aceptación, riesgos, continuar).
@@ -167,10 +181,18 @@ Hecho: F0, **H1-A**, corrección del modelo de productos, **H1-B** con simulador
 guardar y listar en `/commercial-observations`, interpretar en `/commercial-observations/{id}/interpretations`,
 detalle, preferencias vigentes e historial en `/articles/{id}/preferences`; idempotencia sin migración; 13 pruebas
 nuevas; ver `docs/A6_FASE_3B_API.md`) y **los endpoints REST de O2 ya están implementados**; siguen **sin
-implementar** D-139 y D-140. La suite completa no se ejecutó en esta fase; quedan **691 casos recopilados** (incluidos
-los live, que no se ejecutan en la suite normal).
-El siguiente paso es **C5-B** (`0020`, que debe incorporar D-139 y D-140) o **conectar O2 con Lovable**
-(backend ya implementado en A6 Fase 3B), según autorización; después C5-C (`0021`) y C5-D (`0022`, ejecución bloqueada). Las migraciones `0016`–`0019` solo se aplican a `farmacia_demo` con autorización explícita (ver `docs/decisions/ACUERDOS_FUNCIONALES.md` §7), tras el ensayo en `farmacia_test`. Siguen abiertas **H1-B.5** (verificar con el bot real; el usuario crea el bot y guarda el token en `.env`), H1-C (SSE + dashboard Lovable) y las autorizaciones externas (cadenas, modelo de OpenAI —`OPENAI_MODEL` no tiene valor por defecto—, almacenamiento).
+implementar** D-139 y D-140. **T1 implementado en código el 2026-11-05** (auxiliares explícitos por cuenta de Telegram,
+identificación automática con uno solo, selector acotado a la cuenta, cuenta sin auxiliares sin reportes, baja que
+revoca solo sus sesiones, conversión a personal que desactiva asociaciones sin borrar historial y sucursal con
+instantánea por observación; migración **`0020`**; **D-146**; 8 pruebas T1 nuevas y 44 focalizadas en
+`tests/test_telegram_accounts.py`). D-124 sigue pendiente.
+El siguiente paso es **C5-B** (`0021`, que debe incorporar D-139 y D-140), **conectar O2 con Lovable** (backend ya
+implementado en A6 Fase 3B) o **T2**, según autorización; después C5-C (`0022`) y C5-D (`0023`, ejecución bloqueada).
+Las migraciones `0016`–`0020` solo se aplican a `farmacia_demo` con autorización explícita (ver
+`docs/decisions/ACUERDOS_FUNCIONALES.md` §7), tras el ensayo en `farmacia_test`; T1 se probó solo en `farmacia_t1_test`.
+Siguen abiertas **H1-B.5** (verificar con el bot real; el usuario crea el bot y guarda el token en `.env`), H1-C (SSE +
+dashboard Lovable) y las autorizaciones externas (cadenas, modelo de OpenAI —`OPENAI_MODEL` no tiene valor por
+defecto—, almacenamiento).
 No declarar pruebas de BD como exitosas si se omitieron: validar con `REQUIRE_DB=1 .venv/bin/pytest` (PostgreSQL local por Docker; `open -a Docker`).
 Supabase: proyecto `faltantes-farmacia` creado por el usuario (2026-10-29) con Google OAuth y JWKS asimétrico verificado; `AUTH_MODE=demo_header` se mantiene. Auth web: validador JWT implementado; enlace `auth_subject` por CLI (solo rol `admin`, auditado) y bootstrap `create-admin` (solo `admin`, sin enlace, solo `real_test`/`simulation`, una activa por organización; D-071/D-072); `/staff` y accesos de Telegram exigen `StrongActor`. **G1 (solicitudes con campanita, vencimiento del acceso web, superadministradora y aprobación que otorga `admin`; D-117/D-119/D-130) está implementado en código; `0012` está aplicada solo a `farmacia_demo` y NO a `farmacia`.** El endpoint público exige `WEB_ACCESS_ORGANIZATION_ID`; para pruebas con `AUTH_MODE=demo_header` la identidad se envía en `X-Demo-Subject`/`X-Demo-Email`/`X-Demo-Name`. La superadministradora se marca una sola vez con `set-superadmin <app_user_id>` (CLI, auditado con actor nulo). **La administradora de pruebas «Yarella Fernández» existe en `real_test` (`83c03aa5-6496-4bef-8f96-b92cbbd59f6e`, solo `admin`, separada de Pao) y su identidad está enlazada**; A2/A3 verificaron que Google y correo+contraseña dan el mismo `sub` y que `/api/v1/me` responde 200 (`docs/AUTH_SUPABASE.md`, D-064 a D-072). Pao sigue sin `auth_subject` en `real_test`, `simulation` y `legacy_mixed`; se enlazará con su propia identidad más adelante (D-067).
 Patrón de servicios: `services/*` reciben `Actor` + sesión, verifican permisos, no hacen commit (la API usa `transaction()`); auditoría+outbox en la misma transacción (`services/events.emit`).

@@ -2290,3 +2290,127 @@ una escritura directa ni una decisión de dinero, cantidad, permiso o disponibil
 adaptador sin base de datos y flujo completo con PostgreSQL real y proveedor simulado (incluye motor E3/E5,
 aislamiento por producto y organización, reintentos, retiros, errores y configuración). `ruff` sin hallazgos.
 No se avanzó a endpoints ni Lovable.
+
+### D-146 — T1: auxiliares habilitados por cuenta de Telegram y sucursal histórica (2026-11-05)
+
+**Decisión.** Un mismo bot atiende varias cuentas autorizadas y cada cuenta de teléfono compartido tiene su propia
+lista persistida de personas habilitadas para reportar. La relación se guarda en `telegram_account_auxiliary` y **no
+otorga roles ni permisos**: la persona sigue necesitando estar activa, disponible y tener un rol que permita reportar
+(`auxiliary` o `purchasing`). La identidad de una cuenta personal sigue fijada en `telegram_account.app_user_id`; esa
+cuenta no usa la tabla de auxiliares.
+
+1. **Alcance por cuenta.** El selector, la identificación automática y la validación de cada selección usan la lista de
+   la cuenta del chat. Una persona habilitada en otra cuenta —o un callback manipulado— no puede elegirse: la respuesta
+   es el mismo error genérico, sin revelar datos de la otra cuenta.
+2. **Cero auxiliares.** La cuenta no registra reportes ni fotos, no guarda mensajes pendientes de atribución y responde
+   con un mensaje propio de esa cuenta. Las demás cuentas no se ven afectadas.
+3. **Un auxiliar.** La identificación es automática y declarada, sin selector, sin «¿quién eres?» y sin confirmación de
+   identidad. No depende de la sesión de 10 minutos: tras «Finalizar reportes», un reinicio o días sin uso, el siguiente
+   mensaje vuelve a identificar a la misma persona.
+4. **Dos o más auxiliares.** Se muestra un selector con **solo** las personas habilitadas en esa cuenta; se puede
+   cambiar de persona. Pasar de uno a dos revoca las sesiones de los chats de esa cuenta para que la siguiente persona
+   elija. Volver de dos a uno retorna a la identificación automática.
+5. **Baja y alcance de la revocación.** Dar de baja a una persona en una cuenta es lógico (se conserva la fila, la fecha
+   y quién la dio de baja) y revoca **solo las sesiones de esa persona en los chats de esa cuenta**. Sus sesiones en
+   otras cuentas y las sesiones de otras personas no se tocan. Los botones antiguos no pueden volver a elegirla.
+6. **Cambio de modalidad.** Convertir una cuenta compartida en personal desactiva todas sus asociaciones activas, sin
+   borrar historial. No hay accesos implícitos: si la cuenta vuelve a ser compartida, queda con cero auxiliares hasta
+   que se configuren explícitamente. Las cuentas existentes **no se rellenan automáticamente**; la única auxiliar de la
+   cuenta de demostración será Pato y se configurará explícitamente, no por código.
+7. **Sucursal.** `telegram_account.branch_label` es la sucursal de la cuenta/teléfono. Cada observación guarda una
+   **instantánea** en `demand_observation.branch_label` al registrarse; cambiarla después no reescribe reportes
+   históricos. Una cuenta sin sucursal guarda `NULL`; no se inventa una.
+8. **Compatibilidad legada.** Los vínculos sin `account_id` conservan el selector de la organización por compatibilidad
+   histórica. **Antes de activar Telegram en Heroku se debe verificar que ninguna cuenta operativa dependa de ese
+   selector global**; la verificación pertenece a T5 y no se declara hecha.
+9. **D-124 queda pendiente.** No se amplía la matriz de permisos: `admin` sigue sin `REPORT_SHORTAGE`. La revisión de
+   permisos de administradores queda identificada para una autorización posterior, no se implementa «de paso».
+10. **Migración y numeración.** T1 usa **`0020`**, con `down_revision = "0019"`: agrega las dos columnas de sucursal y la
+    tabla de auxiliares con baja lógica, claves foráneas compuestas, `CHECK` de coherencia e índices. No modifica
+    migraciones históricas. Por decisión del usuario, **C5-B pasa a `0021`, C5-C a `0022` y C5-D a `0023`**.
+11. **Pruebas y límites de la tarea.** Las pruebas se ejecutaron en la base local aislada **`farmacia_t1_test`**,
+    creada para esta tarea. No se modificaron `farmacia` ni `farmacia_test`, no se hizo commit, push ni despliegue, no
+    se cambió Heroku, el webhook ni Lovable. La actualización automática de la bandeja y la pantalla de Configuración de
+    Telegram siguen en T3/T4.
+12. **Ajuste pendiente del mensaje de aprobación (detectado en T2, 2026-11-05).** El aviso actual de
+    `approve_request` para un teléfono compartido decía siempre «Al reportar, elige quién escribe». **Implementado el
+    2026-11-05 (T2):** el aviso depende de los auxiliares habilitados al aprobar. Con **uno solo** informa que los
+    faltantes se registran **automáticamente a nombre de esa persona**; con **dos o más** mantiene la selección de
+    identidad; sin ninguno pide agregar al menos uno. No se toca el selector ni los permisos.
+
+**Estado.** Implementada en código: modelos, migración `0020`, servicios de acceso/canal, API administrativa, sucursal
+histórica y pruebas automatizadas en `farmacia_t1_test`. D-124 permanece aprobada y sin implementar. El ajuste de texto
+del aviso de aprobación descrito en el punto 12 quedó implementado el 2026-11-05 (D-147, ajuste posterior).
+
+### D-147 — T2: corrección de cantidades por texto libre, estado real y teclado de Telegram (2026-11-05)
+
+**Decisión.** Se ajusta la conversación de Telegram sin cambiar la semántica de compras ni D-139. La cantidad
+**solicitada** (lo que declara el auxiliar) y la cantidad **objetivo** (`demand_item.target_quantity`, lo que decide
+compras) siguen separadas: un auxiliar nunca aplica la segunda.
+
+1. **Solo texto libre.** La corrección de cantidades se conversa **únicamente por texto**: no hay botones inline en
+   ninguna etapa (pregunta, aclaración de unidad, corrección ambigua o cierre). El mismo auxiliar puede corregir o
+   complementar su cantidad escribiendo `5`, `5 cajas más` o `en total 15 cajas`. Una cifra sola es **ambigua**: el bot
+   pregunta si es el total o una cantidad adicional y **no modifica nada** hasta que la persona lo escriba.
+   `más`/`adicional` es `ADD` sobre la cantidad solicitada previa; `total`/`en total` es `SET`. `cancelar` descarta la
+   corrección pendiente sin cambiar la cantidad solicitada.
+2. **Una fila, historial.** La corrección se registra como una nueva observación en el **mismo faltante del autor**;
+   no crea otra fila ni otro reporte, y conserva el historial. La cantidad solicitada vigente es la última confirmada.
+3. **API visible.** `DemandItemOut` expone `requested_quantity`/`requested_unit` (cantidad solicitada vigente),
+   `requested_quantity_origin` y `ObservationOut` expone `quantity_origin` y `quantity_proposal`. Compras ve la
+   solicitud, su procedencia y la propuesta sin confundirlas con `target_quantity`; no hay propuestas invisibles.
+4. **Cantidad inicial opcional.** Un aviso de Telegram **nuevo** sin cantidad registra **1 unidad genérica**
+   (`quantity_origin="default"`): nunca se asume caja, frasco ni sobre. Un aviso que se adjunta a un faltante cuya
+   cantidad declarada sigue siendo `NULL` también recibe esa unidad en una observación nueva; las observaciones
+   históricas **no se reescriben**. Si ya hay una cantidad declarada, el aviso sin cantidad **no la cambia**. La API
+   conserva la regla anterior: sin cantidad, `NULL` (no 0 ni 1). La corrección puede añadirla después.
+5. **Estado real en «Ver faltantes».** La lista muestra **todos** los reportes activos de la farmacia y su estado real:
+   «Pendiente de compra» o «🛒 En carrito» cuando la cobertura vigente lo pone en un carrito activo. Cada fila indica
+   **siempre** el auxiliar que la reportó, tomado del autor del propio faltante (`reported_by`), no de un agregado de
+   observaciones: si dos personas reportan el mismo producto se ven dos filas con su nombre y su cantidad. No cierra
+   nada ni reinterpreta D-139: la cobertura sigue siendo la implementada (solo cotizaciones `draft`).
+   **Representación visual (2026-11-05).** El nombre del producto se muestra en negrita y, cuando el faltante está en
+   un carrito activo, **también tachado** (`<s><b>…</b></s>`, parse_mode HTML); el estado dice «🛒 En carrito». El
+   tachado es solo la representación de la **misma condición** que ya definía el estado (`replenishment_state ==
+   "in_quote"`): no agrega banderas, columnas ni estados nuevos, no oculta la fila y no cambia reportes, cantidades ni
+   permisos. Al retirarlo del carrito sin comprar la fila vuelve a verse normal; una compra registrada deja de listarlo
+   según el flujo existente. El tachado es por **faltante**, no por producto: si dos auxiliares reportaron el mismo
+   producto y solo uno está en el carrito, solo esa fila se tacha. No se resuelven aquí las decisiones pendientes de
+   D-139/C5-B sobre cobertura y cotizaciones.
+6. **Teclado.** «Ver faltantes», «Ver auxiliar activo» y «Ayuda». «Cambiar auxiliar» solo aparece con **dos o más**
+   auxiliares habilitados. Se retira «Finalizar reportes» del teclado; `/salir` sigue como comando oculto de
+   compatibilidad. Los alias antiguos («Ver lista», «¿Quién soy?») se conservan para no romper conversaciones.
+7. **Aviso de otro autor.** Incluye quién reportó y, cuando existe, su cantidad solicitada además de la pedida para
+   compra. Este flujo conserva sus botones («Confirmar mi reporte», «Modificar cantidad», «Cancelar»), porque no es
+   una corrección de cantidad.
+8. **Alcance.** No se modifica el HLD histórico. Las pruebas se ejecutaron en la base desechable
+   `farmacia_t2_codigo_test`; no se ejecutó pytest sobre `farmacia_t1_test` ni `farmacia`, no se reinició el polling
+   real, no se alteraron datos de T2, no se cambió Lovable y no hubo commit, push ni despliegue.
+9. **Total o adicional, por texto.** Cuando el mismo auxiliar informa una cantidad nueva sobre un faltante que ya
+   tiene cantidad declarada, el bot pregunta **siempre** si es **adicional** o **total nuevo**, pide la respuesta por
+   texto y no cambia la cantidad solicitada hasta que la persona la escriba. Textos aceptados: `son 10 más`,
+   `10 adicionales`, `en total 10`, `quiero 10 en total`, `me equivoqué, son 5`, `cancelar`. Si la operación sigue
+   siendo ambigua, vuelve a preguntar por texto. Repetir el mismo aviso (misma cantidad y unidad) **no incrementa**
+   nada. `Historial`: cada aviso y corrección queda como observación del mismo faltante; no se crea otra fila.
+10. **Unidades incompatibles.** Nunca se suman cantidades de unidades distintas (1 unidad genérica + 10 cajas no es
+    11 cajas). Si la cantidad previa es la **unidad genérica** y la persona escribe `más`, el bot pide por texto qué
+    representa esa unidad inicial («¿Es 1 caja?») y solo entonces calcula el total; si no hay equivalencia válida o
+    la unidad previa es otra presentación, solo ofrece fijar el total. No se inventan presentaciones ni conversiones.
+11. **En carrito.** Si el faltante está en un carrito activo (`in_quote`), un aviso o corrección del auxiliar **no**
+    cambia su cantidad solicitada mientras siga ahí; el bot lo informa y sugiere pedir a compras que lo retire. Sin
+    compra, al salir del carrito vuelve a «Pendiente de compra» según la cobertura vigente. No se modifica D-139.
+12. **Solicitada ≠ objetivo, también con `APPLY_QUANTITY`.** Los mensajes de Telegram **nunca** modifican
+    automáticamente `demand_item.target_quantity`. Como la corrección de cantidades ya no ofrece botones, ninguna
+    acción de esta conversación cambia la cantidad de compra, ni siquiera cuando el actor tiene `APPLY_QUANTITY`: la
+    corrección por texto registra la cantidad solicitada y una `quantity_proposal` para que compras la revise. Los
+    conceptos internos de objetivo y propuesta se conservan en la API y en la base, pero **no** se nombran en los
+    mensajes al auxiliar.
+13. **Ajuste de UX (2026-11-05).** Se eliminan todos los botones inline de la conversación de corrección de
+    cantidades. Los mensajes se redactan en lenguaje simple, sin mencionar `target_quantity`, «cantidad objetivo»,
+    `quantity_proposal` ni «propuesta para compras». Los botones de otros flujos (**selección de auxiliar**,
+    **confirmación de un reporte de otra persona**, adjuntar un mensaje pendiente) se mantienen sin cambios.
+
+**Estado.** Implementada en código y documentación secundaria (`docs/H1B_TELEGRAM.md` y
+`docs/contracts/cotizador-v0.2.md` §10.5/§12.7). Sin migración: usa las columnas existentes de observación,
+`quantity_proposal` y la instantánea `interpretation` (`quantity_origin`). Incluye 15 pruebas automatizadas de los
+escenarios D-147 (14 conversacionales + 1 de exposición en la API).
