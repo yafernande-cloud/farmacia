@@ -150,6 +150,8 @@ async def test_luis_cambia_identidad_mismo_producto_dos_avisos_sin_sumar(
     assert "Ana ya informó" in tg_api.texts()[-1]
     assert "¿También quieres reportarlo?" in tg_api.texts()[-1]
     assert "reporte tuyo independiente" in tg_api.texts()[-1]
+    # Exactamente dos caminos: un reporte propio o cancelar. Nada de terceras opciones.
+    assert [b["text"] for b in tg_api.last_buttons()] == ["Sí, agregar mi reporte", "No, cancelar"]
     assert len(await observations(sessions)) == 1  # todavía no se creó nada para Luis
 
     await chat.click(f"rp:ok:{pending.id}", now=mins(4))
@@ -1265,7 +1267,10 @@ async def test_d147_7_repetir_el_mismo_aviso_no_incrementa(chat, sessions, tg_ap
     await chat.pick("ana")
     await chat.text("2 cajas de loratadina 10 mg", now=mins(1))
     await chat.text("2 cajas de loratadina 10 mg", now=mins(2))
-    assert "la cantidad no cambió" in tg_api.texts()[-1]
+    reply = tg_api.texts()[-1]
+    # No se creó otro reporte: se dice claramente en vez de «Anotado».
+    assert "ya está en tu lista" in reply and "no lo agregué de nuevo" in reply
+    assert "Anotado" not in reply
     obs = await observations(sessions)
     assert len(obs) == 2 and obs[-1].declared_quantity == Decimal(2)
     # La cantidad solicitada vigente sigue siendo la última declarada: 2 cajas, no 4.

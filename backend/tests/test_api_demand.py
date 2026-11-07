@@ -4,10 +4,12 @@ from decimal import Decimal
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.db.session import get_session
 from app.main import create_app
+from app.models import DemandObservation
 from tests.conftest import new_key
 
 pytestmark = pytest.mark.db
@@ -67,6 +69,43 @@ async def test_api_expone_cantidad_solicitada_y_propuesta_sin_confundirlas_con_l
     assert body["target_quantity"] is None  # Pao todavía no decidió cuánto comprar
     (obs,) = body["observations"]
     assert obs["quantity_proposal"] == {"operation": "SET", "value": "8", "unit": "box"}
+
+
+async def test_nombre_largo_se_expone_en_dos_niveles_sin_perder_informacion(api):
+    """Tramadol/Paracetamol …: la tarjeta puede mostrar encabezado y detalles sin recortar.
+
+    `display_name` no cambia y `name` + `details` lo reproducen exactamente: la identidad interna
+    del producto sigue siendo la misma.
+    """
+    r = await report(api, "ana", "falta tramadol clorhidrato paracetamol 37,5 mg 325 mg x 30 comprimidos")
+    item = r.json()["item"]
+    parts = item["display_parts"]
+    assert parts["name"] == "Tramadol clorhidrato paracetamol"
+    assert parts["details"] == ["37.5 mg", "325 mg", "comprimido", "x 30"]
+    assert " ".join([parts["name"], *parts["details"]]) == item["display_name"]
+    assert item["photo_url"] is None  # aviso de texto: no hay fotografía que mostrar
+
+    row = next(i for i in (await lst(api))["items"] if i["id"] == item["id"])
+    assert row["display_parts"] == parts and row["display_name"] == item["display_name"]
+
+
+async def test_bandeja_expone_la_sucursal_real_y_la_conserva_en_el_historico(api, sessions):
+    r = await report(api, "ana", "falta ibuprofeno 400 mg")
+    item = r.json()["item"]
+    async with sessions() as s, s.begin():
+        (obs,) = (await s.execute(select(DemandObservation))).scalars().all()
+        obs.branch_label = "Parque Lantaño"
+
+    # El backend devuelve el valor real; ocultarla en la tarjeta es decisión de la interfaz.
+    listing = next(i for i in (await lst(api))["items"] if i["id"] == item["id"])
+    detail = (await api.get(f"/api/v1/demand-items/{item['id']}", headers=H(api, "pao"))).json()
+    assert listing["branch_label"] == "Parque Lantaño"
+    assert detail["branch_label"] == "Parque Lantaño"
+    # La instantánea histórica sigue guardada en la observación.
+    async with sessions() as s:
+        assert (
+            await s.execute(select(DemandObservation.branch_label))
+        ).scalar_one() == "Parque Lantaño"
 
 
 async def test_dos_auxiliares_conservan_reportes_independientes(api):

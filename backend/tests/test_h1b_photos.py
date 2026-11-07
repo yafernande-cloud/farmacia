@@ -14,14 +14,18 @@ import stat
 from datetime import UTC, datetime
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, text
 
+from app.core.config import get_settings
+from app.db.session import get_session
 from app.interpretation.vision import (
     SimulatedVisionInterpreter,
     VisionExtraction,
     VisionFailed,
     VisionField,
 )
+from app.main import create_app
 from app.models import Attachment, ChannelMessage, DemandItem, OutboxEvent
 from app.services.photo_processing import process_pending_attachments
 from app.services.storage import sha256_hex
@@ -554,7 +558,9 @@ async def test_foto_del_mismo_producto_ya_anotado_no_duplica_el_faltante(
     assert len(obs) == 2 and obs[1].match_status == "attached_existing"
     assert obs[0].demand_item_id == obs[1].demand_item_id
     assert await count(sessions, DemandItem) == 1
-    assert "(ya estaba en tu lista)" in tg_api.texts()[-1]
+    reply = tg_api.texts()[-1]
+    assert "ya está en tu lista" in reply and "no lo agregué de nuevo" in reply
+    assert "Anotado" not in reply
 
 
 async def test_foto_de_otro_auxiliar_pide_confirmacion_y_crea_reporte_al_confirmar(
@@ -582,6 +588,7 @@ async def test_foto_de_otro_auxiliar_pide_confirmacion_y_crea_reporte_al_confirm
     assert "¿También quieres reportarlo?" in reply
     assert "reporte tuyo independiente" in reply
     assert "Anotado" not in reply
+    assert [b["text"] for b in tg_api.last_buttons()] == ["Sí, agregar mi reporte", "No, cancelar"]
 
     await c.click(f"rp:ok:{pending.id}", now=mins(3))
 
@@ -781,6 +788,58 @@ async def test_trazabilidad_de_una_observacion_no_se_puede_reescribir(photo_chat
     with pytest.raises(DBAPIError, match="no puede reatribuirse"):
         async with engine.begin() as conn:
             await conn.execute(text(f"UPDATE channel_message SET author_id = '{c.seed['luis']}'"))
+
+
+# ---------- API: fotografía original del reporte ----------
+
+
+async def test_api_permite_ver_la_fotografia_original_del_reporte(
+    photo_chat, sessions, seed, tg_api, tmp_path, monkeypatch
+):
+    c = photo_chat(vision=LiveVision(CREMA))
+    await c.pick("ana")
+    await c.send(photo_update, img(tg_api, 41))
+    (att,) = await attachments(sessions)
+    assert att.storage_key is not None
+
+    monkeypatch.setenv("AUTH_MODE", "demo_header")
+    monkeypatch.setenv("STORAGE_DIR", str(tmp_path / "storage"))
+    get_settings.cache_clear()
+    app = create_app()
+
+    async def _session():
+        async with sessions() as s:
+            yield s
+
+    app.dependency_overrides[get_session] = _session
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as api:
+            headers = {"X-Demo-User-Id": str(seed["pao"])}
+            listing = (await api.get("/api/v1/demand-items", headers=headers)).json()
+            (item,) = listing["items"]
+            expected = f"/api/v1/attachments/{att.id}/content"
+            assert item["photo_url"] == expected  # la tarjeta puede abrir la foto original
+
+            detail = (
+                await api.get(f"/api/v1/demand-items/{item['id']}", headers=headers)
+            ).json()
+            (obs,) = detail["observations"]
+            assert obs["attachment_id"] == str(att.id) and obs["photo_url"] == expected
+
+            image = await api.get(expected, headers=headers)
+            assert image.status_code == 200 and image.content == fake_jpeg(41)
+            assert image.headers["content-type"] == "image/jpeg"
+            assert image.headers["cache-control"].startswith("private")
+
+            # La fotografía es privada: otra farmacia no puede leerla.
+            other = await api.get(
+                expected, headers={"X-Demo-User-Id": str(seed["intruso"])}
+            )
+            assert other.status_code == 404
+            # Y sin identidad no se sirve: nunca es un archivo público.
+            assert (await api.get(expected)).status_code == 401
+    finally:
+        get_settings.cache_clear()
 
 
 _unused = (datetime, UTC, callback_update)

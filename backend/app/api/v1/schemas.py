@@ -142,6 +142,20 @@ class AttributesOut(BaseModel):
     )
 
 
+class DisplayPartsOut(BaseModel):
+    """Nombre para mostrar en dos niveles, sin perder información.
+
+    `" ".join([name, *details])` es idéntico a `display_name`; la identidad interna del producto
+    (ingrediente, dosis, forma, contenido) no cambia. Sirve para que tarjetas angostas presenten
+    nombres largos completos: el encabezado y sus detalles por separado, sin recortar.
+    """
+
+    name: str = Field(description="Nombre del artículo sin dosis ni presentación.")
+    details: list[str] = Field(
+        default_factory=list, description="Dosis, forma y contenido, en el mismo orden del nombre."
+    )
+
+
 class ObservationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
@@ -170,12 +184,25 @@ class ObservationOut(BaseModel):
     attributes: AttributesOut | None = Field(
         default=None, description="Lo interpretado de este aviso"
     )
+    attachment_id: uuid.UUID | None = Field(
+        default=None,
+        description="Fotografía original de este aviso; null si vino por texto o no tenía foto.",
+    )
+    photo_url: str | None = Field(
+        default=None,
+        description="Ruta relativa para ver la fotografía original (requiere sesión). null = sin foto.",
+    )
     created_at: datetime
 
 
 class DemandItemOut(BaseModel):
     id: uuid.UUID
     display_name: str
+    display_parts: DisplayPartsOut | None = Field(
+        default=None,
+        description="`display_name` separado en encabezado y detalles para presentarlo completo "
+        "en tarjetas angostas. No altera la identidad del producto.",
+    )
     ingredient: str
     attributes: AttributesOut
     identity_complete: bool
@@ -205,7 +232,13 @@ class DemandItemOut(BaseModel):
     reported_by_name: str | None = None
     branch_label: str | None = Field(
         default=None,
-        description="Sucursal de la cuenta al registrar el aviso (instantánea histórica).",
+        description="Sucursal de la cuenta al momento del reporte; su presentación en la "
+        "bandeja es decisión de la interfaz.",
+    )
+    photo_url: str | None = Field(
+        default=None,
+        description="Ruta relativa para ver la fotografía original del reporte (requiere "
+        "sesión). null = el reporte no vino de una foto.",
     )
     declared_quantity: Qty | None = Field(
         default=None, description="Última cantidad declarada por el autor de este reporte."

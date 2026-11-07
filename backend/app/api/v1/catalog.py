@@ -1,18 +1,20 @@
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.api.deps import CurrentActor, Session
 from app.api.v1.demand import ERRORS
-from app.core.errors import not_found
+from app.core.config import get_settings
+from app.core.errors import DomainError, not_found
 from app.core.permissions import Permission, require
 from app.db.session import transaction
 from app.models import Attachment
 from app.services import catalog as catalog_svc
 from app.services import demand as demand_svc
+from app.services.storage import LocalPrivateStorage
 
 router = APIRouter(tags=["catálogo verificado y canal"])
 
@@ -117,6 +119,42 @@ async def list_attachments(session: Session, actor: CurrentActor, status: str | 
         (await session.execute(q.order_by(Attachment.created_at.desc()).limit(100))).scalars().all()
     )
     return [AttachmentOut.model_validate(r, from_attributes=True) for r in rows]
+
+
+@router.get(
+    "/attachments/{attachment_id}/content",
+    responses={**ERRORS, 200: {"description": "Fotografía original (JPEG, PNG o WebP)"}},
+    response_class=Response,
+    summary="Ver la fotografía original de un aviso",
+)
+async def attachment_content(attachment_id: uuid.UUID, session: Session, actor: CurrentActor):
+    """Sirve la imagen privada guardada, solo a la misma organización.
+
+    La lectura de la lista (VIEW_LIST) ya muestra el reporte; ver su fotografía no amplía datos
+    entre farmacias. El tipo se toma del archivo validado por firma, nunca del cliente.
+    """
+    require(actor.roles, Permission.VIEW_LIST)
+    att = await session.get(Attachment, attachment_id)
+    if att is None or att.organization_id != actor.organization_id:
+        raise not_found("La fotografía")
+    if not att.storage_key or not att.mime_type:
+        raise DomainError(
+            "PHOTO_NOT_AVAILABLE", "La fotografía no está disponible.", status_code=404
+        )
+    try:
+        data = LocalPrivateStorage(get_settings().storage_dir).get(att.storage_key)
+    except (OSError, DomainError) as e:
+        raise DomainError(
+            "PHOTO_NOT_AVAILABLE", "La fotografía no está disponible.", status_code=404
+        ) from e
+    return Response(
+        content=data,
+        media_type=att.mime_type,
+        headers={
+            "Cache-Control": "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get(

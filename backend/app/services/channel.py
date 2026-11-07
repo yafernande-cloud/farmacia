@@ -305,9 +305,11 @@ def line_for(r: ObservationResult, raw: str) -> str:
     if r.outcome == "attached_existing" and r.item:
         if _quantity_origin(r) == "default":
             return f"✅ Anotado: {r.item.display_name} — 1 unidad (ya estaba en tu lista).{note}"
+        # Repetición del mismo autor: se registra el aviso, pero NO se crea otro reporte ni cambia
+        # la cantidad. Decir «Anotado» haría creer que sí se agregó de nuevo.
         return (
-            f"✅ Anotado: {r.item.display_name} — {_declared_text(r)} "
-            f"(ya estaba en tu lista; la cantidad no cambió).{note}"
+            f"ℹ️ {r.item.display_name} ya está en tu lista: no lo agregué de nuevo. "
+            f"Tu reporte sigue como estaba.{note}"
         )
     if r.outcome == "blocked_in_cart" and r.item:
         return (
@@ -754,13 +756,14 @@ async def _ask_confirmation(
     msg.confirmation_status = "pending_other_report"
     msg.confirmation_data = data
     who = author or "Otra persona"
+    # Dos opciones claras: agregar un reporte propio o cancelar. Cancelar no crea ni modifica
+    # nada; «Modificar cantidad» dejó de ofrecerse aquí para no sumar un tercer camino.
     return Reply(
         f"⚠️ {who} ya informó {other.get('display_name')}.\n"
         "¿También quieres reportarlo? Queda como un reporte tuyo independiente.",
         [
-            [Button("Confirmar mi reporte", f"rp:ok:{msg.id}")],
-            [Button("Modificar cantidad", f"rp:new:{msg.id}"),
-             Button("Cancelar", f"rp:cancel:{msg.id}")],
+            [Button("Sí, agregar mi reporte", f"rp:ok:{msg.id}")],
+            [Button("No, cancelar", f"rp:cancel:{msg.id}")],
         ],
         keyboard,
     )

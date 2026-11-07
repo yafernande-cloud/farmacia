@@ -1400,7 +1400,7 @@ async def test_cuenta_sin_auxiliares_no_registra_ni_atribuye(
     assert len(obs) == 1 and obs[0].account_id == other.account.id
 
 
-async def test_baja_revoca_solo_sus_sesiones_en_esa_cuenta_y_vuelve_al_unico_auxiliar(
+async def test_baja_invalida_toda_la_seleccion_de_esa_cuenta_y_vuelve_al_unico_auxiliar(
     farm, sessions, user, tg_api
 ):
     a = await shared_account(sessions, farm, 55500065, links=("ana", "luis"))
@@ -1416,7 +1416,9 @@ async def test_baja_revoca_solo_sus_sesiones_en_esa_cuenta_y_vuelve_al_unico_aux
         result = await access.deactivate_account_auxiliary(
             s, actor(farm), a.account.id, farm["luis"], reason="cambió de turno"
         )
-    assert result["sessions_revoked"] == 1
+    # Cambió el conjunto autorizado de la cuenta: se invalida la selección vigente completa,
+    # no solo la de la persona dada de baja.
+    assert result["sessions_revoked"] == 1  # solo había una sesión abierta en A
     assert await active_sessions(sessions, a.binding.id) == []
     assert len(await active_sessions(sessions, b.binding.id)) == 1  # la otra cuenta no se toca
 
@@ -1479,6 +1481,62 @@ async def test_pasar_de_uno_a_dos_revoca_la_sesion_y_vuelve_a_pedir_identidad(
         ).scalars().all()
     pending = [m for m in msgs if m.attribution_status == "pending_attribution"]
     assert len(pending) == 1 and pending[0].author_id is None
+
+
+async def test_cambiar_auxiliares_invalida_la_seleccion_aunque_siga_la_misma_persona(
+    farm, sessions, user, tg_api
+):
+    """Caso real: Pato e Iván habilitados; se quita a Iván y se agrega a Julio.
+
+    Pato sigue habilitada, pero cambió el conjunto autorizado: la selección vigente deja de
+    valer. El siguiente mensaje pregunta quién reporta, muestra solo a los habilitados ahora y,
+    al elegir, procesa el pendiente sin una segunda confirmación.
+    """
+    a = await shared_account(sessions, farm, 55500073, links=("ana", "luis"))
+    c = user(55500073)
+    await c.click(f"sel:{farm['ana']}", now=mins(1))
+    await c.text("falta ibuprofeno 400", now=mins(2))
+    assert len(await active_sessions(sessions, a.binding.id)) == 1
+
+    async with sessions() as s, s.begin():
+        julio = AppUser(organization_id=farm["org"], display_name="Julio", roles=["auxiliary"])
+        s.add(julio)
+        await s.flush()
+        farm["julio"] = julio.id
+
+    # Se agrega a Julio y se da de baja a Iván. Ana permanece habilitada todo el tiempo.
+    async with sessions() as s, s.begin():
+        await access.add_account_auxiliary(s, actor(farm), a.account.id, farm["julio"])
+        await access.deactivate_account_auxiliary(
+            s, actor(farm), a.account.id, farm["luis"], reason="cambió de turno"
+        )
+    assert await active_sessions(sessions, a.binding.id) == []
+
+    await c.text("falta paracetamol 500", now=mins(3))
+    assert "¿Quién eres?" in tg_api.texts()[-1]
+    # Solo los auxiliares autorizados AHORA: Iván ya no aparece.
+    assert [b["text"] for b in tg_api.last_buttons()] == ["Ana", "Julio"]
+
+    await c.click(f"sel:{farm['julio']}", now=mins(4))
+    joined = "\n".join(tg_api.texts()[-3:])
+    assert "Reportando como Julio" in joined
+    assert "Anotado: Paracetamol 500" in joined and "Reportado por: Julio" in joined
+    # Elegir el nombre ES la confirmación: no queda ninguna pregunta de atribución abierta.
+    assert tg_api.last_buttons() == [] and "¿Los anoto" not in joined
+
+    async with sessions() as s:
+        obs = (
+            await s.execute(select(DemandObservation).order_by(DemandObservation.created_at))
+        ).scalars().all()
+        msg = (
+            await s.execute(
+                select(ChannelMessage).where(ChannelMessage.text == "falta paracetamol 500")
+            )
+        ).scalar_one()
+    assert [o.author_id for o in obs] == [farm["ana"], farm["julio"]]
+    assert {o.account_id for o in obs} == {a.account.id}
+    assert msg.attribution_status == "attributed"
+    assert msg.attribution_basis == "confirmed_after_identification"
 
 
 async def test_convertir_a_personal_desactiva_asociaciones_sin_borrar_historial(

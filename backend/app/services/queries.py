@@ -108,6 +108,26 @@ async def report_meta(
             )
         ).all()
     )
+    photos = dict(
+        (
+            await session.execute(
+                select(
+                    DemandObservation.demand_item_id, DemandObservation.attachment_id
+                )
+                .where(
+                    DemandObservation.organization_id == org,
+                    DemandObservation.demand_item_id.in_(ids),
+                    DemandObservation.attachment_id.is_not(None),
+                )
+                .ext(distinct_on(DemandObservation.demand_item_id))
+                .order_by(
+                    DemandObservation.demand_item_id,
+                    DemandObservation.created_at.desc(),
+                    DemandObservation.id.desc(),
+                )
+            )
+        ).all()
+    )
     first = dict(
         (
             await session.execute(
@@ -127,6 +147,8 @@ async def report_meta(
             "reported_by": i.reported_by,
             "reported_by_name": names.get(i.reported_by),
             "branch_label": branches.get(i.id),
+            # Fotografía original del reporte, si algún aviso vino con una.
+            "photo_attachment_id": photos.get(i.id),
             "cancelled_by_name": names.get(i.cancelled_by),
             "declared_quantity": declared.get(i.id, (None, None, None))[0],
             "declared_unit": declared.get(i.id, (None, None, None))[1],

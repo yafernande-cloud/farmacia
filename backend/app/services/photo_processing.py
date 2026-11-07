@@ -110,9 +110,13 @@ def _reply_text(
         return f"⚠️ {shown} está en carrito: no cambié la cantidad solicitada.{sim}{foot}"
     qty = _declared_text(res)
     if res.outcome == "attached_existing":
-        lead = f"✅ Anotado: {shown} — {qty} (ya estaba en tu lista)."
-    else:
-        lead = f"✅ Anotado: {shown} — {qty}."
+        # Repetición del mismo autor: la foto queda registrada, pero NO se crea otro reporte ni
+        # cambia la cantidad. Decir «Anotado» haría creer que sí se agregó de nuevo.
+        return (
+            f"ℹ️ {shown} ya está en tu lista: no lo agregué de nuevo. "
+            f"Tu reporte sigue como estaba.{sim}{foot}"
+        )
+    lead = f"✅ Anotado: {shown} — {qty}."
     missing: list[str] = []
     if parsed.name_anchor:
         missing.append("el principio activo")

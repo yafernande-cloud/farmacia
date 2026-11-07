@@ -315,8 +315,13 @@ class ParsedProduct:
                         if getattr(self, k) and getattr(self, k).basis in SOLID)  # fmt: skip
         return base + extra
 
-    @property
-    def display_name(self) -> str:
+    def display_parts(self) -> tuple[str, list[str]]:
+        """Nombre para mostrar, separado en encabezado y detalles (dosis, forma, contenido).
+
+        `" ".join([name, *details])` es EXACTAMENTE `display_name`: la identidad y la información
+        no cambian. La separación existe solo para que la interfaz pueda presentar nombres largos
+        en dos niveles sin recortarlos.
+        """
         # «Crema de manos», «Vitamina D»: minúsculas salvo las siglas escritas en mayúsculas.
         words = self.ingredient.title().split()
         name = " ".join(
@@ -324,20 +329,24 @@ class ParsedProduct:
         ) if words else ""
         if self.variant:
             name += f", variante {self.variant.value}"
-        parts = [name]
-        parts += [s.measure.label for s in self.strengths]
-        parts += [
+        details = [s.measure.label for s in self.strengths]
+        details += [
             f"{fmt(m.value)} (sin unidad)" if m.unit is None else f"{m.label} (rol por confirmar)"
             for m in self.unassigned
         ]
         if self.form:
-            parts.append(self.form.value)
+            details.append(self.form.value)
         if self.release:
-            parts.append(self.release.value)
+            details.append(self.release.value)
         if self.content:
             c = self.content.measure
-            parts.append(f"x {fmt(c.value)}" + ("" if c.unit == "un" else f" {c.unit}"))
-        return " ".join(parts)
+            details.append(f"x {fmt(c.value)}" + ("" if c.unit == "un" else f" {c.unit}"))
+        return name, details
+
+    @property
+    def display_name(self) -> str:
+        name, details = self.display_parts()
+        return " ".join([name, *details])
 
     # ---- (de)serialización, esquema v2
     def to_dict(self) -> dict:

@@ -267,6 +267,10 @@ async def _deactivate_active_auxiliaries(
             after={"active": False},
         )
     await session.flush()
+    if rows:
+        # Al dejar de ser un teléfono compartido cambia el conjunto autorizado: la próxima
+        # persona no puede seguir reportando con la selección anterior.
+        await sessions.revoke_account_sessions(session, account.id, now, by=actor_id)
     return len(rows)
 
 
@@ -345,17 +349,6 @@ async def add_account_auxiliary(
             status_code=422,
         )
 
-    before_count = (
-        await session.execute(
-            select(func.count())
-            .select_from(TelegramAccountAuxiliary)
-            .where(
-                TelegramAccountAuxiliary.account_id == account.id,
-                TelegramAccountAuxiliary.active,
-            )
-        )
-    ).scalar_one()
-
     link = (
         await session.execute(
             select(TelegramAccountAuxiliary)
@@ -389,6 +382,11 @@ async def add_account_auxiliary(
         link.deactivation_reason = None
 
     await session.flush()
+    # Cualquier cambio en los auxiliares habilitados invalida la selección vigente, aunque la
+    # persona elegida siga habilitada: la próxima que escriba debe volver a identificarse.
+    sessions_revoked = await sessions.revoke_account_sessions(
+        session, account.id, now, by=actor.id
+    )
     emit(
         session,
         org_id=actor.organization_id,
@@ -410,18 +408,12 @@ async def add_account_auxiliary(
             "account_id": str(account.id),
             "app_user_id": str(person.id),
             "display_name": person.display_name,
-            "sessions_revoked": 0,
+            "sessions_revoked": sessions_revoked,
         },
         before={"active": False} if reactivated else None,
         after={"active": True, "display_name": person.display_name},
     )
 
-    sessions_revoked = 0
-    if before_count == 1:
-        # 1 → 2: la próxima persona debe elegir; no se asume que sigue la misma.
-        sessions_revoked = await sessions.revoke_account_sessions(
-            session, account.id, now, by=actor.id
-        )
     return {
         "account_id": account.id,
         "app_user_id": person.id,
@@ -441,7 +433,11 @@ async def deactivate_account_auxiliary(
     reason: str | None = None,
     now: datetime | None = None,
 ) -> dict:
-    """Baja lógica en UNA cuenta y revocación de las sesiones de esa persona en esa cuenta."""
+    """Baja lógica en UNA cuenta; invalida la selección vigente de todos sus chats.
+
+    No basta con cerrar las sesiones de la persona dada de baja: cualquier cambio en el conjunto
+    de auxiliares autorizados invalida la selección, aunque la persona elegida siga habilitada.
+    """
     require(actor.roles, Permission.MANAGE_ACCOUNTS)
     now = now or _now()
     account = await _load_account(session, actor, account_id, lock=True)
@@ -467,8 +463,8 @@ async def deactivate_account_auxiliary(
     link.deactivation_reason = _clean_reason(reason)
     await session.flush()
 
-    sessions_revoked = await sessions.revoke_account_person_sessions(
-        session, account.id, app_user_id, now, by=actor.id
+    sessions_revoked = await sessions.revoke_account_sessions(
+        session, account.id, now, by=actor.id
     )
     emit(
         session,

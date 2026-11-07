@@ -59,6 +59,11 @@ def attributes_out(p: ParsedProduct) -> s.AttributesOut:
     )  # fmt: skip
 
 
+def _photo_url(attachment_id: uuid.UUID | None) -> str | None:
+    """Ruta relativa de la fotografía original; la interfaz la resuelve contra su base de API."""
+    return f"/api/v1/attachments/{attachment_id}/content" if attachment_id else None
+
+
 def item_out(
     i: DemandItem,
     agg: dict,
@@ -69,7 +74,9 @@ def item_out(
     meta: dict | None = None,
 ) -> s.DemandItemOut:
     count, last, reporters = agg.get(i.id, (0, None, []))
-    attrs = attributes_out(demand_svc.parsed_of_item(i))
+    parsed = demand_svc.parsed_of_item(i)
+    attrs = attributes_out(parsed)
+    name, details = parsed.display_parts()
     # Sin el cálculo de cobertura (detalle, comandos) se declara lo mínimo verificable: lo pedido
     # sigue pendiente de compra y no se inventa lo cotizado.
     cov = coverage or {
@@ -84,7 +91,9 @@ def item_out(
         ),
     }
     return s.DemandItemOut(
-        id=i.id, display_name=i.display_name, ingredient=i.ingredient, attributes=attrs,
+        id=i.id, display_name=i.display_name,
+        display_parts=s.DisplayPartsOut(name=name, details=details),
+        ingredient=i.ingredient, attributes=attrs,
         identity_complete=attrs.identity_complete, pending_validation=attrs.pending_validation,
         target_quantity=i.target_quantity, quantity_unit=i.quantity_unit,
         quantity_status="unknown" if i.target_quantity is None else "defined",
@@ -93,7 +102,11 @@ def item_out(
         observation_count=count, reporters=reporters, last_observed_at=last, created_at=i.created_at,
         reported_by=i.reported_by,
         reported_by_name=(meta or {}).get("reported_by_name"),
+        # La sucursal sigue en la respuesta (contrato y valor real de la cuenta); que la bandeja
+        # la muestre o no es decisión de la interfaz.
         branch_label=(meta or {}).get("branch_label"),
+        # Fotografía original del reporte, si algún aviso vino con una.
+        photo_url=_photo_url((meta or {}).get("photo_attachment_id")),
         declared_quantity=(meta or {}).get("declared_quantity"),
         declared_unit=(meta or {}).get("declared_unit"),
         requested_quantity=(meta or {}).get("declared_quantity"),
@@ -127,6 +140,7 @@ def obs_out(o: DemandObservation, author: str | None = None) -> s.ObservationOut
         match_status=o.match_status, candidates=o.candidates or [], attributes=attrs, created_at=o.created_at,
         source=o.source, identity_level=o.identity_level, data_origin=o.data_origin,
         interpretation=o.interpretation or {},
+        attachment_id=o.attachment_id, photo_url=_photo_url(o.attachment_id),
     )  # fmt: skip
 
 
