@@ -302,20 +302,59 @@ async def test_salida_truncada_nunca_se_parsea():
     assert exc.value.code == "output_truncated"
 
 
-def test_un_atributo_repetido_con_valores_distintos_es_salida_ambigua():
+def test_un_atributo_unico_repetido_con_valores_distintos_es_salida_ambigua():
     from app.interpretation.openai_vision import _extraction
 
     body = {
         "legibility": "clear",
         "fields": [
-            {"attribute": "strength", "text": "500 mg", "confidence": 0.9},
-            {"attribute": "strength", "text": "600 mg", "confidence": 0.9},
+            {"attribute": "content", "text": "20 comprimidos", "confidence": 0.9},
+            {"attribute": "content", "text": "30 comprimidos", "confidence": 0.9},
         ],
         "warnings": [],
     }
     with pytest.raises(VisionFailed) as exc:
         _extraction(body, {"model": "gpt-vision-test"}, "gpt-vision-test")
-    assert exc.value.detail == "duplicate_attribute:strength"
+    assert exc.value.detail == "duplicate_attribute:content"
+
+
+async def test_medicamento_combinado_conserva_los_dos_principios_y_sus_dosis():
+    """Tramadol/paracetamol 37,5/325 mg: dos `ingredient` y dos `strength` son legítimos."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return _ok(
+            {
+                "legibility": "clear",
+                "fields": [
+                    {"attribute": "product_name", "text": "Tramadol/Paracetamol", "confidence": 0.95},
+                    {"attribute": "ingredient", "text": "tramadol clorhidrato", "confidence": 0.9},
+                    {"attribute": "strength", "text": "37,5 mg", "confidence": 0.9},
+                    {"attribute": "ingredient", "text": "paracetamol", "confidence": 0.9},
+                    {"attribute": "strength", "text": "325 mg", "confidence": 0.9},
+                    {"attribute": "form", "text": "comprimidos", "confidence": 0.95},
+                    {"attribute": "content", "text": "30 comprimidos", "confidence": 0.95},
+                ],
+                "warnings": [],
+            }
+        )
+
+    ext = await _interpreter(handler).extract(fake_jpeg(33), "image/jpeg", None)
+    ingredients = [f.text for f in ext.fields if f.attribute == "ingredient"]
+    strengths = [f.text for f in ext.fields if f.attribute == "strength"]
+    assert ingredients == ["tramadol clorhidrato", "paracetamol"]
+    assert strengths == ["37,5 mg", "325 mg"]
+
+    reading = read_extraction(ext)
+    parsed = reading.parsed
+    assert parsed is not None and reading.status.value == "identified"
+    assert parsed.ingredient == "tramadol clorhidrato paracetamol"
+    assert [(s.measure.value, s.measure.unit) for s in parsed.strengths] == [
+        (37.5, "mg"),
+        (325, "mg"),
+    ]
+    assert parsed.form.value == "comprimido" and parsed.content.measure.value == 30
+    # El nombre comercial que se lee se conserva como marca (no se deduce nada más).
+    assert parsed.brand.value == "Tramadol/Paracetamol"
 
 
 async def test_un_texto_largo_valido_se_recorta_y_no_anula_la_lectura():

@@ -190,7 +190,18 @@ def read_extraction(ext: VisionExtraction) -> ImageReading:
             unc.append(f"low_confidence:{f.attribute}")
         else:
             use.setdefault(f.attribute, []).append(f.text.strip())
-    ingredient = (use.get("ingredient") or [None])[0]
+    # Un medicamento combinado tiene varios principios activos (p. ej. tramadol + paracetamol):
+    # se conservan todos, en el orden leído, y sus dosis siguen en `strengths` (una por
+    # componente). El parser determinista ya acepta esa forma; no se elige uno ni se descarta
+    # la lectura por tener más de uno. El mismo principio escrito dos veces se cuenta una sola.
+    ingredients: list[str] = []
+    seen_ingredients: set[str] = set()
+    for name in use.get("ingredient") or []:
+        key = normalize_name(name)
+        if key and key not in seen_ingredients:
+            seen_ingredients.add(key)
+            ingredients.append(name)
+    ingredient = " ".join(ingredients) if ingredients else None
     brand_seen = (use.get("brand") or use.get("product_name") or [None])[0]
     anchor = False
     if not ingredient:
@@ -213,6 +224,18 @@ def read_extraction(ext: VisionExtraction) -> ImageReading:
             None, VisionStatus.NEEDS_REVIEW, [*unc, f"unparseable:{e.code}"], ignored
         )
     p = replace(_tag_image(p), name_anchor=anchor)
+    # La misma dosis escrita de dos formas («37,5 mg» y «37.5 mg») es una sola: no debe
+    # duplicarse en la identidad ni en el nombre mostrado.
+    seen_strengths: set[str] = set()
+    strengths = []
+    for s in p.strengths:
+        norm = s.measure.normalized()
+        key = norm.key if norm else s.measure.label
+        if key not in seen_strengths:
+            seen_strengths.add(key)
+            strengths.append(s)
+    if len(strengths) != len(p.strengths):
+        p = replace(p, strengths=tuple(strengths))
     variant = (use.get("variant") or [None])[0]
     if variant:
         p = replace(p, variant=Attr(variant, Basis.INFERRED, "image"))

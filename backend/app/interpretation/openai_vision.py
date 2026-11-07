@@ -48,6 +48,10 @@ MAX_PROVIDER_CODE = 64
 MAX_REQUEST_ID = 128
 MAX_DETAIL = 64
 _SAFE_TOKEN = re.compile(r"[^A-Za-z0-9_.:-]")
+# Un medicamento combinado tiene un principio activo y una dosis por componente: repetir estos
+# atributos con valores distintos es legítimo. El resto (nombre, marca, forma, contenido…) es
+# único y dos valores distintos sí son una contradicción.
+MULTI_VALUED = {"ingredient", "strength", "concentration"}
 
 
 def _safe_token(value: object, limit: int) -> str | None:
@@ -108,8 +112,12 @@ SYSTEM_PROMPT = """Eres un lector de envases de farmacia. Mira la fotografía y 
 JSON del esquema pedido. Reglas:
 - No inventes. Si un dato no se ve con claridad, no lo incluyas.
 - Cada dato va en su propio atributo: no mezcles principio activo con marca, ni dosis con contenido.
-- `ingredient`: principio activo (paracetamol, ibuprofeno), solo si está escrito.
-- `product_name`: nombre comercial tal como aparece en el envase.
+- `ingredient`: principio activo (paracetamol, ibuprofeno), solo si está escrito. Si el envase
+  muestra **varios** principios activos (medicamento combinado), incluye un campo `ingredient`
+  por cada uno y un campo `strength` por cada dosis, en el mismo orden en que aparecen.
+- `product_name`: nombre comercial tal como aparece en el envase. Los atributos únicos (nombre,
+  marca, laboratorio, forma, contenido, envase) van una sola vez; si ves dos valores distintos
+  para uno de ellos, no elijas: usa `warnings`.
 - `brand`: marca comercial. `laboratory`: laboratorio fabricante. `manufacturer`,
   `registration_holder`, `marketer`: solo si aparecen escritos y son entidades distintas.
 - `variant`: variante visible (aroma, sabor, color, edición), tal como se lee.
@@ -401,7 +409,7 @@ def _extraction(body: object, response: dict, fallback_model: str) -> VisionExtr
     if len(raw_fields) > MAX_FIELDS:
         raise VisionFailed("invalid_response", detail="too_many_fields")
     fields: list[VisionField] = []
-    seen: dict[str, str] = {}
+    seen: dict[str, set[str]] = {}
     for item in raw_fields:
         if not isinstance(item, dict):
             raise VisionFailed("invalid_response", detail="field_not_object")
@@ -422,12 +430,14 @@ def _extraction(body: object, response: dict, fallback_model: str) -> VisionExtr
         ):
             raise VisionFailed("invalid_response", detail=f"bad_confidence:{attribute}")
         clean = clean[:MAX_TEXT]  # el esquema no limita el largo: se recorta, no se descarta
-        if attribute in seen:
-            if seen[attribute] == clean:
-                continue  # repetición idéntica: un solo campo
-            # Valores distintos para el mismo atributo sí son ambiguos: no se elige uno al azar.
+        values = seen.setdefault(attribute, set())
+        if clean in values:
+            continue  # repetición idéntica: un solo campo, también en los atributos múltiples
+        if attribute not in MULTI_VALUED and values:
+            # Dos valores distintos para un atributo único (nombre, marca, contenido…) son
+            # contradictorios: no se elige uno al azar.
             raise VisionFailed("invalid_response", detail=f"duplicate_attribute:{attribute}")
-        seen[attribute] = clean
+        values.add(clean)
         fields.append(VisionField(attribute, clean, float(confidence)))
     warnings = tuple(
         w.strip()[:MAX_TEXT] for w in raw_warnings if isinstance(w, str) and w.strip()

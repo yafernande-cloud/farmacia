@@ -309,6 +309,52 @@ def test_migranol_nada_de_lo_leido_de_la_imagen_queda_confirmado():
     assert all(a.basis is Basis.INFERRED and a.origin == "image" for a in atributos)
 
 
+COMBINADO = VisionExtraction("live", "openai", "gpt-vision-test", "clear", (
+    VisionField("product_name", "Tramadol/Paracetamol Seven Pharma", .95),
+    VisionField("ingredient", "tramadol clorhidrato", .9), VisionField("strength", "37,5 mg", .9),
+    VisionField("ingredient", "paracetamol", .9), VisionField("strength", "325 mg", .9),
+    VisionField("form", "comprimidos", .95), VisionField("content", "30 comprimidos", .95),
+    VisionField("laboratory", "Seven Pharma", .9)))  # fmt: skip
+
+
+def test_combinado_conserva_ambos_principios_y_sus_dosis():
+    """Tramadol/paracetamol 37,5/325 mg: dos principios activos no son una contradicción."""
+    r = read_extraction(COMBINADO)
+    x = r.parsed
+    assert r.status is VisionStatus.IDENTIFIED
+    assert x.ingredient == "tramadol clorhidrato paracetamol"
+    assert [(s.measure.value, s.measure.unit) for s in x.strengths] == [
+        (D(37.5), "mg"),
+        (D(325), "mg"),
+    ]
+    assert x.form.value == "comprimido" and x.content.measure.value == 30
+    assert x.brand.value == "Tramadol/Paracetamol Seven Pharma"
+    assert x.laboratory.value == "Seven Pharma"
+    assert "active_ingredient_not_visible" not in r.uncertainties
+    assert "strength_not_visible" not in r.uncertainties
+    # Todo lo leído de la imagen sigue siendo inferencia, nunca confirmación.
+    assert all(s.origin == "image" and s.basis is Basis.INFERRED for s in x.strengths)
+
+
+def test_otro_combinado_de_dos_principios_tambien_se_lee():
+    ext = VisionExtraction("live", "openai", "gpt-vision-test", "clear", (
+        VisionField("ingredient", "amoxicilina", .9), VisionField("strength", "500 mg", .9),
+        VisionField("ingredient", "ácido clavulánico", .9), VisionField("strength", "125 mg", .9),
+        VisionField("form", "comprimidos", .9), VisionField("content", "21 comprimidos", .9)))  # fmt: skip
+    x = read_extraction(ext).parsed
+    assert x.ingredient == "amoxicilina acido clavulanico"
+    assert sorted(s.measure.value for s in x.strengths) == [D(125), D(500)]
+    assert x.form.value == "comprimido" and x.content.measure.value == 21
+
+
+def test_una_misma_dosis_repetida_con_otro_formato_no_se_duplica():
+    ext = VisionExtraction("live", "openai", "gpt-vision-test", "clear", (
+        VisionField("ingredient", "tramadol", .9),
+        VisionField("strength", "37,5 mg", .9), VisionField("strength", "37.5 mg", .9)))  # fmt: skip
+    x = read_extraction(ext).parsed
+    assert [(s.measure.value, s.measure.unit) for s in x.strengths] == [(D(37.5), "mg")]
+
+
 def test_migranol_sin_catalogo_no_hay_candidatos_inventados():
     x = read_extraction(MIGRANOL).parsed
     assert interpret_with_parsed(x, ctx_=ctx()).candidates == []
