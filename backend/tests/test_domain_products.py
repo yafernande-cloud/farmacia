@@ -1,11 +1,13 @@
 """Modelo de producto: separación de atributos, unidades, procedencia y compatibilidad."""
 
+from dataclasses import replace
 from decimal import Decimal as D
 
 import pytest
 
 from app.core.errors import DomainError
 from app.domain.products import (
+    Attr,
     Basis,
     ConfirmPatch,
     ParsedProduct,
@@ -13,6 +15,7 @@ from app.domain.products import (
     apply_alias,
     apply_confirmation,
     compare,
+    is_commercial_variant,
 )
 from app.domain.products import (
     parse_shortage_text as p,
@@ -327,3 +330,98 @@ def test_cada_medida_cita_lo_que_la_persona_escribio(txt, written):
 def test_contenido_y_envase_tambien_citan_el_texto_escrito():
     r = p("ibuprofeno Caja de 20 Comprimidos")
     assert r.content.measure.original_text == "Caja de 20 Comprimidos"
+
+
+# ---------- nombre comercial visible y consulta de búsqueda ----------
+
+
+def test_nombre_comercial_manda_y_la_indicacion_no_es_variante():
+    """Caso Predual: el envase identifica el producto; la indicación no es una variante."""
+    prod = replace(
+        p("paracetamol mefenamina comprimido x 10"),
+        product_name=Attr("Predual", Basis.INFERRED, "image"),
+        brand=Attr("Predual", Basis.INFERRED, "image"),
+        variant=Attr("ANALGÉSICO FEMENINO", Basis.INFERRED, "image"),
+    )
+
+    name, details = prod.display_parts()
+    assert name == "Predual"
+    assert details == ["comprimido", "x 10"]
+    assert prod.display_name == "Predual comprimido x 10"
+    assert prod.search_query == "Predual"
+    # Los principios activos siguen disponibles para la identidad farmacéutica.
+    assert prod.ingredient == "paracetamol mefenamina"
+
+
+def test_una_variante_real_si_se_conserva_como_detalle_con_nombre_comercial():
+    prod = replace(
+        p("crema de manos 50 ml"),
+        product_name=Attr("Vitaderm", Basis.INFERRED, "image"),
+        variant=Attr("Berry Warm", Basis.INFERRED, "image"),
+    )
+    assert prod.display_name == "Vitaderm variante Berry Warm x 50 ml"
+    assert prod.search_query == "Vitaderm"
+
+
+def test_nombre_comercial_por_texto_no_incluye_la_presentacion_en_la_busqueda():
+    prod = p("Predual 10 comprimidos")
+    assert prod.display_name == "Predual comprimido x 10"
+    assert prod.search_query == "Predual"
+
+
+def test_marca_explicita_es_nombre_comercial_pero_el_laboratorio_no():
+    con_marca = p("paracetamol 500 mg marca Genfar")
+    assert con_marca.commercial_name is not None
+    assert con_marca.display_name == "Genfar 500 mg"
+    assert con_marca.search_query == "Genfar"
+
+    con_lab = p("paracetamol 500 mg lab Saval")
+    assert con_lab.laboratory is not None
+    assert con_lab.commercial_name is None
+    assert con_lab.display_name == "Paracetamol 500 mg"
+    assert con_lab.search_query == "Paracetamol 500 mg"
+
+
+def test_sin_nombre_comercial_la_busqueda_usa_lo_disponible_sin_inventar():
+    dosis = p("ibuprofeno 400 mg")
+    assert dosis.commercial_name is None
+    assert dosis.search_query == "Ibuprofeno 400 mg"
+
+    presentacion = p("crema de manos 50 ml")
+    assert presentacion.commercial_name is None
+    assert presentacion.search_query == "Crema de manos 50 ml"
+
+
+def test_registro_historico_con_marca_se_muestra_y_busca_corregido_sin_migrar():
+    guardado = p("paracetamol mefenamina comprimido x 10").to_dict()
+    guardado["brand"] = {"value": "Predual", "basis": "inferred", "origin": "image"}
+    guardado["variant"] = {
+        "value": "ANALGÉSICO FEMENINO",
+        "basis": "inferred",
+        "origin": "image",
+    }
+
+    historico = ParsedProduct.from_dict(guardado)
+    assert historico.display_name == "Predual comprimido x 10"
+    assert historico.search_query == "Predual"
+    assert historico.ingredient == "paracetamol mefenamina"
+
+
+def test_product_name_se_serializa_y_vuelve_sin_perder_la_identidad():
+    prod = replace(
+        p("paracetamol mefenamina comprimido x 10"),
+        product_name=Attr("Predual", Basis.INFERRED, "image"),
+        brand=Attr("Predual", Basis.INFERRED, "image"),
+    )
+    vuelto = ParsedProduct.from_dict(prod.to_dict())
+    assert vuelto.product_name == prod.product_name
+    assert vuelto.display_name == prod.display_name
+    assert vuelto.search_query == prod.search_query
+
+
+def test_indicacion_no_es_variante_pero_un_sabor_real_si():
+    assert not is_commercial_variant("ANALGÉSICO FEMENINO")
+    assert not is_commercial_variant("Alivio del dolor")
+    assert not is_commercial_variant("Para niños")
+    assert is_commercial_variant("Berry Warm")
+    assert is_commercial_variant("Sabor Tostado")  # «tos» no debe comerse «tostado»

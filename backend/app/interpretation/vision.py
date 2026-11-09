@@ -31,6 +31,7 @@ from app.domain.products import (
     Basis,
     ContentAttr,
     ParsedProduct,
+    is_commercial_variant,
     normalize_name,
     parse_shortage_text,
     valid_gtin,
@@ -202,7 +203,9 @@ def read_extraction(ext: VisionExtraction) -> ImageReading:
             seen_ingredients.add(key)
             ingredients.append(name)
     ingredient = " ".join(ingredients) if ingredients else None
-    brand_seen = (use.get("brand") or use.get("product_name") or [None])[0]
+    # El nombre comercial visible manda sobre la marca genérica: es el identificador que la
+    # persona reconoce y el que las cadenas entienden («Predual», no una descripción larga).
+    brand_seen = (use.get("product_name") or use.get("brand") or [None])[0]
     anchor = False
     if not ingredient:
         unc.append("active_ingredient_not_visible")
@@ -238,7 +241,12 @@ def read_extraction(ext: VisionExtraction) -> ImageReading:
         p = replace(p, strengths=tuple(strengths))
     variant = (use.get("variant") or [None])[0]
     if variant:
-        p = replace(p, variant=Attr(variant, Basis.INFERRED, "image"))
+        # «ANALGÉSICO FEMENINO» es una indicación, no una variante comercial (aroma, sabor, color
+        # o edición). Se descarta para el nombre/búsqueda, pero queda en la extracción original.
+        if is_commercial_variant(variant):
+            p = replace(p, variant=Attr(variant, Basis.INFERRED, "image"))
+        else:
+            unc.append("variant_not_commercial")
     if not p.strengths and not p.unassigned:
         unc.append("strength_not_visible")
     ent: dict[str, Attr] = {}
@@ -256,10 +264,13 @@ def read_extraction(ext: VisionExtraction) -> ImageReading:
             m = REG_RE.search(v.lower().replace("-", " "))
             v = f"{m.group('l').upper()}-{m.group('n')}/{m.group('y')}" if m else v
         ent[k] = Attr(v, Basis.INFERRED, "image")
-    if use.get("product_name") and "brand" not in ent:
-        ent["brand"] = Attr(
-            use["product_name"][0], Basis.INFERRED, "image"
-        )  # tal como se ve (con ®)
+    if use.get("product_name"):
+        # Se conserva aparte, tal como se ve (con ®). El nombre comercial no es el laboratorio.
+        ent["product_name"] = Attr(use["product_name"][0], Basis.INFERRED, "image")
+        # Compatibilidad con la identidad comercial existente: si no hay marca explícita, el
+        # nombre comercial también sirve de marca para los registros y la deduplicación actuales.
+        if "brand" not in ent:
+            ent["brand"] = Attr(use["product_name"][0], Basis.INFERRED, "image")
     p = replace(p, original_text="[imagen] " + " ".join(parts), **ent)
     status = VisionStatus.IDENTIFIED if ext.legibility == "clear" else VisionStatus.NEEDS_REVIEW
     if ext.legibility == "partial":
@@ -322,6 +333,7 @@ def merge_text_and_image(
         form=pick("form", text.form, image.form), release=pick("release", text.release, image.release),
         packaging=pick("packaging", text.packaging, image.packaging),
         variant=pick("variant", text.variant, image.variant),
+        product_name=pick("product_name", text.product_name, image.product_name),
         requested_quantity=text.requested_quantity, requested_unit=text.requested_unit,
         **{k: pick(k, getattr(text, k), getattr(image, k)) for k in COMMERCIAL_FIELDS},
     )  # fmt: skip

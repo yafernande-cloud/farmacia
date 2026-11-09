@@ -83,10 +83,28 @@ async def test_nombre_largo_se_expone_en_dos_niveles_sin_perder_informacion(api)
     assert parts["name"] == "Tramadol clorhidrato paracetamol"
     assert parts["details"] == ["37.5 mg", "325 mg", "comprimido", "x 30"]
     assert " ".join([parts["name"], *parts["details"]]) == item["display_name"]
+    assert item["search_query"] == "Tramadol clorhidrato paracetamol 37.5 mg 325 mg"
     assert item["photo_url"] is None  # aviso de texto: no hay fotografía que mostrar
 
     row = next(i for i in (await lst(api))["items"] if i["id"] == item["id"])
     assert row["display_parts"] == parts and row["display_name"] == item["display_name"]
+    assert row["search_query"] == item["search_query"]
+
+
+async def test_busqueda_usa_el_nombre_comercial_corto_no_la_descripcion_completa(api):
+    """Si hay nombre comercial, «Buscar» recibe ese nombre y no la ficha farmacológica entera."""
+    item = (await report(api, "ana", "falta paracetamol 500 mg marca Genfar")).json()["item"]
+    assert item["display_name"] == "Genfar 500 mg"
+    assert item["search_query"] == "Genfar"
+
+    row = next(i for i in (await lst(api))["items"] if i["id"] == item["id"])
+    assert row["search_query"] == "Genfar"
+
+
+async def test_busqueda_sin_nombre_comercial_usa_principio_y_dosis_sin_inventar(api):
+    item = (await report(api, "ana", "falta ibuprofeno 400 mg")).json()["item"]
+    assert item["display_name"] == "Ibuprofeno 400 mg"
+    assert item["search_query"] == "Ibuprofeno 400 mg"
 
 
 async def test_bandeja_expone_la_sucursal_real_y_la_conserva_en_el_historico(api, sessions):

@@ -94,9 +94,11 @@ def item_out(
         ),
     }
     return s.DemandItemOut(
-        id=i.id, display_name=i.display_name,
+        # Se calcula desde los atributos guardados: un faltante histórico que ya trae el nombre
+        # comercial en `attributes` se muestra corregido sin reescribir la base.
+        id=i.id, display_name=" ".join([name, *details]),
         display_parts=s.DisplayPartsOut(name=name, details=details),
-        ingredient=i.ingredient, attributes=attrs,
+        ingredient=i.ingredient, search_query=parsed.search_query, attributes=attrs,
         identity_complete=attrs.identity_complete, pending_validation=attrs.pending_validation,
         target_quantity=i.target_quantity, quantity_unit=i.quantity_unit,
         quantity_status="unknown" if i.target_quantity is None else "defined",

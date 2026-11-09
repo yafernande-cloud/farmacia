@@ -102,6 +102,35 @@ async def test_envia_la_imagen_y_devuelve_solo_lo_visible():
     assert "visible_quantity_not_a_requested_quantity" in reading.ignored
 
 
+def test_product_name_manda_sobre_los_principios_y_la_indicacion_no_es_variante():
+    """Caso real Predual: GPT-4.1-mini vio el nombre comercial y la indicación por separado."""
+    ext = VisionExtraction(
+        mode="live",
+        provider="openai",
+        model="gpt-4.1-mini",
+        legibility="clear",
+        fields=(
+            VisionField("product_name", "Predual", 0.95),
+            VisionField("ingredient", "Paracetamol", 0.90),
+            VisionField("ingredient", "Mefenamina", 0.90),
+            VisionField("variant", "ANALGÉSICO FEMENINO", 0.80),
+            VisionField("form", "comprimido", 0.90),
+            VisionField("content", "10", 0.90),
+        ),
+    )
+
+    reading = read_extraction(ext)
+    assert reading.parsed is not None
+    prod = reading.parsed
+    assert prod.product_name is not None and prod.product_name.value == "Predual"
+    assert prod.brand is not None and prod.brand.value == "Predual"
+    assert prod.ingredient == "paracetamol mefenamina"
+    assert prod.variant is None  # una indicación no es variante comercial
+    assert "variant_not_commercial" in reading.uncertainties
+    assert prod.display_name == "Predual comprimido x 10"
+    assert prod.search_query == "Predual"
+
+
 async def test_timeout_se_reintenta_una_vez_y_luego_falla_sin_colgar():
     calls = 0
 

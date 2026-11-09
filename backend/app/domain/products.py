@@ -139,6 +139,36 @@ def normalize_name(text: str) -> str:
     return " ".join(re.sub(r"[^a-z0-9 ]", " ", t).split())
 
 
+# Una `variant` es aroma, sabor, color o edición. Estas raíces delatan una indicación
+# terapéutica, un síntoma o un público objetivo: no son una variante comercial y no deben
+# contaminar el nombre visible ni la búsqueda. La lista es deliberadamente conservadora: solo
+# rechaza términos inequívocos, nunca nombres comerciales completos.
+_INDICATION_STEMS = (
+    "analgesic", "antiinflamat", "antigripal", "antialerg", "antidiarre", "antiacid",
+    "descongestion", "antitus", "laxante", "alivio", "dolor", "fiebre", "tos", "gripe",
+    "resfrio", "congestion", "acidez", "femenin", "masculin", "infantil", "pediatric", "adulto",
+    "nino", "bebe",
+)  # fmt: skip
+
+
+def is_commercial_variant(value: str) -> bool:
+    """¿El texto parece una variante comercial y no una indicación terapéutica?"""
+    words = normalize_name(value).split()
+    # Las raíces cortas («tos») solo rechazan la palabra exacta; si no, «tostado» dejaría de ser
+    # una variante legítima. Las raíces largas sí admiten terminaciones («analgésico/a/s»).
+    return not any(
+        word == stem if len(stem) <= 3 else word.startswith(stem)
+        for word in words
+        for stem in _INDICATION_STEMS
+    )
+
+
+def _display_heading(text: str) -> str:
+    """«Crema de manos», «Vitamina D»: minúsculas salvo las siglas escritas en mayúsculas."""
+    words = text.title().split()
+    return " ".join([words[0], *(w if w.isupper() else w.lower() for w in words[1:])]) if words else ""
+
+
 def valid_gtin(code: str) -> bool:
     """GTIN-8/12/13/14 con dígito verificador correcto (módulo 10)."""
     if not code.isdigit() or len(code) not in (8, 12, 13, 14):
@@ -217,6 +247,9 @@ class ParsedProduct:
     # Identidad COMERCIAL (HLD §7.1): entidades distintas; ninguna se deduce de otra ni del aspecto
     # del envase. Desconocido = None. Mismo principio+potencia+presentación con otro laboratorio
     # NO es el mismo artículo comercial.
+    # Nombre comercial principal leído (p. ej. «Predual»). Es DISTINTO de la marca, del laboratorio
+    # y del principio activo; cuando existe, manda en el nombre visible y en la búsqueda.
+    product_name: Attr | None = None
     brand: Attr | None = None  # nombre o marca comercial
     variant: Attr | None = None  # variante comercial visible (p. ej. «Berry Warm»)
     laboratory: Attr | None = None  # laboratorio farmacéutico
@@ -315,6 +348,34 @@ class ParsedProduct:
                         if getattr(self, k) and getattr(self, k).basis in SOLID)  # fmt: skip
         return base + extra
 
+    @property
+    def commercial_name(self) -> Attr | None:
+        """Nombre comercial que debe mandar en pantalla y búsqueda.
+
+        `product_name` (lo que dice el envase) tiene prioridad sobre `brand` (marca genérica). Si
+        `name_anchor` es True, `ingredient` ya guarda el nombre leído y no se duplica aquí: así se
+        conserva el tratamiento histórico de productos sin principio activo visible.
+        """
+        if self.name_anchor:
+            return None
+        return self.product_name or self.brand
+
+    @property
+    def search_query(self) -> str:
+        """Consulta corta y útil para las cadenas: nombre comercial si existe; si no, lo disponible.
+
+        Nunca concatena una descripción farmacológica larga cuando hay un nombre comercial: eso es
+        justamente lo que hacía fallar la búsqueda de «Predual».
+        """
+        commercial = self.commercial_name
+        if commercial:
+            return " ".join(commercial.value.split())
+        parts = [_display_heading(self.ingredient)]
+        parts.extend(s.measure.label for s in self.strengths)
+        if not self.strengths and self.content and self.content.measure.unit in ("ml", "l", "g"):
+            parts.append(self.content.measure.label)
+        return " ".join(p for p in parts if p).strip()
+
     def display_parts(self) -> tuple[str, list[str]]:
         """Nombre para mostrar, separado en encabezado y detalles (dosis, forma, contenido).
 
@@ -322,14 +383,20 @@ class ParsedProduct:
         no cambian. La separación existe solo para que la interfaz pueda presentar nombres largos
         en dos niveles sin recortarlos.
         """
-        # «Crema de manos», «Vitamina D»: minúsculas salvo las siglas escritas en mayúsculas.
-        words = self.ingredient.title().split()
-        name = " ".join(
-            [words[0], *(w if w.isupper() else w.lower() for w in words[1:])]
-        ) if words else ""
-        if self.variant:
-            name += f", variante {self.variant.value}"
-        details = [s.measure.label for s in self.strengths]
+        commercial = self.commercial_name
+        name = _display_heading(commercial.value if commercial else self.ingredient)
+        # Una indicación («ANALGÉSICO FEMENINO») nunca es una variante comercial. Los registros
+        # históricos pueden traerla guardada; se ignora al mostrar sin reescribir la base.
+        variant = self.variant.value if self.variant and is_commercial_variant(self.variant.value) else None
+        details: list[str] = []
+        if commercial:
+            # Con nombre comercial, la variante real es un detalle, no parte del nombre.
+            if variant:
+                details.append(f"variante {variant}")
+        elif variant:
+            # Sin nombre comercial se conserva el formato histórico («Crema de manos, variante …»).
+            name += f", variante {variant}"
+        details += [s.measure.label for s in self.strengths]
         details += [
             f"{fmt(m.value)} (sin unidad)" if m.unit is None else f"{m.label} (rol por confirmar)"
             for m in self.unassigned
@@ -358,7 +425,7 @@ class ParsedProduct:
             "unassigned": [m.to_dict() for m in self.unassigned],
             "name_anchor": self.name_anchor,
         }  # fmt: skip
-        for k in ("form", "packaging", "release", "variant", *COMMERCIAL_FIELDS):
+        for k in ("form", "packaging", "release", "variant", "product_name", *COMMERCIAL_FIELDS):
             a = getattr(self, k)
             if a:
                 d[k] = {"value": a.value, "basis": a.basis.value, "origin": a.origin}
@@ -385,7 +452,7 @@ class ParsedProduct:
             strengths=tuple(StrengthAttr(Measure.from_dict(s["measure"]), s["kind"], Basis(s["basis"]),
                                          s.get("role_rule", "unit"), s.get("origin", "text")) for s in d.get("strengths", [])),
             form=attr("form"), packaging=attr("packaging"), release=attr("release"),
-            variant=attr("variant"),
+            variant=attr("variant"), product_name=attr("product_name"),
             **{k: attr(k) for k in COMMERCIAL_FIELDS},
             content=ContentAttr(Measure.from_dict(c["measure"]), Basis(c["basis"]), c.get("origin", "text")) if c else None,
             unassigned=tuple(Measure.from_dict(m) for m in d.get("unassigned", [])),

@@ -115,12 +115,18 @@ JSON del esquema pedido. Reglas:
 - `ingredient`: principio activo (paracetamol, ibuprofeno), solo si está escrito. Si el envase
   muestra **varios** principios activos (medicamento combinado), incluye un campo `ingredient`
   por cada uno y un campo `strength` por cada dosis, en el mismo orden en que aparecen.
-- `product_name`: nombre comercial tal como aparece en el envase. Los atributos únicos (nombre,
-  marca, laboratorio, forma, contenido, envase) van una sola vez; si ves dos valores distintos
-  para uno de ellos, no elijas: usa `warnings`.
-- `brand`: marca comercial. `laboratory`: laboratorio fabricante. `manufacturer`,
-  `registration_holder`, `marketer`: solo si aparecen escritos y son entidades distintas.
-- `variant`: variante visible (aroma, sabor, color, edición), tal como se lee.
+- `product_name`: nombre comercial principal tal como aparece en el envase (por ejemplo,
+  «Predual»). Inclúyelo siempre que sea legible, aunque también se vean los principios activos.
+  Es el nombre que identifica al producto: NUNCA lo sustituyas por el principio activo ni por el
+  laboratorio. Los atributos únicos (nombre, marca, laboratorio, forma, contenido, envase) van una
+  sola vez; si ves dos valores distintos para uno de ellos, no elijas: usa `warnings`.
+- `brand`: marca comercial, distinta del nombre del producto. `laboratory`: laboratorio
+  fabricante. `manufacturer`, `registration_holder`, `marketer`: solo si aparecen escritos y son
+  entidades distintas. El laboratorio NUNCA es el nombre comercial.
+- `variant`: variante comercial visible (aroma, sabor, color, edición), tal como se lee. No es una
+  variante una indicación terapéutica, un síntoma, un público objetivo ni una frase promocional
+  («analgésico femenino», «alivio del dolor», «para niños»): si solo ves eso, no lo pongas como
+  `variant`; omítelo o menciónalo en `warnings`.
 - `strength`: potencia o dosis (500 mg, 100 mg/5 ml, 2,5 %). `concentration`: concentración.
 - `content`: contenido del envase (50 ml, 20 comprimidos, 400 ml).
 - `form`: forma farmacéutica (comprimido, jarabe, crema).

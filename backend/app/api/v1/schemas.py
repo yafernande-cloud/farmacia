@@ -204,6 +204,10 @@ class DemandItemOut(BaseModel):
         "en tarjetas angostas. No altera la identidad del producto.",
     )
     ingredient: str
+    search_query: str = Field(
+        description="Consulta corta para las cadenas: nombre comercial si existe; si no, la "
+        "información disponible (principio activo, dosis y contenido). No altera la identidad."
+    )
     attributes: AttributesOut
     identity_complete: bool
     pending_validation: list[PendingOut]
