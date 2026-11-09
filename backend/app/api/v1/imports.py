@@ -50,13 +50,13 @@ async def _read_limited(upload: UploadFile) -> bytes:
     "/imports",
     response_model=s.ImportResult,
     responses=ERRORS_IMPORT,
-    summary="Importar una lista de precios (XLSX) de un proveedor",
+    summary="Importar una lista de precios (.xlsx, .xls o .csv) de un proveedor",
 )
 async def import_file(
     session: Session,
     actor: StrongActor,
     idempotency_key: IdemKey,
-    file: Annotated[UploadFile, File(description="Planilla .xlsx original del proveedor")],
+    file: Annotated[UploadFile, File(description="Archivo .xlsx, .xls o .csv original del proveedor")],
     supplier_id: Annotated[uuid.UUID, Form()],
     source_id: Annotated[uuid.UUID, Form()],
 ):

@@ -13,10 +13,16 @@ dependencies = [
     "alembic>=1.13",
     # Validación de los JWT de Supabase Auth contra su JWKS (claves asimétricas).
     "PyJWT[crypto]>=2.8",
+    # Cifrado en reposo de las credenciales de portales (A3): `app.core.credentials` importa
+    # `cryptography.fernet` directamente, así que no se deja como dependencia transitiva.
+    "cryptography>=50,<51",
     # Lectura de las planillas .xlsx ORIGINALES de los proveedores (E8). `defusedxml` es lo que hace
     # que openpyxl no expanda entidades XML de archivos no confiables.
     "openpyxl>=3.1,<4",
     "defusedxml>=0.7,<1",
+    # Planillas .xls antiguas (BIFF). `xlrd` 2.x solo lee .xls, que es exactamente lo que falta:
+    # openpyxl no abre el formato binario anterior a Office 2007.
+    "xlrd>=2,<3",
     # Parseo del `multipart/form-data` del endpoint E8 (`POST /api/v1/imports`).
     "python-multipart>=0.0.9,<1",
     # Llamadas HTTP del adaptador de OpenAI (Responses API). Sin SDK: el proveedor queda detrás

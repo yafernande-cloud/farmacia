@@ -15,6 +15,7 @@ from app.models.catalog import (
     ShippingTermsSnapshot,
     Source,
     Supplier,
+    SupplierCredential,
     SupplierProductMapping,
     TradeItem,
     TradeItemAlias,
@@ -45,6 +46,7 @@ from app.models.demand import (
     QuantityEvent,
 )
 from app.models.events import AuditEvent, OutboxEvent
+from app.models.photo import TempPhoto
 from app.models.quote import (
     RETIRED_SUBJECT_KINDS,
     CommercialObservation,
@@ -68,7 +70,7 @@ __all__ = [
     "ImportProfile", "ImportRequest", "ImportRun", "InboundEvent", "OfferSnapshot", "Organization", "OutboundMessage", "OutboxEvent",
     "PharmaIdentity", "ProductAlias", "PurchaseCycle", "QuantityEvent", "ReferencePrice",
     "SearchResult", "SearchRun", "SearchSourceResult",
-    "ShippingTermsSnapshot", "Source", "Supplier", "SupplierProductMapping", "TelegramAccessAttempt",
-    "TelegramAccessRequest", "TelegramAccount", "TelegramAccountAuxiliary", "TradeItem",
+    "ShippingTermsSnapshot", "Source", "Supplier", "SupplierCredential", "SupplierProductMapping", "TelegramAccessAttempt",
+    "TelegramAccessRequest", "TelegramAccount", "TelegramAccountAuxiliary", "TempPhoto", "TradeItem",
     "TradeItemAlias", "WebAccessRequest",
 ]  # fmt: skip

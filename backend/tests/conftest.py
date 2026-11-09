@@ -208,13 +208,13 @@ def tg_api():
 
 
 @pytest.fixture
-def make_rt(sessions, tg_api, tmp_path):
+def make_rt(sessions, tg_api):
     """Fábrica de runtime de Telegram con cliente SIMULADO. `vision`: None o un SimulatedVisionInterpreter."""
     from datetime import timedelta
 
     from app.services.channel import ChannelConfig
     from app.services.photo_processing import PhotoRuntime
-    from app.services.storage import LocalPrivateStorage
+    from app.services.storage import PostgresPrivateStorage
     from app.telegram.client import TelegramClient
     from app.telegram.handler import TelegramRuntime
     from tests.tgsim import TOKEN
@@ -228,7 +228,7 @@ def make_rt(sessions, tg_api, tmp_path):
             sessions,
             client,
             cfg,
-            PhotoRuntime(client, LocalPrivateStorage(tmp_path / "storage"), vision),
+            PhotoRuntime(client, PostgresPrivateStorage(sessions), vision),
         )
 
     return build

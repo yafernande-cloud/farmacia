@@ -137,8 +137,27 @@ Las respuestas son breves y no aseguran identificación: «no puedo asegurar cu�
 ## 5. Fotografías
 
 Modalidades: texto, foto sin texto, foto + texto/cantidad. Flujo: recepción (referencia + autor) → descarga y
-almacenamiento privado (tipo por firma de bytes, tamaño máximo, permisos 0600, SHA-256) → visión → traducción con las
-**mismas reglas** que un texto → observación.
+almacenamiento privado → visión → traducción con las **mismas reglas** que un texto → observación.
+
+**Dónde vive el binario.** El contenido se guarda en PostgreSQL, en `temp_photos` (`BYTEA`), con clave primaria
+SHA-256: el archivo se identifica por su contenido, no por ruta ni por `file_id` de Telegram. El tipo se valida por
+firma de bytes (`detect_image_type`) y el tamaño por `MAX_IMAGE_BYTES`. El disco del dyno **no** se usa para fotos
+(`STORAGE_DIR` y `LocalPrivateStorage` quedan solo para pruebas/demostración); por eso un reinicio de Heroku no las
+pierde. El SHA-256 deduplica: dos auxiliares que reenvían la misma imagen comparten una sola fila física.
+
+**Cuándo se libera.** No hay TTL ni borrado por antigüedad: mientras un faltante siga activo en la grilla su
+fotografía debe poder verse, aunque pasen semanas. La baja se decide por **referencias vivas** —reporte `active`,
+observación pendiente sin reporte, confirmación de Telegram pendiente, foto sin autor esperando atribución o foto aún
+por procesar— y se ejecuta **después** del commit que cancela o completa el reporte, en su propia transacción y con un
+advisory lock por SHA. Un reporte `cancelled` o `fulfilled` no retiene la foto por sí mismo. Si otra organización usa
+exactamente los mismos bytes, la fila se conserva: la comprobación final es global por SHA-256.
+
+**Mantenimiento manual** (`/api/v1/photos/maintenance/*`, solo `admin` + `StrongActor`):
+`POST /collect` libera binarios sin referencias vivas **solo dentro de la organización del actor** —la organización
+nunca viaja en el cuerpo y un campo extra se rechaza con 400— y nunca devuelve hashes de fotos ajenas; las imágenes
+compartidas con otra organización se conservan si allí siguen activas. `POST /recover` vuelve a descargar desde
+Telegram únicamente fotos perdidas de reportes activos, verifica el SHA-256 antes de guardar y no crea reportes ni
+cambia cantidades; está desactivado por defecto (`PHOTO_RECOVERY_ENABLED=false`).
 
 | Estado | Significado |
 |---|---|
@@ -238,5 +257,7 @@ guardan y quedan `pending`.
 * El PIN por Telegram y grupos con varios chats por farmacia: no implementados.
 * Dashboard/SSE (H1-C) y AC35 («en pedido»), AC15 (SSE): pendientes. AC13 (tarjeta de confirmación editable de la
   extracción) existe como API (`POST /demand-items/{id}/resolve`) pero no como pantalla.
-* Retención/eliminación de fotos y datos personales visibles en imágenes: sin política definida (HLD §17.4).
+* Retención de fotos: **no se eliminan por antigüedad ni por TTL**. El binario se libera solo cuando ningún reporte u
+  operación viva lo necesita (§5) y las imágenes compartidas por SHA-256 sobreviven mientras otra organización las use.
+  Datos personales visibles en la imagen: la política de anonimización/redacción sigue pendiente (HLD §17.4).
 * Una foto con varios productos produce una sola lectura (un producto por foto).

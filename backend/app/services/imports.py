@@ -35,16 +35,18 @@ escribir nada (el índice único de `import_run` lo garantiza también en la bas
 El servicio no hace commit: la transacción la abre quien llama.
 """
 
+import csv
 import hashlib
 import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
-from io import BytesIO
+from io import BytesIO, StringIO
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import xlrd
 from openpyxl import load_workbook
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,6 +61,7 @@ from app.models import (
     Organization,
     Source,
     SupplierProductMapping,
+    TradeItem,
 )
 from app.services.actors import Actor
 from app.services.events import advisory_lock, emit
@@ -163,6 +166,7 @@ class AcceptedRow:
     stock: Decimal | None
     observed_at: datetime
     notes: str | None
+    needs_item: bool = False
 
 
 class RowProblem(Exception):
@@ -205,17 +209,73 @@ def _normalize_header(value: Any) -> str:
     return " ".join(_text(value).split()).casefold() if _text(value) else ""
 
 
-def _read_sheet(
-    content: bytes, sheet_name: str | None, header_row: int
+FILE_FORMATS = ("xlsx", "xls", "csv")
+_FORMAT_LABEL = {
+    "xlsx": "planilla .xlsx",
+    "xls": "planilla .xls",
+    "csv": "archivo .csv",
+}
+
+
+def detect_file_format(file_name: str | None, content: bytes) -> str:
+    """Formato por extensión y, si no hay o no coincide, por la firma del contenido.
+
+    Es solo una ayuda para la vista previa: la importación usa el formato del perfil guardado.
+    """
+    name = (file_name or "").lower()
+    if name.endswith((".xlsx", ".xlsm")):
+        return "xlsx"
+    if name.endswith(".xls"):
+        return "xls"
+    if name.endswith(".csv"):
+        return "csv"
+    if content.startswith(b"PK\x03\x04"):
+        return "xlsx"
+    if content.startswith(b"\xd0\xcf\x11\xe0"):
+        return "xls"
+    if content:
+        return "csv"
+    raise DomainError("IMPORT_FORMAT_INVALID", "El archivo está vacío.", status_code=422)
+
+
+def _collect(
+    header_row: int, source_rows: list[tuple[int, tuple[Any, ...]]]
 ) -> tuple[tuple[Any, ...], list[tuple[int, tuple[Any, ...]]]]:
-    """Fase 1 estructural: abre la planilla y devuelve la cabecera y las filas de datos no vacías."""
-    if not content:
-        raise DomainError("IMPORT_FORMAT_INVALID", "El archivo está vacío.", status_code=422)
+    """Aplica la cabecera y los límites comunes a cualquier formato ya leído."""
+    header: tuple[Any, ...] | None = None
+    rows: list[tuple[int, tuple[Any, ...]]] = []
+    for index, values in source_rows:
+        if index < header_row:
+            continue
+        if index == header_row:
+            header = tuple(values)
+            continue
+        if all(_blank(v) for v in values):
+            continue
+        rows.append((index, tuple(values)))
+        if len(rows) > MAX_ROWS:
+            raise DomainError(
+                "PAYLOAD_TOO_LARGE",
+                f"La planilla supera las {MAX_ROWS} filas de datos permitidas.",
+                status_code=413,
+            )
+    if header is None or all(_blank(h) for h in header):
+        raise DomainError(
+            "IMPORT_FORMAT_INVALID",
+            f"La planilla no tiene una cabecera legible en la fila {header_row}.",
+            status_code=422,
+        )
+    return header, rows
+
+
+def _xlsx_rows(content: bytes, sheet_name: str | None) -> list[tuple[int, tuple[Any, ...]]]:
     try:
         wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
     except Exception as e:  # noqa: BLE001 — cualquier fallo del formato es el mismo error de archivo
         raise DomainError(
-            "IMPORT_FORMAT_INVALID", "El archivo no se puede abrir como planilla .xlsx.", status_code=422
+            "IMPORT_FORMAT_INVALID",
+            "El archivo no se puede abrir como planilla .xlsx.",
+            status_code=422,
         ) from e
     try:
         if sheet_name is not None:
@@ -230,35 +290,142 @@ def _read_sheet(
             ws = wb.active
         if ws is None:
             raise DomainError("IMPORT_FORMAT_INVALID", "La planilla no tiene hojas.", status_code=422)
-        header: tuple[Any, ...] | None = None
-        rows: list[tuple[int, tuple[Any, ...]]] = []
-        for index, values in enumerate(ws.iter_rows(values_only=True), start=1):
-            if index < header_row:
-                continue
-            if index == header_row:
-                header = tuple(values)
-                continue
-            if all(_blank(v) for v in values):
-                continue
-            rows.append((index, tuple(values)))
-            if len(rows) > MAX_ROWS:
-                raise DomainError(
-                    "PAYLOAD_TOO_LARGE",
-                    f"La planilla supera las {MAX_ROWS} filas de datos permitidas.",
-                    status_code=413,
-                )
-        if header is None or all(_blank(h) for h in header):
-            raise DomainError(
-                "IMPORT_FORMAT_INVALID",
-                f"La planilla no tiene una cabecera legible en la fila {header_row}.",
-                status_code=422,
-            )
-        return header, rows
+        return [
+            (index, tuple(values))
+            for index, values in enumerate(ws.iter_rows(values_only=True), start=1)
+        ]
     finally:
         wb.close()
 
 
-def _resolve_columns(columns: dict, header: tuple[Any, ...]) -> dict[str, int]:
+def _xls_value(cell, datemode: int) -> Any:
+    """Valor de una celda .xls sin inventar: texto, número o fecha real, no su serial."""
+    if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
+        return None
+    if cell.ctype == xlrd.XL_CELL_DATE:
+        try:
+            return xlrd.xldate_as_datetime(cell.value, datemode)
+        except (ValueError, xlrd.XLDateError):
+            return cell.value
+    if cell.ctype == xlrd.XL_CELL_NUMBER:
+        # xlrd entrega todo como float; un SKU numérico 123 debe quedar «123», no «123.0».
+        return int(cell.value) if float(cell.value).is_integer() else cell.value
+    if cell.ctype == xlrd.XL_CELL_BOOLEAN:
+        return bool(cell.value)
+    return cell.value
+
+
+def _xls_rows(content: bytes, sheet_name: str | None) -> list[tuple[int, tuple[Any, ...]]]:
+    try:
+        wb = xlrd.open_workbook(file_contents=content, on_demand=True)
+    except Exception as e:  # noqa: BLE001
+        raise DomainError(
+            "IMPORT_FORMAT_INVALID",
+            "El archivo no se puede abrir como planilla .xls.",
+            status_code=422,
+        ) from e
+    try:
+        if sheet_name is not None:
+            if sheet_name not in wb.sheet_names():
+                raise DomainError(
+                    "IMPORT_FORMAT_INVALID",
+                    f"La planilla no tiene la hoja «{sheet_name}» que declara el perfil.",
+                    status_code=422,
+                )
+            ws = wb.sheet_by_name(sheet_name)
+        else:
+            if wb.nsheets == 0:
+                raise DomainError(
+                    "IMPORT_FORMAT_INVALID", "La planilla no tiene hojas.", status_code=422
+                )
+            ws = wb.sheet_by_index(0)
+        return [
+            (index, tuple(_xls_value(ws.cell(index - 1, col), wb.datemode) for col in range(ws.ncols)))
+            for index in range(1, ws.nrows + 1)
+        ]
+    finally:
+        wb.release_resources()
+
+
+def _decode_csv(content: bytes) -> str:
+    for encoding in ("utf-8-sig", "cp1252", "latin-1"):
+        try:
+            return content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise DomainError(
+        "IMPORT_FORMAT_INVALID", "El archivo .csv no se puede decodificar como texto.", status_code=422
+    )
+
+
+def _csv_delimiter(text: str) -> str:
+    sample = text[:8192]
+    try:
+        return csv.Sniffer().sniff(sample, delimiters=",;\t").delimiter
+    except csv.Error:
+        first = next((line for line in sample.splitlines() if line.strip()), "")
+        counts = {d: first.count(d) for d in (",", ";", "\t")}
+        best = max(counts, key=counts.get)
+        return best if counts[best] > 0 else ","
+
+
+def _csv_rows(content: bytes) -> list[tuple[int, tuple[Any, ...]]]:
+    text = _decode_csv(content)
+    reader = csv.reader(StringIO(text), delimiter=_csv_delimiter(text))
+    try:
+        return [(index, tuple(values)) for index, values in enumerate(reader, start=1)]
+    except csv.Error as e:
+        raise DomainError(
+            "IMPORT_FORMAT_INVALID",
+            "El archivo no se puede leer como .csv: revisa que el formato del perfil corresponda "
+            "al archivo.",
+            status_code=422,
+        ) from e
+
+
+def read_raw_rows(
+    content: bytes, file_format: str, sheet_name: str | None = None
+) -> list[tuple[int, tuple[Any, ...]]]:
+    """Todas las filas del archivo, sin decidir todavía dónde está la cabecera (vista previa)."""
+    if not content:
+        raise DomainError("IMPORT_FORMAT_INVALID", "El archivo está vacío.", status_code=422)
+    if file_format == "xlsx":
+        return _xlsx_rows(content, sheet_name)
+    if file_format == "xls":
+        return _xls_rows(content, sheet_name)
+    if file_format == "csv":
+        if sheet_name is not None:
+            raise DomainError(
+                "IMPORT_FORMAT_INVALID",
+                "Un archivo .csv no tiene hojas: quita la hoja del perfil.",
+                status_code=422,
+            )
+        return _csv_rows(content)
+    raise DomainError(
+        "IMPORT_FORMAT_INVALID",
+        f"El formato «{file_format}» no está soportado; usa .xlsx, .xls o .csv.",
+        status_code=422,
+    )
+
+
+def _read_sheet(
+    content: bytes, sheet_name: str | None, header_row: int, file_format: str = "xlsx"
+) -> tuple[tuple[Any, ...], list[tuple[int, tuple[Any, ...]]]]:
+    """Fase 1 estructural: abre el archivo y devuelve la cabecera y las filas de datos no vacías."""
+    if not content:
+        raise DomainError("IMPORT_FORMAT_INVALID", "El archivo está vacío.", status_code=422)
+    if file_format not in FILE_FORMATS:
+        raise DomainError(
+            "IMPORT_FORMAT_INVALID",
+            f"El formato «{file_format}» no está soportado; usa .xlsx, .xls o .csv.",
+            status_code=422,
+        )
+    return _collect(header_row, read_raw_rows(content, file_format, sheet_name))
+
+
+def _resolve_columns(
+    columns: dict, header: tuple[Any, ...], *, required_roles: tuple[str, ...] = REQUIRED_ROLES
+) -> dict[str, int]:
     """Cada papel del perfil se busca por nombre de cabecera (con sus alias) y, si no, por posición."""
     if not isinstance(columns, dict) or not columns:
         raise DomainError(
@@ -298,7 +465,7 @@ def _resolve_columns(columns: dict, header: tuple[Any, ...]) -> dict[str, int]:
                 status_code=422,
             )
         positions[role] = found
-    missing = [r for r in REQUIRED_ROLES if r not in positions]
+    missing = [r for r in required_roles if r not in positions]
     if missing:
         raise DomainError(
             "IMPORT_FORMAT_INVALID",
@@ -339,6 +506,8 @@ class _Profile:
     discount_included: bool | None
     pack_base_unit: str | None
     quantity_unit: str | None
+    default_sale_unit: str | None
+    create_missing_items: bool
     snapshot: dict[str, Any]
     columns: dict[str, int] = field(default_factory=dict)  # se llena al resolver la cabecera
 
@@ -403,6 +572,20 @@ def _load_profile(profile: ImportProfile) -> _Profile:
             f"La unidad de mínimo/múltiplo/stock debe ser una de: {', '.join(UNITS)}.",
             status_code=422,
         )
+    default_sale_unit = options.get("default_sale_unit")
+    if default_sale_unit is not None and default_sale_unit not in UNITS:
+        raise DomainError(
+            "IMPORT_FORMAT_INVALID",
+            f"La unidad de venta por defecto debe ser una de: {', '.join(UNITS)}.",
+            status_code=422,
+        )
+    create_missing_items = options.get("create_missing_items", False)
+    if not isinstance(create_missing_items, bool):
+        raise DomainError(
+            "IMPORT_FORMAT_INVALID",
+            "«create_missing_items» del perfil debe ser true o false.",
+            status_code=422,
+        )
     tax_included = options.get("tax_included")
     discount_included = options.get("discount_included")
     for name, value in (("tax_included", tax_included), ("discount_included", discount_included)):
@@ -426,6 +609,8 @@ def _load_profile(profile: ImportProfile) -> _Profile:
         discount_included=discount_included,
         pack_base_unit=pack_base_unit,
         quantity_unit=quantity_unit,
+        default_sale_unit=default_sale_unit,
+        create_missing_items=create_missing_items,
         snapshot={
             "id": str(profile.id),
             "version": profile.version,
@@ -519,14 +704,27 @@ def _classify_row(
             "El código de proveedor supera los 120 caracteres.",
             fields=("sku",),
         )
+    name_text = _text(cell("name")) if "name" in prof.columns else None
     item_id = items.get(external_id)
+    needs_item = False
     if item_id is None:
         # Sin vínculo explícito previo no hay artículo: nunca se adivina por nombre (D-104).
-        raise RowProblem(
-            UNMAPPED_PRODUCT,
-            f"El código {external_id} no tiene un vínculo con el catálogo; regístralo antes de importar.",
-            fields=("sku",),
-        )
+        # La única excepción es una opción explícita del perfil: crear el artículo con el nombre
+        # que la propia planilla publica. Sin nombre no se crea nada.
+        if prof.create_missing_items and name_text:
+            item_id = uuid.uuid4()  # marcador; el artículo se crea al escribir, no al validar
+            needs_item = True
+        else:
+            message = (
+                f"El código {external_id} no tiene un vínculo con el catálogo y la fila no trae "
+                "nombre: no se puede crear un artículo sin un nombre publicado."
+                if prof.create_missing_items
+                else (
+                    f"El código {external_id} no tiene un vínculo con el catálogo; "
+                    "regístralo antes de importar."
+                )
+            )
+            raise RowProblem(UNMAPPED_PRODUCT, message, fields=("sku",))
 
     price = _decimal(
         cell("price"),
@@ -559,17 +757,23 @@ def _classify_row(
 
     unit_text = _text(cell("sale_unit"))
     if unit_text is None:
-        raise RowProblem(
-            MISSING_REQUIRED_FIELD, "La fila no trae la unidad de venta.", fields=("sale_unit",)
-        )
-    sale_unit = prof.units.get(unit_text.casefold())
-    if sale_unit is None:
-        raise RowProblem(
-            UNKNOWN_UNIT,
-            f"La unidad «{unit_text}» no está en el vocabulario del perfil, que traduce a: "
-            f"{', '.join(UNITS)}.",
-            fields=("sale_unit",),
-        )
+        # El perfil puede declarar la unidad por defecto cuando la planilla no trae la columna.
+        sale_unit = prof.default_sale_unit
+        if sale_unit is None:
+            raise RowProblem(
+                MISSING_REQUIRED_FIELD,
+                "La fila no trae la unidad de venta y el perfil no declara una por defecto.",
+                fields=("sale_unit",),
+            )
+    else:
+        sale_unit = prof.units.get(unit_text.casefold())
+        if sale_unit is None:
+            raise RowProblem(
+                UNKNOWN_UNIT,
+                f"La unidad «{unit_text}» no está en el vocabulario del perfil, que traduce a: "
+                f"{', '.join(UNITS)}.",
+                fields=("sale_unit",),
+            )
 
     pack_units = None
     if "pack" in prof.columns:
@@ -605,7 +809,6 @@ def _classify_row(
 
     conditions = _text(cell("conditions")) if "conditions" in prof.columns else None
     notes = conditions[:2000] if conditions else None
-    name_text = _text(cell("name")) if "name" in prof.columns else None
     warning = (
         UNMODELLED_CONDITION
         if conditions
@@ -621,7 +824,7 @@ def _classify_row(
             currency=currency,
             price_basis=basis,
             sale_unit=sale_unit,
-            sale_unit_text=unit_text[:40],
+            sale_unit_text=unit_text[:40] if unit_text else None,
             pack_units=pack_units,
             minimum=minimum,
             multiple=multiple,
@@ -630,6 +833,7 @@ def _classify_row(
                 cell("observed_at") if "observed_at" in prof.columns else None, prof, tz, now
             ),
             notes=notes,
+            needs_item=needs_item,
         ),
         warning,
     )
@@ -696,6 +900,87 @@ def _rejected_row(
         "name": _text(cell("name")),
         "fields": {role: _json_value(cell(role)) for role in problem.fields},
     }
+
+
+async def _create_item_for_row(
+    session: AsyncSession,
+    actor: Actor,
+    org: uuid.UUID,
+    source: Source,
+    origin: str,
+    row: AcceptedRow,
+) -> uuid.UUID:
+    """Crea artículo y vínculo para un SKU nuevo, SOLO si el perfil lo autoriza y hay nombre.
+
+    Es una excepción explícita a D-106 (que prohíbe crear artículos al importar) y se registra
+    como tal: la clave de identidad es técnica (`import:<fuente>:<SKU>`) y nunca se deriva del
+    nombre; el nombre guardado es el que publica el proveedor, sin normalizar ni completar.
+    La misma fuente y el mismo SKU reutilizan el artículo y el vínculo, así que reimportar no
+    duplica filas.
+    """
+    identity_key = f"import:{source.id}:{row.external_id}"
+    existing = (
+        await session.execute(
+            select(TradeItem).where(
+                TradeItem.organization_id == org, TradeItem.identity_key == identity_key
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing.id
+    item = TradeItem(
+        organization_id=org,
+        identity_key=identity_key,
+        display_name=row.external_name,
+        attributes={"schema_version": 2, "origin": "supplier_price_list"},
+        data_origin=origin,
+        created_by=actor.id,
+    )
+    session.add(item)
+    await session.flush()
+    emit(
+        session,
+        org_id=org,
+        actor_id=actor.id,
+        action="trade_item.created",
+        entity_type="trade_item",
+        entity_id=item.id,
+        event_type="catalog.trade_item_created",
+        aggregate_version=1,
+        payload={"identity_key": identity_key, "origin": "supplier_price_list"},
+        after={"identity_key": identity_key, "display_name": item.display_name},
+    )
+    mapping = SupplierProductMapping(
+        organization_id=org,
+        source_id=source.id,
+        supplier_id=source.supplier_id,
+        trade_item_id=item.id,
+        external_id=row.external_id,
+        external_name=row.external_name,
+        origin="explicit",
+        data_origin=origin,
+        created_by=actor.id,
+    )
+    session.add(mapping)
+    await session.flush()
+    emit(
+        session,
+        org_id=org,
+        actor_id=actor.id,
+        action="supplier_product_mapping.created",
+        entity_type="supplier_product_mapping",
+        entity_id=mapping.id,
+        event_type="catalog.mapping_created",
+        aggregate_version=1,
+        payload={
+            "source_id": str(source.id),
+            "external_id": row.external_id,
+            "trade_item_id": str(item.id),
+            "origin": "supplier_price_list",
+        },
+        after={"trade_item_id": str(item.id), "external_name": row.external_name},
+    )
+    return item.id
 
 
 async def run_import(
@@ -767,8 +1052,11 @@ async def run_import(
         )
     prof = _load_profile(profile)
 
-    header, rows = _read_sheet(content, profile.sheet, profile.header_row)
-    prof.columns = _resolve_columns(prof.column_specs, header)
+    header, rows = _read_sheet(
+        content, profile.sheet, profile.header_row, profile.file_format
+    )
+    required_roles = ("sku", "price") if prof.default_sale_unit else REQUIRED_ROLES
+    prof.columns = _resolve_columns(prof.column_specs, header, required_roles=required_roles)
     if "pack" in prof.columns and prof.pack_base_unit is None:
         raise DomainError(
             "IMPORT_FORMAT_INVALID",
@@ -834,6 +1122,12 @@ async def run_import(
             observed_at=now,
             dry_run=True,
         )
+
+    # Artículos nuevos: solo para las filas que ya pasaron toda la validación. Una fila rechazada
+    # no deja un artículo huérfano, y el artículo nace con el nombre publicado en la planilla.
+    for row, _warning in accepted:
+        if row.needs_item:
+            row.trade_item_id = await _create_item_for_row(session, actor, org, source, origin, row)
 
     run = ImportRun(
         organization_id=org,

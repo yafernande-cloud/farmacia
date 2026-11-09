@@ -8,7 +8,7 @@ from app.interpretation.openai_vision import OpenAIVisionInterpreter
 from app.interpretation.vision import VisionInterpreter, load_simulation
 from app.services.channel import ChannelConfig
 from app.services.photo_processing import PhotoRuntime
-from app.services.storage import LocalPrivateStorage
+from app.services.storage import PostgresPrivateStorage
 from app.telegram.client import TelegramClient
 from app.telegram.handler import TelegramRuntime
 
@@ -40,5 +40,7 @@ def build_runtime(s: Settings, *, client: TelegramClient | None = None, vision: 
         page_size=s.list_page_size, vision_enabled=vision is not None,
         access_org_id=s.telegram_access_organization_id,
     )  # fmt: skip
-    photos = PhotoRuntime(client, LocalPrivateStorage(s.storage_dir), vision, s.max_image_bytes)
+    photos = PhotoRuntime(
+        client, PostgresPrivateStorage(get_sessionmaker()), vision, s.max_image_bytes
+    )
     return TelegramRuntime(sessionmaker or get_sessionmaker(), client, cfg, photos)

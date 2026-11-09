@@ -8,7 +8,11 @@ sqlalchemy[asyncio]==2.1.6
 psycopg[binary]==3.3.6
 alembic==1.20.1
 PyJWT[crypto]==2.15.1
+# Cifrado en reposo de las credenciales de portales de proveedores (A3).
+cryptography==50.0.2
 openpyxl==3.1.5
+# Planillas .xls antiguas (BIFF); se importa al arrancar desde `services/imports`.
+xlrd==2.0.1
 defusedxml==0.7.1
 python-multipart==0.0.32
 # Adaptador HTTP de la Responses API de OpenAI (A6 Fase 3A); el backend lo importa al arrancar.

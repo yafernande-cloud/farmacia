@@ -222,9 +222,16 @@ async def process_attachment(
 
     # ---- 2) obtener y guardar la imagen original (privada, tipo verificado por firma de bytes)
     try:
-        data = (
-            rt.storage.get(info["key"]) if info["key"] else await rt.fetcher.fetch(info["file_id"])
-        )
+        data = None
+        if info["key"]:
+            # El binario puede haber sido liberado al cerrarse todos los reportes que lo usaban;
+            # en ese caso se recupera desde Telegram, que sigue siendo la fuente de verdad.
+            try:
+                data = await rt.storage.get(info["key"])
+            except DomainError:
+                data = None
+        if data is None:
+            data = await rt.fetcher.fetch(info["file_id"])
         if len(data) > rt.max_bytes:
             return await fail("error", "image_too_large")
         mime = detect_image_type(data)
@@ -233,10 +240,12 @@ async def process_attachment(
     except Exception as e:  # noqa: BLE001  descarga fallida: se reintenta
         return await fail("error", f"download_failed:{type(e).__name__}")
     sha = sha256_hex(data)
-    key = info["key"] or rt.storage.put(data)
 
     async with sm() as s, s.begin():
-        await advisory_lock(s, f"photo:{info['org']}:{sha}")
+        await advisory_lock(s, f"photo-content:{sha}")
+        # Mismo lock que usa la baja: o el binario y su asociación quedan confirmados juntos, o no
+        # queda ninguno. `put` es idempotente por SHA-256.
+        key = await rt.storage.put(data, mime_type=mime, session=s)
         att = await s.get(Attachment, attachment_id)
         att.storage_key, att.content_sha256, att.mime_type = key, sha, mime
         prior = (

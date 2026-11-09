@@ -10,12 +10,9 @@ IMPORTANTE — qué se verifica y qué NO:
     a mano en `MIGRANOL`.
 """
 
-import stat
-from datetime import UTC, datetime
-
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from app.core.config import get_settings
 from app.db.session import get_session
@@ -26,7 +23,7 @@ from app.interpretation.vision import (
     VisionField,
 )
 from app.main import create_app
-from app.models import Attachment, ChannelMessage, DemandItem, OutboxEvent
+from app.models import Attachment, ChannelMessage, DemandItem, OutboxEvent, TempPhoto
 from app.services.photo_processing import process_pending_attachments
 from app.services.storage import sha256_hex
 from app.telegram.handler import after_handle, handle_update
@@ -85,7 +82,7 @@ async def item_of(sessions):
 
 
 async def test_foto_sin_proveedor_de_vision_se_guarda_y_queda_pendiente(
-    photo_chat, sessions, seed, tg_api, tmp_path
+    photo_chat, sessions, seed, tg_api
 ):
     c = photo_chat(None)
     await c.pick("ana")
@@ -109,10 +106,9 @@ async def test_foto_sin_proveedor_de_vision_se_guarda_y_queda_pendiente(
         await observations(sessions) == [] and await count(sessions, DemandItem) == 0
     )  # nada inventado
     assert "Todavía no puedo leerla automáticamente" in tg_api.texts()[-1] and "Ana" in tg_api.texts()[-1]
-    stored = tmp_path / "storage" / a.storage_key
-    assert (
-        stored.read_bytes() == fake_jpeg(1) and stat.S_IMODE(stored.stat().st_mode) == 0o600
-    )  # privada
+    async with sessions() as s:
+        stored = await s.get(TempPhoto, a.content_sha256)
+    assert stored is not None and stored.content == fake_jpeg(1) and stored.mime_type == "image/jpeg"
     await process_pending_attachments(c.rt.sessionmaker, c.rt.photos)  # un barrido no la altera
     assert (await attachments(sessions))[0].status == "pending"
 
@@ -460,7 +456,7 @@ async def test_fallo_de_openai_conserva_la_foto_y_avisa_sin_reintentar_la_llamad
     (a,) = await attachments(sessions)
     assert a.status == "needs_review" and a.error == "vision_failed:timeout"
     assert a.uncertainties == ["vision_failed:timeout"] and a.processed_at is not None
-    assert a.storage_key and c.rt.photos.storage.get(a.storage_key) == fake_jpeg(24)
+    assert a.storage_key and await c.rt.photos.storage.get(a.storage_key) == fake_jpeg(24)
     assert a.author_id is not None and await observations(sessions) == []
     assert await count(sessions, DemandItem) == 0  # nada inventado
     assert vision.calls == 1  # un fallo no dispara otra lectura de la misma foto
@@ -734,7 +730,7 @@ async def test_error_de_descarga_se_reintenta_y_luego_se_procesa(photo_chat, ses
 
 
 async def test_archivo_que_no_es_imagen_se_rechaza_y_no_se_guarda(
-    photo_chat, sessions, tg_api, tmp_path
+    photo_chat, sessions, tg_api
 ):
     c = photo_chat({"*": MIGRANOL})
     await c.pick("ana")
@@ -744,11 +740,11 @@ async def test_archivo_que_no_es_imagen_se_rechaza_y_no_se_guarda(
     await c.send(photo_update, "mal")
     (a,) = await attachments(sessions)
     assert a.status == "error" and a.error == "UNSUPPORTED_IMAGE" and a.storage_key is None
-    assert (
-        not (tmp_path / "storage").exists()
-        or not list((tmp_path / "storage").rglob("*.*"))
-        and await observations(sessions) == []
-    )
+    async with sessions() as s:
+        stored = (
+            await s.execute(select(func.count()).select_from(TempPhoto))
+        ).scalar_one()
+    assert stored == 0 and await observations(sessions) == []
 
 
 # ---------- foto sin identidad: pendiente de atribución ----------
@@ -794,7 +790,7 @@ async def test_trazabilidad_de_una_observacion_no_se_puede_reescribir(photo_chat
 
 
 async def test_api_permite_ver_la_fotografia_original_del_reporte(
-    photo_chat, sessions, seed, tg_api, tmp_path, monkeypatch
+    photo_chat, sessions, seed, tg_api, monkeypatch
 ):
     c = photo_chat(vision=LiveVision(CREMA))
     await c.pick("ana")
@@ -803,7 +799,6 @@ async def test_api_permite_ver_la_fotografia_original_del_reporte(
     assert att.storage_key is not None
 
     monkeypatch.setenv("AUTH_MODE", "demo_header")
-    monkeypatch.setenv("STORAGE_DIR", str(tmp_path / "storage"))
     get_settings.cache_clear()
     app = create_app()
 
@@ -842,4 +837,4 @@ async def test_api_permite_ver_la_fotografia_original_del_reporte(
         get_settings.cache_clear()
 
 
-_unused = (datetime, UTC, callback_update)
+_unused = callback_update

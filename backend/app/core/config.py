@@ -67,6 +67,14 @@ class Settings(BaseSettings):
     vision_simulation_file: str | None = None
     storage_dir: Path = Path(__file__).resolve().parents[3] / ".storage"
     max_image_bytes: int = Field(default=10_000_000, ge=1_000)
+    # La recuperación de fotos desde Telegram es una operación manual y explícita. Apagada, el
+    # endpoint existe pero se niega: no se descarga nada real sin habilitarla.
+    photo_recovery_enabled: bool = False
+    # ---- Credenciales de portales de proveedores
+    # Clave Fernet (32 bytes en base64 url-safe) para cifrar en reposo la contraseña del portal.
+    # Sin clave, guardar una credencial se rechaza: nunca se guarda una contraseña en claro.
+    # Generar con: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    supplier_credentials_key: SecretStr | None = None
     timezone: str = "America/Santiago"
     currency: str = "CLP"
     # Una fuente sin observación exitosa en esta ventana se informa `stale` (E4). No inventa frescura.

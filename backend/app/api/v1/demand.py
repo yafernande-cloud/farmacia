@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import Annotated
 
@@ -16,10 +17,12 @@ from app.services import coverage as coverage_svc
 from app.services import demand as demand_svc
 from app.services import queries
 from app.services.interpretation import suggestions_for_items
+from app.services.photo_gc import release_photos_of_item
 from app.services.provenance import org_kind
 from app.services.quantities import apply_quantity_command
 
 router = APIRouter(tags=["faltantes"])
+log = logging.getLogger(__name__)
 
 ERRORS = {
     400: {"model": s.ErrorResponse, "description": "Entrada inválida"},
@@ -368,6 +371,15 @@ async def cancel_report(
             ),
         )
     response.headers["ETag"] = f'"{item.version}"'
+    # La cancelación ya quedó confirmada. Recién ahora se puede liberar el binario si ningún otro
+    # reporte activo usa los mismos bytes; un fallo de la baja no revierte la cancelación.
+    try:
+        async with transaction(session):
+            await release_photos_of_item(
+                session, organization_id=actor.organization_id, demand_item_id=item.id
+            )
+    except Exception:  # noqa: BLE001  la cancelación ya está confirmada; se audita el fallo
+        log.exception("photo_release_failed demand_item_id=%s", item.id)
     return out
 
 

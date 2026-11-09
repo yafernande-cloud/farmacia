@@ -4,17 +4,17 @@ from datetime import datetime
 from fastapi import APIRouter, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.deps import CurrentActor, Session
 from app.api.v1.demand import ERRORS
-from app.core.config import get_settings
 from app.core.errors import DomainError, not_found
 from app.core.permissions import Permission, require
 from app.db.session import transaction
 from app.models import Attachment
 from app.services import catalog as catalog_svc
 from app.services import demand as demand_svc
-from app.services.storage import LocalPrivateStorage
+from app.services.storage import PostgresPrivateStorage
 
 router = APIRouter(tags=["catálogo verificado y canal"])
 
@@ -142,8 +142,8 @@ async def attachment_content(attachment_id: uuid.UUID, session: Session, actor: 
             "PHOTO_NOT_AVAILABLE", "La fotografía no está disponible.", status_code=404
         )
     try:
-        data = LocalPrivateStorage(get_settings().storage_dir).get(att.storage_key)
-    except (OSError, DomainError) as e:
+        data = await PostgresPrivateStorage().get(att.storage_key, session=session)
+    except (DomainError, SQLAlchemyError) as e:
         raise DomainError(
             "PHOTO_NOT_AVAILABLE", "La fotografía no está disponible.", status_code=404
         ) from e

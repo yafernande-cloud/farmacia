@@ -145,15 +145,55 @@ class Supplier(Base):
         CheckConstraint("status IN ('active','inactive')", name="estado_valido"),
         CheckConstraint(f"data_origin IN ({ORIGINS})", name="origen_dato_valido"),
         CheckConstraint("version >= 1", name="version_valida"),
+        CheckConstraint(
+            "portal_url IS NULL OR portal_url ~* '^https?://'", name="url_portal_valida"
+        ),
     )  # fmt: skip
     id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
     organization_id: Mapped[uuid.UUID] = mapped_column()
     name: Mapped[str] = mapped_column(String(200))
     supplier_code: Mapped[str | None] = mapped_column(String(60))
     notes: Mapped[str | None] = mapped_column(Text)
+    # Portal web de compras, si el proveedor lo tiene. Guardar la URL no prueba que funcione.
+    portal_url: Mapped[str | None] = mapped_column(String(500))
     status: Mapped[str] = mapped_column(String(10), server_default="active")
     version: Mapped[int] = mapped_column(Integer, server_default="1")
     data_origin: Mapped[str] = mapped_column(String(12), server_default="unclassified")
+    created_by: Mapped[uuid.UUID | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
+
+
+class SupplierCredential(Base):
+    """Usuario y contraseña del portal de un proveedor, con la contraseña cifrada en reposo.
+
+    Guardar una credencial **no** conecta nada: no existe todavía un conector de portal y por eso
+    el estado público nunca es `connected`, solo `credentials_saved`. El usuario y la contraseña
+    no se devuelven por la API; el texto cifrado solo se descifra en el backend cuando exista un
+    conector autorizado. Una fila por proveedor y organización.
+    """
+
+    __tablename__ = "supplier_credential"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id"),
+        UniqueConstraint("organization_id", "supplier_id"),
+        ForeignKeyConstraint(["organization_id"], ["organization.id"]),
+        ForeignKeyConstraint(
+            ["supplier_id", "organization_id"],
+            ["supplier.id", "supplier.organization_id"],
+        ),
+        ForeignKeyConstraint(
+            ["created_by", "organization_id"],
+            ["app_user.id", "app_user.organization_id"],
+        ),
+        CheckConstraint("length(username) BETWEEN 1 AND 200", name="usuario_valido"),
+        CheckConstraint("length(password_ciphertext) >= 1", name="clave_presente"),
+    )  # fmt: skip
+    id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
+    organization_id: Mapped[uuid.UUID] = mapped_column()
+    supplier_id: Mapped[uuid.UUID] = mapped_column()
+    username: Mapped[str] = mapped_column(String(200))
+    password_ciphertext: Mapped[str] = mapped_column(Text)
     created_by: Mapped[uuid.UUID | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
@@ -540,8 +580,8 @@ class ImportProfile(Base):
         ForeignKeyConstraint(["organization_id"], ["organization.id"]),
         ForeignKeyConstraint(["source_id", "organization_id"], ["source.id", "source.organization_id"]),
         ForeignKeyConstraint(["created_by", "organization_id"], ["app_user.id", "app_user.organization_id"]),
-        # En v0 solo se leen planillas .xlsx; CSV exige una migración y su propia prueba.
-        CheckConstraint("file_format IN ('xlsx')", name="formato_valido"),
+        # Formatos de lista de precios admitidos. Un archivo real decide el formato: no se inventa.
+        CheckConstraint("file_format IN ('xlsx','xls','csv')", name="formato_valido"),
         CheckConstraint("header_row >= 1", name="fila_cabecera_valida"),
         CheckConstraint("jsonb_typeof(columns) = 'object'", name="columnas_objeto"),
         CheckConstraint("jsonb_typeof(units) = 'object'", name="unidades_objeto"),

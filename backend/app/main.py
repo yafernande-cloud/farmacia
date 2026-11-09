@@ -12,8 +12,10 @@ from app.api.v1 import (
     comparisons,
     demand,
     health,
+    import_profiles,
     imports,
     observations,
+    photos,
     quotes,
     search,
     sources,
@@ -85,6 +87,7 @@ def create_app() -> FastAPI:
     app.include_router(suppliers.router, prefix="/api/v1")
     app.include_router(sources.router, prefix="/api/v1")
     app.include_router(imports.router, prefix="/api/v1")
+    app.include_router(import_profiles.router, prefix="/api/v1")
     app.include_router(staff.router, prefix="/api/v1")
     app.include_router(telegram_accounts.router, prefix="/api/v1")
     app.include_router(telegram.router, prefix="/api/v1")
@@ -93,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(comparisons.router, prefix="/api/v1")
     app.include_router(quotes.router, prefix="/api/v1")
     app.include_router(observations.router, prefix="/api/v1")
+    app.include_router(photos.router, prefix="/api/v1")
     return app
 
 

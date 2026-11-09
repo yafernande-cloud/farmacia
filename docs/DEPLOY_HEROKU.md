@@ -44,8 +44,11 @@ base y parámetros de consulta. Alembic usa la misma URL.
 - Essential 0 admite **20 conexiones**. El motor usa `pool_size=5` + `max_overflow=0`: **máximo 5
   por proceso**, más el release y como mucho un dyno de consola, queda margen amplio. **No**
   escalar a varios dynos sin volver a calcularlo.
-- El disco del dyno es efímero: `STORAGE_DIR` (fotos) no persiste entre reinicios. No bloquea el
-  primer despliegue, pero las fotografías se perderían.
+- El disco del dyno es efímero, pero **las fotografías ya no viven ahí**: el binario se guarda en
+  PostgreSQL (`temp_photos`, `BYTEA`, clave SHA-256; migración `0024`). `STORAGE_DIR` y
+  `LocalPrivateStorage` quedan solo para pruebas/demostración, así que un reinicio no pierde fotos.
+  No hay TTL ni borrado por antigüedad: se liberan solo cuando ningún reporte u operación viva las
+  necesita, y las compartidas por SHA-256 se conservan mientras otra organización las use.
 
 ## 3. Archivos preparados
 
@@ -186,8 +189,10 @@ una falla de conexión se registran solo en el log del servidor. `purchase_execu
 3. **Migraciones**: el primer despliegue las aplica por `release`; decidir si se acepta o se pasa a
    ejecución manual (ver §5).
 4. **Datos**: la base nueva está vacía; hasta correr los seeds no hay catálogo ni usuarios.
-5. **Fotos**: almacenamiento local efímero; persistirlas requiere S3 u otro servicio (decisión
-   aparte).
+5. **Fotos**: guardadas en PostgreSQL desde la migración `0024`; no requieren S3 ni un servicio
+   aparte. Las fotos que hayan quedado solo en el disco efímero de un dyno anterior se recuperan
+   manualmente desde Telegram con `POST /api/v1/photos/maintenance/recover` (ver §7 y
+   `docs/H1B_TELEGRAM.md` §5).
 6. **OpenAI**: apagado; no hay costo ni llamadas. Habilitarlo exige clave, modelo y presupuesto.
 7. **Conexiones**: Essential 0 permite 20; no escalar dynos sin ajustar el pool.
 8. **Python**: Heroku instalará el último parche de 3.14, no exactamente el 3.14.6 local. Las

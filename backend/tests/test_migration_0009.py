@@ -144,7 +144,7 @@ async def test_perfil_rechaza_formato_cabecera_y_jsonb_invalidos(engine, seed):
     sup = await _supplier(engine, org)
     for i, bad in enumerate(
         (
-            dict(file_format="csv"),  # solo .xlsx en v0
+            dict(file_format="pdf"),  # desde 0025 solo xlsx, xls y csv
             dict(header_row=0),
             dict(columns="[]"),  # debe ser objeto
             dict(units="[]"),
@@ -157,6 +157,15 @@ async def test_perfil_rechaza_formato_cabecera_y_jsonb_invalidos(engine, seed):
         src = await _source(engine, org, f"Lista {i}", supplier_id=sup)
         with pytest.raises(DBAPIError):
             await _profile(engine, org, src, **bad)
+
+
+async def test_el_perfil_acepta_los_tres_formatos_que_lee_el_motor(engine, seed):
+    """0025 amplía `file_format` a xls y csv: el motor de E8 lee los tres."""
+    org = seed["org"]
+    sup = await _supplier(engine, org)
+    for fmt in ("xlsx", "xls", "csv"):
+        src = await _source(engine, org, f"Lista {fmt}", supplier_id=sup)
+        assert await _profile(engine, org, src, file_format=fmt)
 
 
 async def test_el_perfil_se_edita_con_version(engine, seed):

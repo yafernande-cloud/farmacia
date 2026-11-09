@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Header, Query, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from app.api.deps import Session, StrongActor
 from app.api.headers import parse_if_match
@@ -22,6 +22,11 @@ class SupplierIn(BaseModel):
     name: str = Field(min_length=1, max_length=200, examples=["Proveedor Ficticio Norte"])
     supplier_code: str | None = Field(default=None, max_length=60)
     notes: str | None = Field(default=None, max_length=2000)
+    # Portal web (A3). Usuario y contraseña son opcionales y se guardan cifrados; nunca se
+    # devuelven. Enviar uno sin el otro exige que el otro ya esté guardado.
+    portal_url: str | None = Field(default=None, max_length=500)
+    portal_username: SecretStr | None = None
+    portal_password: SecretStr | None = None
 
 
 class SupplierPatchIn(BaseModel):
@@ -31,6 +36,10 @@ class SupplierPatchIn(BaseModel):
     supplier_code: str | None = Field(default=None, max_length=60)
     notes: str | None = Field(default=None, max_length=2000)
     status: str | None = Field(default=None, pattern="^(active|inactive)$")
+    portal_url: str | None = Field(default=None, max_length=500)
+    # `null` en cualquiera de los dos borra la credencial completa; ver `services.suppliers`.
+    portal_username: SecretStr | None = None
+    portal_password: SecretStr | None = None
 
 
 class SupplierOut(BaseModel):
@@ -44,6 +53,11 @@ class SupplierOut(BaseModel):
     annotations: list[dict]
     notes: list[dict]
     internal_notes: str | None
+    # Portal sin secretos: la contraseña y el usuario nunca salen de la API.
+    portal_url: str | None
+    has_portal_credentials: bool
+    portal_status: str
+    has_price_list: bool
     created_at: datetime
     updated_at: datetime
 
@@ -95,6 +109,13 @@ async def create_supplier(
             name=body.name,
             supplier_code=body.supplier_code,
             notes=body.notes,
+            portal_url=body.portal_url,
+            portal_username=(
+                body.portal_username.get_secret_value() if body.portal_username else None
+            ),
+            portal_password=(
+                body.portal_password.get_secret_value() if body.portal_password else None
+            ),
         )
         payload = await svc.supplier_payload(session, row)
     response.headers["ETag"] = f'"{row.version}"'
@@ -118,13 +139,18 @@ async def update_supplier(
     ] = None,
 ):
     version = parse_if_match(if_match, what="el proveedor")
+    changes = body.model_dump(exclude_unset=True, exclude={"portal_username", "portal_password"})
+    for field_name in ("portal_username", "portal_password"):
+        if field_name in body.model_fields_set:
+            secret = getattr(body, field_name)
+            changes[field_name] = secret.get_secret_value() if secret is not None else None
     async with transaction(session):
         row = await svc.update_supplier(
             session,
             actor,
             supplier_id,
             expected_version=version,
-            changes=body.model_dump(exclude_unset=True),
+            changes=changes,
         )
         payload = await svc.supplier_payload(session, row)
     response.headers["ETag"] = f'"{row.version}"'

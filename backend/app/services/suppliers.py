@@ -8,16 +8,24 @@ nunca alimentan un cálculo. Desactivar no borra nada: el historial y las oferta
 import unicodedata
 import uuid
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.credentials import encrypt_portal_password
 from app.core.errors import DomainError, not_found
 from app.core.permissions import require_admin
-from app.models import Source, Supplier
+from app.models import Source, Supplier, SupplierCredential
 from app.services.actors import Actor
 from app.services.events import advisory_lock, emit
 from app.services.provenance import org_kind, origin_for
+
+# Estado público del portal. `connected` no existe a propósito: guardar una credencial no abre
+# ninguna sesión ni prueba el acceso; no hay conector de portal todavía (A3).
+PORTAL_NOT_CONFIGURED = "not_configured"
+PORTAL_INCOMPLETE = "incomplete"
+PORTAL_CREDENTIALS_SAVED = "credentials_saved"
 
 
 def normalize_name(text: str) -> str:
@@ -51,6 +59,77 @@ def _clean_optional(text: str | None, *, label: str, max_len: int) -> str | None
             status_code=400,
         )
     return t
+
+
+def _clean_portal_url(value: str | None) -> str | None:
+    """URL http(s) del portal. Vacío = sin portal; no se inventa un esquema que no venga escrito."""
+    if value is None:
+        return None
+    t = value.strip()
+    if not t:
+        return None
+    parts = urlsplit(t)
+    if (
+        len(t) > 500
+        or any(ord(c) < 32 for c in t)
+        or parts.scheme not in ("http", "https")
+        or not parts.netloc
+    ):
+        raise DomainError(
+            "INVALID_PORTAL_URL",
+            "La URL del portal debe empezar por http:// o https:// y tener un dominio válido.",
+            status_code=400,
+        )
+    return t
+
+
+def _clean_username(value: str | None) -> str | None:
+    if value is None:
+        return None
+    t = value.strip()
+    if not t:
+        return None
+    if len(t) > 200 or any(ord(c) < 32 for c in t):
+        raise DomainError(
+            "INVALID_CREDENTIALS",
+            "El usuario del portal debe tener entre 1 y 200 caracteres sin caracteres de control.",
+            status_code=400,
+        )
+    return t
+
+
+def _clean_password(value: str | None) -> str | None:
+    """No se recorta: los espacios pueden ser parte de la contraseña. Nunca se registra."""
+    if value is None:
+        return None
+    if not value.strip() or len(value) > 500:
+        raise DomainError(
+            "INVALID_CREDENTIALS",
+            "La contraseña del portal no puede quedar vacía ni superar 500 caracteres.",
+            status_code=400,
+        )
+    return value
+
+
+async def _credential(
+    session: AsyncSession, org: uuid.UUID, supplier_id: uuid.UUID
+) -> SupplierCredential | None:
+    return (
+        await session.execute(
+            select(SupplierCredential).where(
+                SupplierCredential.organization_id == org,
+                SupplierCredential.supplier_id == supplier_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+def _portal_status(supplier: Supplier, has_credentials: bool) -> str:
+    if supplier.portal_url is None and not has_credentials:
+        return PORTAL_NOT_CONFIGURED
+    if supplier.portal_url is not None and has_credentials:
+        return PORTAL_CREDENTIALS_SAVED
+    return PORTAL_INCOMPLETE
 
 
 async def _assert_unique_name(
@@ -88,12 +167,14 @@ async def _load(session: AsyncSession, actor: Actor, supplier_id: uuid.UUID) -> 
 
 
 def _snapshot(s: Supplier) -> dict:
+    """Auditoría del proveedor. Nunca incluye usuario ni contraseña del portal."""
     return {
         "name": s.name,
         "supplier_code": s.supplier_code,
         "status": s.status,
         "version": s.version,
         "notes": s.notes,
+        "portal_url": s.portal_url,
     }
 
 
@@ -104,12 +185,24 @@ async def create_supplier(
     name: str,
     supplier_code: str | None = None,
     notes: str | None = None,
+    portal_url: str | None = None,
+    portal_username: str | None = None,
+    portal_password: str | None = None,
 ) -> Supplier:
     require_admin(actor.roles)
     org = actor.organization_id
     clean_name = _clean_name(name)
     code = _clean_optional(supplier_code, label="El código", max_len=60)
     clean_notes = _clean_optional(notes, label="Las notas", max_len=2000)
+    url = _clean_portal_url(portal_url)
+    username = _clean_username(portal_username)
+    password = _clean_password(portal_password)
+    if (username is None) != (password is None):
+        raise DomainError(
+            "INCOMPLETE_CREDENTIALS",
+            "Para guardar las credenciales del portal se necesitan el usuario y la contraseña.",
+            status_code=400,
+        )
     await advisory_lock(session, f"supplier:name:{org}")
     await _assert_unique_name(session, org, clean_name)
     row = Supplier(
@@ -117,11 +210,23 @@ async def create_supplier(
         name=clean_name,
         supplier_code=code,
         notes=clean_notes,
+        portal_url=url,
         data_origin=origin_for(await org_kind(session, org)),
         created_by=actor.id,
     )
     session.add(row)
     await session.flush()
+    if username is not None and password is not None:
+        session.add(
+            SupplierCredential(
+                organization_id=org,
+                supplier_id=row.id,
+                username=username,
+                password_ciphertext=encrypt_portal_password(password),
+                created_by=actor.id,
+            )
+        )
+        await session.flush()
     emit(
         session,
         org_id=org,
@@ -145,7 +250,15 @@ async def update_supplier(
     expected_version: int,
     changes: dict,
 ) -> Supplier:
-    """Aplica solo los campos presentes. `status` activa/desactiva sin borrar historial."""
+    """Aplica solo los campos presentes. `status` activa/desactiva sin borrar historial.
+
+    Semántica de las credenciales del portal (solo los campos presentes cuentan):
+
+    * `portal_url: null` borra la URL; el resto queda igual.
+    * `portal_username` y `portal_password` juntos guardan/actualizan la credencial.
+    * uno solo de los dos actualiza esa parte conservando la otra.
+    * `null` en cualquiera de los dos borra la credencial completa.
+    """
     require_admin(actor.roles)
     org = actor.organization_id
     row = await _load(session, actor, supplier_id)
@@ -177,6 +290,56 @@ async def update_supplier(
                 "INVALID_STATUS", "El estado debe ser active o inactive.", status_code=400
             )
         row.status = changes["status"]
+    if "portal_url" in changes:
+        row.portal_url = _clean_portal_url(changes["portal_url"])
+    if "portal_username" in changes or "portal_password" in changes:
+        cred = await _credential(session, org, row.id)
+        username_given = "portal_username" in changes
+        password_given = "portal_password" in changes
+        clear = (username_given and changes["portal_username"] is None) or (
+            password_given and changes["portal_password"] is None
+        )
+        if clear:
+            if cred is not None:
+                await session.delete(cred)
+                await session.flush()
+        else:
+            username = (
+                _clean_username(changes["portal_username"])
+                if username_given
+                else (cred.username if cred is not None else None)
+            )
+            password = _clean_password(changes["portal_password"]) if password_given else None
+            if username is None:
+                raise DomainError(
+                    "INCOMPLETE_CREDENTIALS",
+                    "Falta el usuario del portal para guardar la contraseña.",
+                    status_code=400,
+                )
+            if cred is None:
+                if password is None:
+                    raise DomainError(
+                        "INCOMPLETE_CREDENTIALS",
+                        "Para guardar las credenciales del portal se necesitan el usuario y la "
+                        "contraseña.",
+                        status_code=400,
+                    )
+                session.add(
+                    SupplierCredential(
+                        organization_id=org,
+                        supplier_id=row.id,
+                        username=username,
+                        password_ciphertext=encrypt_portal_password(password),
+                        created_by=actor.id,
+                    )
+                )
+                await session.flush()
+            else:
+                cred.username = username
+                if password is not None:
+                    cred.password_ciphertext = encrypt_portal_password(password)
+                cred.updated_at = datetime.now(UTC)
+                await session.flush()
     row.version += 1
     row.updated_at = datetime.now(UTC)
     await session.flush()
@@ -227,19 +390,18 @@ async def list_suppliers(
 async def supplier_payload(session: AsyncSession, supplier: Supplier) -> dict:
     """Forma pública E6. `known_conditions`/`annotations`/`notes` son listas vacías: esas fuentes
     todavía no existen (las condiciones tipadas se leen aparte y E9 llega en C3)."""
-    source_ids = list(
-        (
-            await session.execute(
-                select(Source.id)
-                .where(
-                    Source.organization_id == supplier.organization_id,
-                    Source.supplier_id == supplier.id,
-                )
-                .order_by(Source.name)
+    sources = (
+        await session.execute(
+            select(Source.id, Source.mode)
+            .where(
+                Source.organization_id == supplier.organization_id,
+                Source.supplier_id == supplier.id,
             )
+            .order_by(Source.name)
         )
-        .scalars()
-        .all()
+    ).all()
+    has_credentials = (
+        await _credential(session, supplier.organization_id, supplier.id) is not None
     )
     return {
         "supplier_id": supplier.id,
@@ -247,11 +409,16 @@ async def supplier_payload(session: AsyncSession, supplier: Supplier) -> dict:
         "supplier_code": supplier.supplier_code,
         "status": supplier.status,
         "version": supplier.version,
-        "sources": source_ids,
+        "sources": [sid for sid, _ in sources],
         "known_conditions": [],
         "annotations": [],
         "notes": [],
         "internal_notes": supplier.notes,
+        # El portal se informa sin exponer usuario ni contraseña.
+        "portal_url": supplier.portal_url,
+        "has_portal_credentials": has_credentials,
+        "portal_status": _portal_status(supplier, has_credentials),
+        "has_price_list": any(mode == "manual_import" for _, mode in sources),
         "created_at": supplier.created_at,
         "updated_at": supplier.updated_at,
     }
