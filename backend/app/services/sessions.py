@@ -54,6 +54,12 @@ def ineligibility(user: AppUser | None) -> DomainError | None:
         return DomainError(
             "PERSON_NOT_FOUND", "Esa persona no existe en la farmacia.", status_code=404
         )
+    if user.telegram_auxiliary_deleted_at is not None:
+        return DomainError(
+            "PERSON_DELETED",
+            f"{user.display_name} ya no está habilitada para reportar por Telegram.",
+            status_code=403,
+        )
     if not user.active:
         return DomainError(
             "PERSON_INACTIVE",
@@ -81,8 +87,12 @@ async def list_reporters(session: AsyncSession, org: uuid.UUID) -> list[AppUser]
     leídas de PostgreSQL en cada consulta (nada definido en el código)."""
     rows = (
         await session.execute(
-            select(AppUser).where(AppUser.organization_id == org, AppUser.active, AppUser.available)
-            .order_by(AppUser.display_name)
+            select(AppUser).where(
+                AppUser.organization_id == org,
+                AppUser.active,
+                AppUser.available,
+                AppUser.telegram_auxiliary_deleted_at.is_(None),
+            ).order_by(AppUser.display_name)
         )
     ).scalars()  # fmt: skip
     return [u for u in rows if can_report(list(u.roles or []))]
@@ -112,6 +122,7 @@ async def list_account_reporters(
                 TelegramAccountAuxiliary.active,
                 AppUser.active,
                 AppUser.available,
+                AppUser.telegram_auxiliary_deleted_at.is_(None),
             )
             .order_by(AppUser.display_name)
         )

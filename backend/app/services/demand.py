@@ -112,10 +112,11 @@ def _new_item(
     p: ParsedProduct,
     data_origin: str,
     reported_by: uuid.UUID,
+    reported_by_name: str | None = None,
 ) -> DemandItem:
     item = DemandItem(organization_id=org_id, cycle_id=cycle_id, ingredient=p.ingredient,
                       display_name="", attributes={}, data_origin=data_origin,
-                      reported_by=reported_by)  # fmt: skip
+                      reported_by=reported_by, reported_by_name=reported_by_name)  # fmt: skip
     _apply_to_item(item, p)
     return item
 
@@ -386,7 +387,9 @@ async def _store(
         # Sin coincidencia PROPIA: el aviso crea su propio reporte, aunque otra persona ya haya
         # reportado el mismo producto. No se fusiona ni se suma nada entre autores.
         outcome, cands = "created_item", []
-        item = _new_item(org, cycle.id, parsed, data_origin, actor.id)
+        item = _new_item(
+            org, cycle.id, parsed, data_origin, actor.id, actor.display_name
+        )
         session.add(item)
         await session.flush()
 
@@ -416,7 +419,8 @@ async def _store(
         snapshot["other_reports"] = other_reports
     obs = DemandObservation(
         organization_id=org, cycle_id=cycle.id, demand_item_id=item.id if item else None,
-        author_id=actor.id, raw_text=raw_text, parsed=_parsed_json(parsed), interpretation=snapshot,
+        author_id=actor.id, author_name_snapshot=actor.display_name,
+        raw_text=raw_text, parsed=_parsed_json(parsed), interpretation=snapshot,
         source=origin.source, identity_level=origin.identity_level, actor_session_id=origin.actor_session_id,
         channel_message_id=origin.channel_message_id, attachment_id=origin.attachment_id,
         account_id=origin.account_id,
@@ -652,7 +656,16 @@ async def resolve_observation(
                 "DUPLICATE_ITEM_EXISTS",
                 "Ya existe una necesidad idéntica; asocia la observación a ella.",
             )
-        item = _new_item(org, obs.cycle_id, parsed, obs.data_origin, obs.author_id)
+        # Si el aviso es anterior a la 0026 no tiene instantánea: el nombre queda NULL y la vista
+        # usa el actual como respaldo, sin inventar ni reescribir nada.
+        item = _new_item(
+            org,
+            obs.cycle_id,
+            parsed,
+            obs.data_origin,
+            obs.author_id,
+            obs.author_name_snapshot,
+        )
         await _assert_no_key_collision(session, item, item.resolved_identity_key)
         session.add(item)
         await session.flush()

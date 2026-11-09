@@ -185,6 +185,13 @@ async def _load_person(session: AsyncSession, org: uuid.UUID, user_id: uuid.UUID
     ).scalar_one_or_none()
     if person is None:
         raise not_found("La persona")
+    if person.telegram_auxiliary_deleted_at is not None:
+        raise DomainError(
+            "PERSON_DELETED",
+            f"{person.display_name} fue eliminada como auxiliar y no puede habilitarse de nuevo. "
+            "Crea una persona nueva si corresponde.",
+            status_code=409,
+        )
     if not person.active:
         raise DomainError(
             "PERSON_INACTIVE",
@@ -305,6 +312,7 @@ async def list_account_auxiliaries(
             .where(
                 TelegramAccountAuxiliary.organization_id == actor.organization_id,
                 TelegramAccountAuxiliary.account_id == account.id,
+                AppUser.telegram_auxiliary_deleted_at.is_(None),
             )
             .order_by(AppUser.display_name)
         )
@@ -342,6 +350,13 @@ async def add_account_auxiliary(
     ).scalar_one_or_none()
     if person is None:
         raise not_found("La persona")
+    if person.telegram_auxiliary_deleted_at is not None:
+        raise DomainError(
+            "PERSON_DELETED",
+            f"{person.display_name} fue eliminada como auxiliar y no puede habilitarse de nuevo. "
+            "Crea una persona nueva si corresponde.",
+            status_code=409,
+        )
     if not person.active or not can_report(list(person.roles or [])):
         raise DomainError(
             "PERSON_CANNOT_REPORT",

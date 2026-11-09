@@ -18,6 +18,7 @@ from app.models import (
     AppUser,
     AuditEvent,
     ChannelBinding,
+    DemandItem,
     DemandObservation,
     OutboxEvent,
 )
@@ -346,9 +347,6 @@ async def test_los_cambios_de_disponibilidad_no_modifican_la_autoria_historica(
             )
         ).one()
     await availability(admin_api, "danny", False, "vacation")
-    await admin_api.patch(
-        f"/api/v1/staff/{crew['danny']}", json={"display_name": "Daniel"}, headers=H(admin_api)
-    )
     await admin_api.post(f"/api/v1/staff/{crew['danny']}/deactivate", headers=H(admin_api))
     async with sessions() as s:
         after = (
@@ -365,7 +363,14 @@ async def test_los_cambios_de_disponibilidad_no_modifican_la_autoria_historica(
             await s.execute(
                 select(AppUser.display_name, AppUser.active).where(AppUser.id == crew["danny"])
             )
-        ).one() == ("Daniel", False)
+        ).one() == ("Danny", False)
+        assert (
+            await s.execute(
+                select(DemandObservation.author_name_snapshot).where(
+                    DemandObservation.author_id == crew["danny"]
+                )
+            )
+        ).scalar_one() == "Danny"
     assert after == before and after.author_id == crew["danny"]
     row = next(
         r
@@ -373,6 +378,148 @@ async def test_los_cambios_de_disponibilidad_no_modifican_la_autoria_historica(
         if r["id"] == str(crew["danny"])
     )
     assert row["observations_authored"] == 1 and row["member_active"] is False
+
+
+async def test_eliminar_auxiliar_lo_saca_del_listado_del_bot_y_cierra_su_sesion(
+    bot, admin_api, sessions, tg_api, crew
+):
+    await bot.pick("danny")
+    await bot.text("falta ibuprofeno 400 mg")
+    r = await admin_api.post(
+        f"/api/v1/staff/{crew['danny']}/delete-auxiliary", headers=H(admin_api)
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["already_deleted"] is False
+    assert body["sessions_revoked"] == 1
+    assert body["account_links_deactivated"] == 0
+    assert body["web_access_preserved"] is True and body["telegram_deleted_at"]
+
+    rows = {
+        x["display_name"]: x
+        for x in (await admin_api.get("/api/v1/staff", headers=H(admin_api))).json()
+    }
+    assert "Danny" not in rows  # desaparece del mantenimiento
+
+    await bot.text("/start")
+    assert "Danny" not in names_in_buttons(tg_api)  # desaparece del selector
+    # Un botón antiguo tampoco puede volver a elegirla.
+    await bot.send(callback_update, f"sel:{crew['danny']}")
+    assert "ya no está habilitada para reportar por Telegram" in " ".join(
+        tg_api.texts()[-2:]
+    )
+
+    async with sessions() as s:
+        assert (await s.execute(select(ActorSession.end_reason))).scalar_one() == "revoked"
+        assert (
+            await s.execute(select(DemandObservation.author_id))
+        ).scalar_one() == crew["danny"]  # el historial sigue siendo suyo
+        assert (
+            await s.execute(
+                select(AppUser.active).where(AppUser.id == crew["danny"])
+            )
+        ).scalar_one() is True  # pertenece a la farmacia: solo deja de ser auxiliar
+        assert (
+            await s.execute(
+                select(AuditEvent.action).where(
+                    AuditEvent.action == "staff.telegram_auxiliary_deleted"
+                )
+            )
+        ).scalar_one()
+
+    again = await admin_api.post(
+        f"/api/v1/staff/{crew['danny']}/delete-auxiliary", headers=H(admin_api)
+    )
+    assert again.status_code == 200 and again.json()["already_deleted"] is True
+    async with sessions() as s:
+        audits = (
+            await s.execute(
+                select(AuditEvent.id).where(
+                    AuditEvent.action == "staff.telegram_auxiliary_deleted"
+                )
+            )
+        ).all()
+    assert len(audits) == 1  # idempotente: no duplica auditoría
+
+
+async def test_eliminar_auxiliar_no_afecta_el_acceso_web_ni_los_roles_de_una_administradora(
+    admin_api, sessions, crew
+):
+    async with sessions() as s:
+        before = (
+            await s.execute(
+                select(AppUser.active, AppUser.roles, AppUser.auth_subject).where(
+                    AppUser.id == crew["pao"]
+                )
+            )
+        ).one()
+    r = await admin_api.post(
+        f"/api/v1/staff/{crew['pao']}/delete-auxiliary", headers=H(admin_api)
+    )
+    assert r.status_code == 200
+
+    me = await admin_api.get("/api/v1/me", headers=H(admin_api))
+    assert me.status_code == 200 and me.json()["display_name"] == "Pao"
+    assert (await admin_api.get("/api/v1/staff", headers=H(admin_api))).status_code == 200
+
+    async with sessions() as s:
+        after = (
+            await s.execute(
+                select(AppUser.active, AppUser.roles, AppUser.auth_subject).where(
+                    AppUser.id == crew["pao"]
+                )
+            )
+        ).one()
+    assert after == before  # active, roles y auth_subject intactos
+
+
+async def test_el_nombre_se_libera_al_eliminar_y_la_persona_nueva_tiene_uuid_nuevo(
+    bot, admin_api, sessions, crew
+):
+    await bot.pick("danny")
+    await bot.text("falta ibuprofeno 400 mg")
+    original = crew["danny"]
+    assert (
+        await admin_api.post(
+            f"/api/v1/staff/{original}/delete-auxiliary", headers=H(admin_api)
+        )
+    ).status_code == 200
+
+    again = await admin_api.post(
+        "/api/v1/staff", json={"display_name": "Danny"}, headers=H(admin_api)
+    )
+    assert again.status_code == 201
+    assert again.json()["id"] != str(original)
+    assert again.json()["can_report"] is True
+
+    async with sessions() as s:
+        obs = (await s.execute(select(DemandObservation))).scalars().one()
+        assert obs.author_id == original  # nunca se reasigna al UUID nuevo
+        assert obs.author_name_snapshot == "Danny"  # el nombre quedó en el reporte
+        assert (
+            await s.execute(select(DemandItem.reported_by_name))
+        ).scalar_one() == "Danny"
+
+
+async def test_los_reportes_anteriores_sin_instantanea_usan_el_nombre_actual(
+    bot, admin_api, sessions, crew
+):
+    """Compatibilidad con filas previas a la 0026: sin instantánea, se muestra el nombre actual."""
+    await bot.pick("danny")
+    await bot.text("falta ibuprofeno 400 mg")
+    async with sessions() as s, s.begin():
+        item_id = (await s.execute(select(DemandItem.id))).scalar_one()
+        await s.execute(text("UPDATE demand_observation SET author_name_snapshot=NULL"))
+        await s.execute(text("UPDATE demand_item SET reported_by_name=NULL"))
+        await s.execute(
+            text("UPDATE app_user SET display_name='Daniel' WHERE id=:i"),
+            {"i": crew["danny"]},
+        )
+    detail = await admin_api.get(
+        f"/api/v1/demand-items/{item_id}", headers=H(admin_api)
+    )
+    assert detail.status_code == 200
+    assert detail.json()["observations"][0]["author"] == "Daniel"
 
 
 async def test_el_personal_no_se_elimina_nunca(sessions, crew, engine):
@@ -426,7 +573,7 @@ async def test_el_listado_incluye_no_disponibles_y_desactivadas_con_los_tres_est
     assert "Pato" not in {r["display_name"] for r in activos}
 
 
-async def test_crear_renombrar_y_reglas_de_nombres(admin_api, bot, tg_api):
+async def test_crear_y_reglas_de_nombres(admin_api, bot, tg_api):
     r = await admin_api.post(
         "/api/v1/staff", json={"display_name": "  Marta  "}, headers=H(admin_api)
     )
@@ -446,14 +593,12 @@ async def test_crear_renombrar_y_reglas_de_nombres(admin_api, bot, tg_api):
             "/api/v1/staff", json={"display_name": "X", "roles": ["jefe"]}, headers=H(admin_api)
         )
     ).status_code == 400
-    rn = await admin_api.patch(
-        f"/api/v1/staff/{r.json()['id']}", json={"display_name": "Martina"}, headers=H(admin_api)
-    )
-    assert rn.json()["display_name"] == "Martina"
-    clash = await admin_api.patch(
-        f"/api/v1/staff/{r.json()['id']}", json={"display_name": "danny"}, headers=H(admin_api)
-    )
-    assert clash.status_code == 409
+    # «Cambiar nombre» ya no existe como operación administrativa (D2).
+    assert (
+        await admin_api.patch(
+            f"/api/v1/staff/{r.json()['id']}", json={"display_name": "Martina"}, headers=H(admin_api)
+        )
+    ).status_code in (404, 405)
 
 
 async def test_reglas_de_disponibilidad_y_de_la_ultima_administradora(admin_api, crew):
@@ -501,10 +646,8 @@ async def test_la_administracion_exige_permisos(admin_api, crew):
             )
         ).status_code == 403
         assert (
-            await admin_api.patch(
-                f"/api/v1/staff/{crew['pato']}",
-                json={"display_name": "Otro"},
-                headers=H(admin_api, who),
+            await admin_api.post(
+                f"/api/v1/staff/{crew['pato']}/delete-auxiliary", headers=H(admin_api, who)
             )
         ).status_code == 403
     assert (await admin_api.get("/api/v1/staff")).status_code == 401  # sin identidad
@@ -534,7 +677,7 @@ async def test_aislamiento_entre_organizaciones_en_la_administracion(admin_api, 
     }
     assert names == {"Intruso"}  # solo su propia organización
     for call in (admin_api.post(f"/api/v1/staff/{mine['danny']}/deactivate", headers=other),
-                 admin_api.patch(f"/api/v1/staff/{mine['danny']}", json={"display_name": "Hack"}, headers=other),
+                 admin_api.post(f"/api/v1/staff/{mine['danny']}/delete-auxiliary", headers=other),
                  admin_api.put(f"/api/v1/staff/{mine['danny']}/availability", json={"available": False, "reason": "other"}, headers=other)):  # fmt: skip
         r = await call
         assert r.status_code == 404  # ni siquiera confirma que exista
@@ -554,9 +697,7 @@ async def test_los_cambios_de_personal_quedan_auditados_con_antes_y_despues(
 ):
     await bot.pick("danny")
     await availability(admin_api, "danny", False, "vacation")
-    await admin_api.patch(
-        f"/api/v1/staff/{crew['danny']}", json={"display_name": "Daniel"}, headers=H(admin_api)
-    )
+    await admin_api.post(f"/api/v1/staff/{crew['danny']}/delete-auxiliary", headers=H(admin_api))
     await admin_api.post(f"/api/v1/staff/{crew['pato']}/deactivate", headers=H(admin_api))
     await admin_api.post(f"/api/v1/staff/{crew['pato']}/activate", headers=H(admin_api))
     async with sessions() as s:
@@ -579,12 +720,12 @@ async def test_los_cambios_de_personal_quedan_auditados_con_antes_y_despues(
     acts = [a.action for a in rows]
     assert acts == ["staff.created"] * 5 + [
         "staff.availability_changed",
-        "staff.renamed",
+        "staff.telegram_auxiliary_deleted",
         "staff.deactivated",
         "staff.activated",
     ] or acts[-4:] == [
         "staff.availability_changed",
-        "staff.renamed",
+        "staff.telegram_auxiliary_deleted",
         "staff.deactivated",
         "staff.activated",
     ]

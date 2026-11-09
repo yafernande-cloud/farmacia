@@ -109,6 +109,9 @@ class DemandItem(Base):
     status: Mapped[str] = mapped_column(String(12), server_default="active")
     # Autor del reporte (NULL solo en filas legado consolidadas antes de la 0016).
     reported_by: Mapped[uuid.UUID | None] = mapped_column()
+    # Nombre del autor al crear el reporte (D3). NULL en filas anteriores a la 0026: la vista usa
+    # el nombre actual como respaldo, sin reescribir el historial.
+    reported_by_name: Mapped[str | None] = mapped_column(String(100))
     # Cancelación lógica: nunca se borra la fila ni sus observaciones.
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancelled_by: Mapped[uuid.UUID | None] = mapped_column()
@@ -173,6 +176,9 @@ class DemandObservation(Base):
     cycle_id: Mapped[uuid.UUID] = mapped_column()
     demand_item_id: Mapped[uuid.UUID | None] = mapped_column()
     author_id: Mapped[uuid.UUID] = mapped_column()
+    # Nombre del autor en el momento del aviso (D3). NULL en avisos anteriores a la 0026: la vista
+    # usa el nombre actual como respaldo. La autoría real sigue siendo `author_id` (UUID).
+    author_name_snapshot: Mapped[str | None] = mapped_column(String(100))
     raw_text: Mapped[str] = mapped_column(Text)
     parsed: Mapped[dict[str, Any]] = mapped_column(JSONB)
     # Sugerencia del declarante; JAMÁS se aplica al objetivo por sí sola.

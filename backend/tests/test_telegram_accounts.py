@@ -40,7 +40,7 @@ from app.models import (
     TelegramAccount,
     TelegramAccountAuxiliary,
 )
-from app.services import access
+from app.services import access, staff
 from app.services.actors import Actor
 from app.telegram.handler import after_handle, handle_update
 from tests.conftest import alembic_config
@@ -1721,3 +1721,77 @@ async def test_api_configura_sucursal_y_auxiliares_de_una_cuenta(admin_api, sess
     ).json()
     assert listing["auxiliaries"][0]["active"] is False
     assert listing["auxiliaries"][0]["deactivation_reason"] == "prueba"
+
+
+async def test_eliminar_auxiliar_desactiva_sus_vinculos_y_no_permite_rehabilitarlo(
+    farm, sessions, user, tg_api
+):
+    """Baja lógica como auxiliar: el vínculo por teléfono se conserva como historial, pero no
+    se puede reactivar ni seleccionar. La persona sigue activa para el acceso web."""
+    a = await shared_account(sessions, farm, 55500080, links=("ana", "luis"))
+    c = user(55500080)
+    await c.click(f"sel:{farm['ana']}", now=mins(1))
+    await c.text("falta ibuprofeno 400", now=mins(2))
+
+    async with sessions() as s, s.begin():
+        result = await staff.delete_telegram_auxiliary(s, actor(farm), farm["ana"])
+    assert result["account_links_deactivated"] == 1
+    assert result["sessions_revoked"] == 1
+
+    async with sessions() as s:
+        link = (
+            await s.execute(
+                select(TelegramAccountAuxiliary).where(
+                    TelegramAccountAuxiliary.account_id == a.account.id,
+                    TelegramAccountAuxiliary.app_user_id == farm["ana"],
+                )
+            )
+        ).scalar_one()
+        person = await s.get(AppUser, farm["ana"])
+        assert link.active is False and link.deactivation_reason == "auxiliar_eliminado"
+        assert person.active is True and person.telegram_auxiliary_deleted_at is not None
+
+    # Ya no aparece en el listado por teléfono (el vínculo queda en la base como historial).
+    async with sessions() as s:
+        listing = await access.list_account_auxiliaries(s, actor(farm), a.account.id)
+    assert [x["display_name"] for x in listing["auxiliaries"]] == ["Luis"]
+
+    # No se puede volver a habilitar en ninguna cuenta.
+    async with sessions() as s:
+        with pytest.raises(DomainError) as e:
+            await access.add_account_auxiliary(s, actor(farm), a.account.id, farm["ana"])
+    assert e.value.code == "PERSON_DELETED"
+
+    # Un botón viejo no identifica a la persona eliminada; con un solo auxiliar queda Luis.
+    await c.click(f"sel:{farm['ana']}", now=mins(3))
+    assert "ya no está habilitada para reportar por Telegram" in " ".join(
+        tg_api.texts()[-3:]
+    )
+    await c.text("falta paracetamol 500", now=mins(4))
+    async with sessions() as s:
+        mine = (
+            await s.execute(
+                select(DemandObservation).where(
+                    DemandObservation.raw_text == "falta paracetamol 500"
+                )
+            )
+        ).scalar_one()
+    assert mine.author_id == farm["luis"]
+
+
+async def test_aprobar_una_solicitud_rechaza_auxiliares_eliminados(farm, sessions):
+    issued = await issue(
+        sessions, farm, user_id="55500081", chat_id="55500081", update_id="81"
+    )
+    async with sessions() as s, s.begin():
+        await staff.delete_telegram_auxiliary(s, actor(farm), farm["ana"])
+    with pytest.raises(DomainError) as e:
+        await approve(
+            sessions,
+            farm,
+            issued.request.id,
+            mode="shared_device",
+            person=None,
+            auxiliaries=("ana",),
+        )
+    assert e.value.code == "PERSON_DELETED"

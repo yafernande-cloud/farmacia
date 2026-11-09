@@ -1,8 +1,11 @@
-"""Mantenedor de personal (API administrativa). Nunca elimina: desactiva, y todo cambio queda auditado.
+"""Mantenedor de personal (API administrativa). Nunca borra filas: desactiva, elimina como auxiliar de
+Telegram (baja lógica terminal) o cambia disponibilidad, y todo cambio queda auditado.
 
 Tres conceptos separados (ver app/core/staff.py): pertenecer, estar disponible y tener sesión activa.
-Todo cambio que deja a una persona sin poder reportar (desactivarla o marcarla no disponible) REVOCA sus
-sesiones activas en la misma transacción: el siguiente mensaje del teléfono compartido exigirá elegir otra identidad.
+Todo cambio que deja a una persona sin poder reportar (desactivarla, marcarla no disponible o
+eliminarla como auxiliar) REVOCA sus sesiones activas en la misma transacción: el siguiente mensaje
+del teléfono compartido exigirá elegir otra identidad. La baja como auxiliar NO toca `active`, los
+roles ni el acceso web: una administradora sigue entrando al Cotizador.
 
 `bootstrap_admin` es la única alta sin sesión administrativa: sirve para el PRIMER acceso web cuando ninguna
 administradora puede iniciar sesión todavía. No crea enlaces ni usuarios de Supabase y queda auditada como
@@ -18,8 +21,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import DomainError, not_found
 from app.core.permissions import Permission, Role, can_report, require
 from app.core.staff import AbsenceReason, absence_label
-from app.models import ActorSession, AppUser, AuditEvent, DemandObservation
-from app.services import sessions
+from app.models import (
+    ActorSession,
+    AppUser,
+    AuditEvent,
+    DemandObservation,
+    TelegramAccountAuxiliary,
+)
+from app.services import access, sessions
 from app.services.actors import Actor
 from app.services.events import advisory_lock, emit
 from app.services.provenance import OrgKind, org_kind
@@ -29,7 +38,11 @@ ASSIGNABLE_ROLES = {r.value for r in Role}
 
 def _snap(u: AppUser) -> dict:
     return {"display_name": u.display_name, "roles": list(u.roles or []), "active": u.active, "available": u.available,
-            "absence_reason": u.absence_reason, "absence_note": u.absence_note}  # fmt: skip
+            "absence_reason": u.absence_reason, "absence_note": u.absence_note,
+            "telegram_auxiliary_deleted_at": (
+                u.telegram_auxiliary_deleted_at.isoformat()
+                if u.telegram_auxiliary_deleted_at else None
+            )}  # fmt: skip
 
 
 def _clean_name(name: str) -> str:
@@ -60,6 +73,7 @@ async def _assert_unique_name(session, org, name: str, exclude: uuid.UUID | None
     q = select(AppUser.id).where(
         AppUser.organization_id == org,
         AppUser.active,
+        AppUser.telegram_auxiliary_deleted_at.is_(None),
         func.lower(AppUser.display_name) == name.lower(),
     )
     if exclude:
@@ -108,12 +122,22 @@ async def _after_change(
 
 
 async def list_staff(
-    session: AsyncSession, actor: Actor, *, include_inactive: bool = True
+    session: AsyncSession,
+    actor: Actor,
+    *,
+    include_inactive: bool = True,
+    include_deleted: bool = False,
 ) -> list[dict]:
-    """Listado COMPLETO (también no disponibles y desactivadas), con los tres estados por separado."""
+    """Listado completo (también no disponibles y desactivadas), con los tres estados por separado.
+
+    Las personas dadas de baja como auxiliares de Telegram no aparecen, salvo que se pidan
+    explícitamente (`include_deleted`, solo para respuestas administrativas puntuales).
+    """
     require(actor.roles, Permission.MANAGE_STAFF)
     org = actor.organization_id
     q = select(AppUser).where(AppUser.organization_id == org)
+    if not include_deleted:
+        q = q.where(AppUser.telegram_auxiliary_deleted_at.is_(None))
     if not include_inactive:
         q = q.where(AppUser.active)
     users = list(
@@ -148,8 +172,14 @@ async def list_staff(
             "member_active": u.active,  # pertenece a la farmacia
             "available": u.available, "absence_reason": u.absence_reason, "absence_label": absence_label(u.absence_reason),
             "absence_note": u.absence_note, "unavailable_since": u.unavailable_since,  # puede reportar o no
-            "can_report": u.active and u.available and can_report(list(u.roles or [])),
+            "can_report": (
+                u.active
+                and u.available
+                and u.telegram_auxiliary_deleted_at is None
+                and can_report(list(u.roles or []))
+            ),
             "telegram_session": {"active": sess_active, "expires_at": s.expires_at if sess_active else None},  # reporta AHORA
+            "telegram_deleted_at": u.telegram_auxiliary_deleted_at,
             "observations_authored": hist.get(u.id, 0),  # con historial no se elimina nunca
             "created_at": u.created_at, "updated_at": u.updated_at,
         })  # fmt: skip
@@ -257,23 +287,109 @@ async def bootstrap_admin(
     return u
 
 
-async def rename_staff(
-    session: AsyncSession, actor: Actor, user_id: uuid.UUID, display_name: str
-) -> AppUser:
+async def delete_telegram_auxiliary(
+    session: AsyncSession,
+    actor: Actor,
+    user_id: uuid.UUID,
+    *,
+    reason: str | None = None,
+) -> dict:
+    """Baja lógica TERMINAL como auxiliar de Telegram. No borra la fila ni el historial.
+
+    * No modifica `active`, `roles`, `auth_subject` ni el acceso web: si la persona es
+      administradora, sigue entrando al Cotizador y conserva sus permisos.
+    * Desactiva todos sus vínculos en teléfonos compartidos y cierra todas sus sesiones.
+    * La autoría histórica se conserva por `author_id`; el nombre del autor de cada reporte nuevo
+      se guarda al registrarlo (D3).
+    * Es idempotente: repetir la baja no duplica auditoría ni vuelve a cerrar nada.
+    """
     require(actor.roles, Permission.MANAGE_STAFF)
     org = actor.organization_id
     await advisory_lock(session, f"staff:{org}")
     u = await _load(session, actor, user_id)
-    name = _clean_name(display_name)
-    if name == u.display_name:
-        return u
-    await _assert_unique_name(session, org, name, exclude=u.id if u.active else None)
+    now = datetime.now(UTC)
+    if u.telegram_auxiliary_deleted_at is not None:
+        return {
+            "user": u,
+            "deleted_at": u.telegram_auxiliary_deleted_at,
+            "already_deleted": True,
+            "sessions_revoked": 0,
+            "account_links_deactivated": 0,
+        }
+
     before = _snap(u)
-    u.display_name = (
-        name  # la autoría histórica se guarda por id: renombrar no la reasigna ni la altera
+    u.telegram_auxiliary_deleted_at = now
+    u.telegram_auxiliary_deleted_by = actor.id
+    u.telegram_auxiliary_deletion_reason = (reason or "").strip()[:200] or None
+
+    account_ids = list(
+        (
+            await session.execute(
+                select(TelegramAccountAuxiliary.account_id)
+                .where(
+                    TelegramAccountAuxiliary.organization_id == org,
+                    TelegramAccountAuxiliary.app_user_id == u.id,
+                    TelegramAccountAuxiliary.active,
+                )
+                .with_for_update()
+            )
+        ).scalars()
     )
-    await _after_change(session, actor, u, "staff.renamed", before, datetime.now(UTC), revoke=False)
-    return u
+    # Reutiliza la baja por cuenta: deja su auditoría y además invalida la selección vigente de
+    # todos los chats de esa cuenta (el conjunto autorizado cambió).
+    account_sessions_revoked = 0
+    for account_id in account_ids:
+        result = await access.deactivate_account_auxiliary(
+            session,
+            actor,
+            account_id,
+            u.id,
+            reason="auxiliar_eliminado",
+            now=now,
+        )
+        account_sessions_revoked += int(result.get("sessions_revoked") or 0)
+
+    # Cierra cualquier sesión restante, incluidas las de cuentas personales o vínculos legado.
+    revoked = await sessions.revoke_person_sessions(
+        session, org, u.id, now, by=actor.id
+    )
+    revoked += account_sessions_revoked
+    u.updated_at = now
+    await session.flush()
+
+    authored = (
+        await session.execute(
+            select(func.count())
+            .select_from(DemandObservation)
+            .where(DemandObservation.organization_id == org, DemandObservation.author_id == u.id)
+        )
+    ).scalar_one()
+    emit(
+        session,
+        org_id=org,
+        actor_id=actor.id,
+        action="staff.telegram_auxiliary_deleted",
+        entity_type="app_user",
+        entity_id=u.id,
+        event_type="staff.updated",
+        aggregate_version=None,
+        payload={
+            "user_id": str(u.id),
+            "sessions_revoked": revoked,
+            "account_links_deactivated": len(account_ids),
+            "observations_authored": authored,
+            "web_access_preserved": True,
+        },
+        before=before,
+        after=_snap(u),
+    )
+    return {
+        "user": u,
+        "deleted_at": now,
+        "already_deleted": False,
+        "sessions_revoked": revoked,
+        "account_links_deactivated": len(account_ids),
+    }
 
 
 async def set_active(

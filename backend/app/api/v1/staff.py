@@ -43,6 +43,10 @@ class StaffOut(BaseModel):
     absence_label: str | None
     absence_note: str | None
     unavailable_since: datetime | None
+    telegram_deleted_at: datetime | None = Field(
+        default=None,
+        description="Baja lógica como auxiliar de Telegram; no afecta el acceso web",
+    )
     can_report: bool = Field(
         description="activa Y disponible Y con rol que permite reportar: aparece en los botones"
     )
@@ -59,8 +63,18 @@ class StaffCreateIn(BaseModel):
     )
 
 
-class StaffRenameIn(BaseModel):
-    display_name: str = Field(min_length=1, max_length=100)
+class StaffDeleteOut(BaseModel):
+    id: uuid.UUID
+    display_name: str
+    telegram_deleted_at: datetime
+    already_deleted: bool = Field(description="La baja ya estaba registrada; no se repitió nada")
+    sessions_revoked: int = Field(description="Sesiones de Telegram cerradas por esta baja")
+    account_links_deactivated: int = Field(
+        description="Vínculos por teléfono desactivados (el historial se conserva)"
+    )
+    web_access_preserved: bool = Field(
+        default=True, description="La baja NO altera el acceso web ni los roles"
+    )
 
 
 class AvailabilityIn(BaseModel):
@@ -77,7 +91,7 @@ class StaffChangeOut(BaseModel):
 
 
 async def _one(session, actor, uid: uuid.UUID) -> StaffOut:
-    for r in await svc.list_staff(session, actor):
+    for r in await svc.list_staff(session, actor, include_deleted=True):
         if r["id"] == uid:
             return StaffOut(**r)
     raise DomainError("NOT_FOUND", "La persona no existe o no es accesible.", status_code=404)
@@ -113,18 +127,24 @@ async def create_staff(body: StaffCreateIn, session: Session, actor: StrongActor
         return await _one(session, actor, u.id)
 
 
-@router.patch(
-    "/staff/{user_id}",
-    response_model=StaffOut,
+@router.post(
+    "/staff/{user_id}/delete-auxiliary",
+    response_model=StaffDeleteOut,
     responses=ERRORS,
-    summary="Cambiar el nombre visible (la autoría histórica no cambia)",
+    summary="Eliminar como auxiliar de Telegram (baja lógica; conserva historial y acceso web)",
 )
-async def rename_staff(
-    user_id: uuid.UUID, body: StaffRenameIn, session: Session, actor: StrongActor
-):
+async def delete_auxiliary(user_id: uuid.UUID, session: Session, actor: StrongActor):
     async with transaction(session):
-        await svc.rename_staff(session, actor, user_id, body.display_name)
-        return await _one(session, actor, user_id)
+        result = await svc.delete_telegram_auxiliary(session, actor, user_id)
+        u = result["user"]
+        return StaffDeleteOut(
+            id=u.id,
+            display_name=u.display_name,
+            telegram_deleted_at=result["deleted_at"],
+            already_deleted=result["already_deleted"],
+            sessions_revoked=result["sessions_revoked"],
+            account_links_deactivated=result["account_links_deactivated"],
+        )
 
 
 @router.post(

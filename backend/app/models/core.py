@@ -64,13 +64,26 @@ class AppUser(Base):
         ),
         # No disponible exige un motivo; disponible no puede tener motivo de ausencia.
         CheckConstraint("available = (absence_reason IS NULL)", name="disponibilidad_coherente"),
-        # Dos personas activas de la misma farmacia no pueden llamarse igual (los botones serían ambiguos).
+        # Dos personas activas de la misma farmacia no pueden llamarse igual (los botones serían
+        # ambiguos). Una baja lógica como auxiliar libera el nombre: se puede crear otra persona
+        # con el mismo nombre y un UUID nuevo (D1).
         Index(
             "uq_app_user_active_name",
             "organization_id",
             func.lower(text("display_name")),
             unique=True,
-            postgresql_where=text("active"),
+            postgresql_where=text("active AND telegram_auxiliary_deleted_at IS NULL"),
+        ),
+        # La baja como auxiliar de Telegram es terminal y siempre registra quién la hizo.
+        CheckConstraint(
+            "(telegram_auxiliary_deleted_at IS NULL AND telegram_auxiliary_deleted_by IS NULL) OR "
+            "(telegram_auxiliary_deleted_at IS NOT NULL AND telegram_auxiliary_deleted_by IS NOT NULL)",
+            name="baja_auxiliar_coherente",
+        ),
+        ForeignKeyConstraint(
+            ["telegram_auxiliary_deleted_by", "organization_id"],
+            ["app_user.id", "app_user.organization_id"],
+            name="fk_app_user_telegram_auxiliary_deleted_by_app_user",
         ),
         # La superadministración es un control técnico: a lo más UNA activa en todo el sistema (D-130).
         Index(
@@ -104,6 +117,13 @@ class AppUser(Base):
     absence_reason: Mapped[str | None] = mapped_column(String(20))
     absence_note: Mapped[str | None] = mapped_column(String(200))
     unavailable_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Baja lógica como AUXILIAR DE TELEGRAM: terminal y ortogonal a `active`. No revoca el acceso
+    # web ni cambia roles; solo excluye a la persona de listados, selectores y sesiones (D1–D5).
+    telegram_auxiliary_deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    telegram_auxiliary_deleted_by: Mapped[uuid.UUID | None] = mapped_column()
+    telegram_auxiliary_deletion_reason: Mapped[str | None] = mapped_column(String(200))
     # Control técnico de la propietaria; NO es un rol ni un perfil funcional (D-130).
     is_superadmin: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     # Acceso web: NULL = sin vencimiento; se evalúa en cada petición.

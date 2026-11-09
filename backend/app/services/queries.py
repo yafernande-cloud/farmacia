@@ -34,7 +34,13 @@ async def aggregates(session: AsyncSession, org, item_ids: list[uuid.UUID]) -> d
             DemandObservation.demand_item_id,
             func.count(DemandObservation.id),
             func.max(DemandObservation.created_at),
-            func.array_agg(func.distinct(AppUser.display_name)),
+            func.array_agg(
+                func.distinct(
+                    func.coalesce(
+                        DemandObservation.author_name_snapshot, AppUser.display_name
+                    )
+                )
+            ),
         )
         .join(AppUser, and_(AppUser.id == DemandObservation.author_id,
                             AppUser.organization_id == DemandObservation.organization_id))
@@ -145,7 +151,8 @@ async def report_meta(
     return {
         i.id: {
             "reported_by": i.reported_by,
-            "reported_by_name": names.get(i.reported_by),
+            # Instantánea del nombre al crear el reporte (D3); los reportes anteriores usan el actual.
+            "reported_by_name": i.reported_by_name or names.get(i.reported_by),
             "branch_label": branches.get(i.id),
             # Fotografía original del reporte, si algún aviso vino con una.
             "photo_attachment_id": photos.get(i.id),
@@ -211,7 +218,8 @@ async def reporter_names(
                 )
             ).all()
         )
-    return {i.id: names.get(i.reported_by) for i in items}
+    # Instantánea del nombre al crear el reporte (D3); los reportes anteriores usan el actual.
+    return {i.id: i.reported_by_name or names.get(i.reported_by) for i in items}
 
 
 async def last_texts(
@@ -297,7 +305,10 @@ async def get_item_detail(session: AsyncSession, actor: Actor, item_id: uuid.UUI
         raise not_found("La necesidad")
     obs = (
         await session.execute(
-            select(DemandObservation, AppUser.display_name)
+            select(
+                DemandObservation,
+                func.coalesce(DemandObservation.author_name_snapshot, AppUser.display_name),
+            )
             .join(AppUser, and_(AppUser.id == DemandObservation.author_id,
                                 AppUser.organization_id == DemandObservation.organization_id))
             .where(DemandObservation.organization_id == org, DemandObservation.demand_item_id == item_id)
@@ -320,7 +331,10 @@ async def get_item_detail(session: AsyncSession, actor: Actor, item_id: uuid.UUI
 async def list_pending_observations(session: AsyncSession, actor: Actor, limit: int):
     return (
         await session.execute(
-            select(DemandObservation, AppUser.display_name)
+            select(
+                DemandObservation,
+                func.coalesce(DemandObservation.author_name_snapshot, AppUser.display_name),
+            )
             .join(AppUser, and_(AppUser.id == DemandObservation.author_id,
                                 AppUser.organization_id == DemandObservation.organization_id))
             .where(DemandObservation.organization_id == actor.organization_id,
