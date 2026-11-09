@@ -2414,3 +2414,90 @@ compras) siguen separadas: un auxiliar nunca aplica la segunda.
 `docs/contracts/cotizador-v0.2.md` §10.5/§12.7). Sin migración: usa las columnas existentes de observación,
 `quantity_proposal` y la instantánea `interpretation` (`quantity_origin`). Incluye 15 pruebas automatizadas de los
 escenarios D-147 (14 conversacionales + 1 de exposición en la API).
+
+### D-148 — Baja definitiva de auxiliares de Telegram y nombre del autor por reporte (2026-11-08)
+
+**Decisión (D1–D5 del 2026-11-08).** Se ajusta la administración de auxiliares de Telegram sin borrar
+historial y sin tocar el acceso web:
+
+1. **Baja terminal, sin reservar nombres (D1).** `app_user` gana `telegram_auxiliary_deleted_at/by/reason`
+   con un `CHECK` de coherencia y una FK compuesta al propio `app_user`. La baja es **terminal** e
+   idempotente. El índice único de nombres activos (`uq_app_user_active_name`) pasa a excluir a las
+   personas dadas de baja, de modo que se puede crear otra persona con el mismo nombre y **siempre con un
+   UUID nuevo**. La autoría histórica sigue ligada al UUID original.
+2. **Sin «Cambiar nombre» (D2).** Se elimina el botón del frontend y el endpoint `PATCH /staff/{id}`.
+   El nombre de una persona ya no se edita desde la interfaz.
+3. **Instantánea del nombre al registrar (D3).** Cada `demand_observation` nueva guarda
+   `author_name_snapshot` y cada `demand_item` nuevo guarda `reported_by_name`, con el nombre del autor en
+   ese momento. **No se reescriben** reportes históricos: las filas anteriores a `0026` quedan NULL y las
+   vistas usan el nombre actual como respaldo (`COALESCE`). El UUID del autor nunca cambia.
+4. **Listados (D4).** Las personas dadas de baja no aparecen en `/staff`, en `personalOperativo` del
+   frontend, en los listados por teléfono ni en la selección de Telegram
+   (`list_reporters`/`list_account_reporters`); `ineligibility` las rechaza al elegir o al revalidar una
+   sesión, y `add_account_auxiliary`/`approve_request` responden `PERSON_DELETED`.
+5. **Sin restauración (D5).** No hay endpoint ni botón para rehabilitar a una persona dada de baja; para
+   reincorporarla se crea una persona nueva.
+
+La baja **revoca sus sesiones de Telegram** y **desactiva sus vínculos por teléfono** (reutilizando
+`access.deactivate_account_auxiliary` con motivo `auxiliar_eliminado`), pero **no modifica** `active`,
+`roles` ni `auth_subject`: una administradora eliminada del listado de auxiliares sigue entrando al
+Cotizador. La acción queda auditada como `staff.telegram_auxiliary_deleted` con `sessions_revoked`,
+`account_links_deactivated`, `observations_authored` y `web_access_preserved`.
+
+**Estado.** Implementada en código: modelos, migración **`0026`** (sin backfill), servicios, API, frontend y
+pruebas. La migración se probó **solo** en bases aisladas de prueba (`farmacia_test` y una base temporal
+`farmacia_0026_test` para el ciclo `0025 → 0026 → 0025 → 0026`); **no** se aplicó a `farmacia`,
+`farmacia_demo`, Heroku ni ninguna base real, y no hubo commit, push, despliegue ni publicación en Lovable.
+Suite del backend con `REQUIRE_DB=1`: **963 pruebas aprobadas y 8 omitidas**; suite del frontend: **214
+pruebas aprobadas** en 25 archivos.
+
+### D-149 — Cruz Verde: consultas de más de 50 caracteres, rechazo distinguible y clasificación por nombre publicado (2026-11-09)
+
+**Decisión.** El buscador público de Cruz Verde rechaza con HTTP 400 una consulta `q` de más de 50 caracteres.
+Se conserva la búsqueda original y se resuelve con hasta dos consultas internas más cortas; el rechazo se
+distingue de una caída de la fuente y las fichas se clasifican por su **nombre publicado**. Aplica **solo a
+Cruz Verde**: Farmacias Ahumada y Salcobrand no cambian.
+
+1. **Límite y consultas internas.** `MAX_QUERY_CHARS = 50` limita únicamente las consultas que se envían al
+   buscador; la búsqueda original nunca se reemplaza ni se recorta en E15. Si supera el límite se hacen hasta
+   dos intentos: `fit_query` (corta en el último espacio anterior al carácter 50, sin partir palabras, y quita
+   puntuación final) y `essential_query` (principio activo y primera concentración, descartando la presentación
+   pedida). Si la consulta no declara concentración, `essential_query` no inventa una variante y coincide con
+   `fit_query`; si ambos intentos son iguales se hace uno solo. La segunda consulta respeta el presupuesto de
+   la fuente y no se lanza con menos de 0,5 s disponibles.
+2. **La consulta original se conserva.** Cada ficha devuelta guarda `provenance.query_original` y
+   `provenance.query_used`; el orden y la clasificación no dependen de cuál consulta encontró la ficha. Las
+   fichas repetidas entre intentos se conservan una sola vez, en el orden en que aparecieron.
+3. **Rechazo ≠ caída.** Un 400 del buscador se levanta como `CruzVerdeQueryRejected` (subclase de
+   `CruzVerdeFetchError`). El conector lo traduce a `ChainUnavailable("query_rejected")` y `chain_search`
+   publica `state="failed"`, `reason="query_rejected"`, `outcome=None` y `results=[]` **solo** para esa cadena.
+   Un 400 de la ficha de un producto sigue siendo un error de fuente, no un rechazo de consulta. Un tiempo de
+   espera, un bloqueo o un error de red **nunca** amplían ni cambian la consulta: solo se reintenta más corto
+   cuando el buscador rechazó la consulta. Si el primer intento ya devolvió fichas y el segundo falla, se
+   conserva el primero; si todos son rechazados, el error de consulta se propaga.
+4. **Clasificación por nombre publicado.** `_query_criteria` extrae de la consulta original el principio
+   activo, las concentraciones, la cantidad y la forma; `_query_relation` compara esos criterios con el
+   **nombre publicado**, no con la consulta que encontró la ficha: `exact` (confirma principio, dosis y
+   presentación), `partial` (misma dosis y otra presentación, p. ej. 20 vs 30 comprimidos), `alternative`
+   (declara otra concentración) y `unverified` (el nombre no permite confirmar algún criterio). Una
+   concentración distinta tiene precedencia sobre el resto; un nombre que no declara el principio activo no se
+   presenta como coincidencia.
+5. **Orden y presentación.** El backend ordena `exact`, `unverified`, `partial` y `alternative` antes de aplicar
+   el límite, conservando el orden publicado dentro de cada grupo. El frontend aplica el mismo orden antes de
+   recortar a 24 y muestra los distintivos «Otra presentación» (`partial`) y «Alternativa» (`alternative`);
+   `exact` y `unverified` no llevan distintivo, y las cadenas sin ese dato mantienen su orden y presentación.
+   El mensaje de una fuente rechazada es «Cruz Verde no aceptó esta búsqueda…», distinto de «no respondió».
+6. **Alcance.** Sin migración, sin variables de configuración nuevas y sin cambios de persistencia ni del
+   contrato E15. No se modifica el HLD. El límite de 50 caracteres quedó registrado en el código como
+   verificado contra el buscador público el 2026-11-09; las pruebas automatizadas usan dobles y **no** llaman
+   al servicio real.
+
+**Estado.** Implementada en código: `app/services/cruzverde.py` (consulta progresiva, rechazo tipado y
+clasificación), `app/services/chains/cruzverde.py` y `app/services/chain_search.py` (motivo `query_rejected`
+contenido en su cadena), frontend (`src/lib/cadenas.ts` y `src/components/TarjetaCadenaPublicada.tsx`) y
+pruebas: **18 funciones nuevas (23 casos con parametrización)** en `backend/tests/test_cruzverde.py` y **5
+casos nuevos** en el frontend. Verificado el 2026-11-09: `test_cruzverde.py` **68 aprobadas**, suite del
+frontend **219 aprobadas en 25 archivos**, `tsc --noEmit` y `ruff check` sin errores. La suite completa del
+backend con `REQUIRE_DB=1` **quedó pendiente** por no haber PostgreSQL disponible; no hay migración que
+aplicar, no se usó ninguna base real ni `farmacia_demo`, y no hubo commit, push, despliegue ni publicación en
+Lovable.
