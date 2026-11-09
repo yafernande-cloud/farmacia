@@ -45,6 +45,9 @@ DEFAULT_BASE_URL = "https://api.cruzverde.cl/product-service"
 DEFAULT_LOGIN_URL = "https://api.cruzverde.cl/customer-service/login"
 DEFAULT_SITEMAP_URL = "https://www.cruzverde.cl/sitemap_index.xml"
 DEFAULT_LIMIT = 24
+# El buscador publicado rechaza con 400 una consulta `q` de más de 50 caracteres (verificado el
+# 2026-11-09). El límite se aplica solo a las consultas internas: la búsqueda original se conserva.
+MAX_QUERY_CHARS = 50
 DEFAULT_TIMEOUT_SECONDS = 10
 DEFAULT_ENRICHMENT_BUDGET_SECONDS = 4.0
 DEFAULT_LABORATORY_CONCURRENCY = 6
@@ -72,6 +75,10 @@ API_HEADERS = {
 
 class CruzVerdeFetchError(Exception):
     """La fuente no respondió, excedió el tamaño permitido o devolvió datos inutilizables."""
+
+
+class CruzVerdeQueryRejected(CruzVerdeFetchError):
+    """El buscador rechazó la consulta (HTTP 400): no es una caída de conexión."""
 
 
 def _text(value: Any) -> str | None:
@@ -207,6 +214,7 @@ async def _get_json(
     login_url: str,
     timeout_seconds: int,
     max_bytes: int = MAX_RESPONSE_BYTES,
+    rejection_status: int | None = None,
 ) -> dict[str, Any]:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -245,9 +253,12 @@ async def _get_json(
 
     assert response is not None
     if response.status_code >= 400:
-        raise CruzVerdeFetchError(
-            f"Cruz Verde respondió con estado {response.status_code}."
-        )
+        message = f"Cruz Verde respondió con estado {response.status_code}."
+        if rejection_status is not None and response.status_code == rejection_status:
+            # El buscador rechazó la consulta antes de leerla: no es una fuente caída y no debe
+            # presentarse como un problema de conexión.
+            raise CruzVerdeQueryRejected(message)
+        raise CruzVerdeFetchError(message)
     if len(response.content) > max_bytes:
         raise CruzVerdeFetchError("La respuesta de Cruz Verde excede el tamaño permitido.")
     try:
@@ -294,6 +305,7 @@ async def fetch_search_json(
         session=session,
         login_url=login_url,
         timeout_seconds=timeout_seconds,
+        rejection_status=400,
     )
 
 
@@ -508,6 +520,190 @@ def _normalized_name(value: str) -> str:
     decomposed = unicodedata.normalize("NFD", value)
     plain = "".join(ch for ch in decomposed if not (0x300 <= ord(ch) <= 0x36F))
     return "".join(ch for ch in plain.casefold() if ch.isalnum())
+
+
+# --- Consulta progresiva y clasificación (solo Cruz Verde) -----------------------------------
+#
+# El buscador rechaza `q` de más de 50 caracteres. Para no perder la búsqueda se usan hasta dos
+# consultas internas más cortas y las fichas se clasifican por su **nombre publicado**, no por la
+# consulta que las encontró. La consulta original nunca se reemplaza en E15.
+
+_STOPWORDS = {"de", "del", "con", "sin", "y", "el", "la", "los", "las", "x", "por", "para"}
+
+_CONCENTRATION_RE = re.compile(
+    r"(?P<amount>\d{1,5}(?:[.,]\d+)?)\s*"
+    r"(?P<unit>mcg|µg|mg|ml|cc|gr|g|ui|u/?i|%)(?!\w)",
+    re.IGNORECASE,
+)
+
+# Formas farmacéuticas publicadas y sus abreviaturas habituales («Cpr», «Caps», «Comp»).
+_FORM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "comprimido",
+        re.compile(r"\b(?:comprimidos?|tabletas?|tabl?\.?|comps?\.?|cprs?\.?)\b", re.IGNORECASE),
+    ),
+    ("capsula", re.compile(r"\b(?:c[aá]psulas?|caps?\.?|cps?\.?)\b", re.IGNORECASE)),
+    ("sobre", re.compile(r"\bsobres?\b", re.IGNORECASE)),
+    ("supositorio", re.compile(r"\bsupositorios?\b", re.IGNORECASE)),
+    ("jarabe", re.compile(r"\bjarabes?\b", re.IGNORECASE)),
+    ("gotas", re.compile(r"\bgotas?\b", re.IGNORECASE)),
+    ("solucion", re.compile(r"\bsoluci[oó]n\b", re.IGNORECASE)),
+    ("suspension", re.compile(r"\bsuspensi[oó]n\b", re.IGNORECASE)),
+    ("crema", re.compile(r"\bcremas?\b", re.IGNORECASE)),
+    ("pomada", re.compile(r"\bpomadas?\b", re.IGNORECASE)),
+    ("gel", re.compile(r"\bgeles?\b", re.IGNORECASE)),
+    ("inyectable", re.compile(r"\binyectables?\b", re.IGNORECASE)),
+)
+
+_PACKAGING_RE = re.compile(
+    r"\b(?P<qty>\d{1,4})\s*"
+    r"(?P<form>comprimidos?|comps?\.?|cprs?\.?|tabletas?|tabl?\.?|"
+    r"c[aá]psulas?|caps?\.?|cps?\.?|sobres?|supositorios?|unidades?|"
+    r"mililitros?|ml|gramos?|gr)\b",
+    re.IGNORECASE,
+)
+
+_QUERY_MULTIPLIER_RE = re.compile(r"(?:^|\s)(?:x|×)\s*(?P<qty>\d{1,4})\b", re.IGNORECASE)
+
+_RELATION_ORDER = {"exact": 0, "unverified": 1, "partial": 2, "alternative": 3}
+
+
+def fit_query(query: str, *, limit: int = MAX_QUERY_CHARS) -> str:
+    """Ajusta la consulta al límite del buscador sin partir una palabra."""
+    text = " ".join(query.split()).strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    if not text[limit].isspace() and not cut[-1].isspace():
+        boundary = cut.rfind(" ")
+        if boundary > 0:
+            cut = cut[:boundary]
+    return cut.strip().rstrip(".,;:-").strip()
+
+
+def essential_query(query: str, *, limit: int = MAX_QUERY_CHARS) -> str:
+    """Consulta mínima: principio activo y concentración, sin la presentación pedida.
+
+    Es una ampliación conservadora: solo recorta lo que sigue a la primera concentración. Si la
+    consulta no declara concentración, no se inventa una versión distinta.
+    """
+    text = " ".join(query.split()).strip()
+    match = _CONCENTRATION_RE.search(text)
+    if match is None:
+        return fit_query(text, limit=limit)
+    essential = text[: match.end()].strip().rstrip(".,;:-/").strip()
+    if not essential or essential == text:
+        return fit_query(text, limit=limit)
+    return fit_query(essential, limit=limit)
+
+
+def _concentrations(value: str) -> set[str]:
+    found: set[str] = set()
+    for match in _CONCENTRATION_RE.finditer(value):
+        unit = match.group("unit").casefold().replace("gr", "g").replace("u/i", "ui")
+        try:
+            amount = Decimal(match.group("amount").replace(",", ".")).normalize()
+        except InvalidOperation:
+            continue
+        found.add(f"{amount:f}{unit}")
+    return found
+
+
+def _canonical_form(word: str) -> str:
+    normalized = _normalized_name(word)
+    if normalized in {"ml", "mililitro", "mililitros"}:
+        return "ml"
+    if normalized in {"g", "gr", "gramo", "gramos"}:
+        return "g"
+    if normalized in {"unidad", "unidades"}:
+        return "unidad"
+    for name, pattern in _FORM_PATTERNS:
+        if pattern.fullmatch(normalized):
+            return name
+    return normalized
+
+
+def _form_class(value: str) -> str | None:
+    """Primera forma farmacéutica mencionada, en el orden en que aparece en el texto."""
+    best: tuple[int, str] | None = None
+    for name, pattern in _FORM_PATTERNS:
+        match = pattern.search(value)
+        if match is not None and (best is None or match.start() < best[0]):
+            best = (match.start(), name)
+    return best[1] if best else None
+
+
+def _packaging(value: str) -> tuple[int, str] | None:
+    """Cantidad y forma del envase cuando el texto las publica de forma inequívoca."""
+    result: tuple[int, str] | None = None
+    for match in _PACKAGING_RE.finditer(value):
+        result = (int(match.group("qty")), _canonical_form(match.group("form")))
+    return result
+
+
+def _query_criteria(query: str) -> dict[str, Any]:
+    """Criterios que la consulta original pide explícitamente, normalizados para comparar."""
+    text = " ".join(query.split()).strip()
+    matches = list(_CONCENTRATION_RE.finditer(text))
+    head = text[: matches[0].start()] if matches else text
+    primary = None
+    for word in head.split():
+        normalized = _normalized_name(word)
+        if normalized and normalized not in _STOPWORDS:
+            primary = normalized
+            break
+
+    packaging = _packaging(text)
+    multiplier = _QUERY_MULTIPLIER_RE.search(text)
+    if packaging is not None:
+        qty: int | None = packaging[0]
+    elif multiplier is not None:
+        qty = int(multiplier.group("qty"))
+    else:
+        qty = None
+    form = _form_class(text) or (packaging[1] if packaging else None)
+    return {
+        "primary": primary,
+        "concentrations": _concentrations(text),
+        "qty": qty,
+        "form": form,
+    }
+
+
+def _query_relation(published_name: str, criteria: dict[str, Any]) -> str:
+    """Relación entre la publicación real y lo pedido, según su nombre publicado.
+
+    - `exact`: el nombre confirma el principio activo, la dosis y la presentación pedidos.
+    - `partial`: mismo principio activo y dosis, pero otra presentación (20 vs 30 comprimidos).
+    - `alternative`: la publicación declara otra concentración; es una alternativa, no lo pedido.
+    - `unverified`: el nombre no permite confirmar algún criterio; no se afirma coincidencia.
+    """
+    normalized = _normalized_name(published_name)
+    published_concentrations = _concentrations(published_name)
+    missing = criteria["concentrations"] - published_concentrations
+    if missing and published_concentrations:
+        # Declara una dosis distinta a la pedida: alternativa claramente diferenciada.
+        return "alternative"
+
+    primary = criteria["primary"]
+    if primary and primary not in normalized:
+        # El nombre no declara el principio activo pedido: no se puede confirmar nada más.
+        return "unverified"
+
+    packaging = _packaging(published_name)
+    published_form = packaging[1] if packaging else _form_class(published_name)
+    if criteria["form"] and published_form and criteria["form"] != published_form:
+        return "partial"
+
+    if criteria["qty"] is not None:
+        if packaging is None:
+            return "unverified"
+        if packaging[0] != criteria["qty"]:
+            return "partial"
+
+    if missing or (criteria["form"] and published_form is None):
+        return "unverified"
+    return "exact"
 
 
 def _tab_laboratory(tabs: Any) -> str | None:
@@ -800,30 +996,94 @@ async def search_products(
     sitemap_index: ProductSitemap | None = None,
     observed_at: datetime | None = None,
 ) -> list[dict[str, Any]]:
-    """Busca, normaliza y enriquece las publicaciones con lo disponible dentro del presupuesto."""
-    if not query.strip():
+    """Busca, normaliza y enriquece las publicaciones con lo disponible dentro del presupuesto.
+
+    Cruz Verde rechaza con 400 las consultas de más de 50 caracteres. Cuando la búsqueda original
+    excede ese límite se hacen hasta dos consultas internas —una ajustada al límite y otra con el
+    principio activo y su concentración— y se combinan sin repetir fichas. La búsqueda original se
+    conserva en `provenance.query_original`. Nunca se amplía la consulta ante un tiempo de espera,
+    un bloqueo o un error de red: solo cuando el buscador rechaza la consulta.
+    """
+    original = query.strip()
+    if not original:
         raise CruzVerdeFetchError("La consulta está vacía.")
     manager = session_manager if session_manager is not None else session
     index = sitemap_index if sitemap_index is not None else sitemap
     started = time.monotonic()
 
+    attempts = [original]
+    if len(original) > MAX_QUERY_CHARS:
+        attempts = []
+        for candidate in (fit_query(original), essential_query(original)):
+            if candidate and candidate not in attempts:
+                attempts.append(candidate)
+
     # La búsqueda también consume el presupuesto de la fuente: si la API tarda más que el
     # presupuesto, se corta aquí en vez de esperar el tiempo de red máximo y bloquear E15.
     search_timeout = max(1, min(int(timeout_seconds), int(budget_seconds)))
-    payload = await fetch_search_json(
-        query,
-        base_url=base_url,
-        login_url=login_url,
-        session=manager,
-        timeout_seconds=search_timeout,
-        limit=limit,
-    )
-    products = parse_search_results(
-        payload,
-        limit=limit,
-        observed_at=observed_at,
-        link_for=index.lookup,
-    )
+    products_by_id: dict[str, dict[str, Any]] = {}
+    found_by: dict[str, str] = {}
+    rejected: CruzVerdeQueryRejected | None = None
+    accepted = False
+
+    for position, attempt in enumerate(attempts):
+        remaining = budget_seconds - (time.monotonic() - started)
+        if position > 0 and remaining <= 0.5:
+            break
+        call_timeout = (
+            search_timeout
+            if position == 0
+            else max(1, min(int(timeout_seconds), int(remaining)))
+        )
+        try:
+            payload = await fetch_search_json(
+                attempt,
+                base_url=base_url,
+                login_url=login_url,
+                session=manager,
+                timeout_seconds=call_timeout,
+                limit=limit,
+            )
+        except CruzVerdeQueryRejected as exc:
+            # Una consulta más corta todavía puede ser aceptada: se intenta la siguiente.
+            rejected = exc
+            continue
+        except CruzVerdeFetchError:
+            if products_by_id:
+                # Ya hay fichas publicadas: una segunda consulta caída no invalida el resultado.
+                logger.warning(
+                    "E15: Cruz Verde no completó la consulta ampliada", exc_info=True
+                )
+                break
+            raise
+
+        accepted = True
+        for product in parse_search_results(
+            payload,
+            limit=limit,
+            observed_at=observed_at,
+            link_for=index.lookup,
+        ):
+            product_id = product["chain_item_id"]
+            if product_id in products_by_id:
+                continue
+            products_by_id[product_id] = product
+            found_by[product_id] = attempt
+
+    if not products_by_id and rejected is not None and not accepted:
+        raise rejected
+
+    criteria = _query_criteria(original)
+    for product_id, product in products_by_id.items():
+        product["provenance"]["query_original"] = original
+        product["provenance"]["query_used"] = found_by[product_id]
+        product["match"]["query_relation"] = _query_relation(product["published_name"], criteria)
+
+    # Orden estable: primero lo que coincide con lo pedido y al final las alternativas; dentro de
+    # cada grupo se conserva el orden publicado por la cadena.
+    products = sorted(
+        products_by_id.values(), key=lambda item: _RELATION_ORDER[item["match"]["query_relation"]]
+    )[: max(1, limit)]
 
     remaining = max(0.0, budget_seconds - (time.monotonic() - started))
     if products and remaining > 0:

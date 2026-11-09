@@ -641,3 +641,268 @@ def test_el_esquema_acepta_una_ficha_sin_enlace_publico() -> None:
 
     assert out.results[0].source_url is None
     assert out.results[0].has_stock is None
+
+
+# --- Consulta progresiva: límite de 50 caracteres, clasificación y cascada --------------------
+
+LARGA = "Trazodona clorhidrato 100 mg comprimido recubierto x 20"
+AJUSTADA = "Trazodona clorhidrato 100 mg comprimido recubierto"
+ESENCIAL = "Trazodona clorhidrato 100 mg"
+
+
+def _hit_con(product_id: str, name: str):
+    return _hit(productId=product_id, productName=name)
+
+
+async def _buscar_con(monkeypatch, respuestas):
+    consultas: list[str] = []
+
+    async def fake(query, **kwargs):
+        consultas.append(query)
+        respuesta = respuestas.get(query)
+        if respuesta is None:
+            raise AssertionError(f"consulta inesperada: {query!r}")
+        if isinstance(respuesta, BaseException):
+            raise respuesta
+        return respuesta
+
+    async def sin_fichas(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(cruzverde, "fetch_search_json", fake)
+    monkeypatch.setattr(cruzverde, "enrich_laboratory", sin_fichas)
+    return consultas
+
+
+async def _buscar(respuestas, monkeypatch, query=LARGA):
+    consultas = await _buscar_con(monkeypatch, respuestas)
+    productos = await cruzverde.search_products(
+        query,
+        session_manager=_SesionFalsa(),
+        sitemap_index=_SitemapFalso(),
+        budget_seconds=3,
+        observed_at=MOMENTO,
+    )
+    return consultas, productos
+
+
+def test_una_consulta_de_hasta_50_caracteres_no_se_modifica() -> None:
+    assert len(AJUSTADA) == cruzverde.MAX_QUERY_CHARS
+    assert cruzverde.fit_query(AJUSTADA) == AJUSTADA
+
+
+def test_la_consulta_ajustada_no_parte_palabras() -> None:
+    consulta = "Trazodona clorhidrato 100 mg comprimidos recubiertos x 20"
+    ajustada = cruzverde.fit_query(consulta)
+
+    assert len(ajustada) <= cruzverde.MAX_QUERY_CHARS
+    assert consulta.startswith(ajustada)
+    assert not consulta[len(ajustada)].isalnum()
+
+
+def test_la_consulta_esencial_conserva_principio_activo_y_concentracion() -> None:
+    assert cruzverde.essential_query(LARGA) == ESENCIAL
+    assert cruzverde.essential_query("Losartán 50 mg x 30 comprimidos") == "Losartán 50 mg"
+    assert cruzverde.essential_query("Losartán 50 mg comprimidos recubiertos") == "Losartán 50 mg"
+
+
+def test_la_consulta_esencial_no_inventa_si_no_hay_concentracion() -> None:
+    consulta = "ibuprofeno comprimidos recubiertos de liberación prolongada x caja"
+
+    assert cruzverde.essential_query(consulta) == cruzverde.fit_query(consulta)
+
+
+@pytest.mark.parametrize(
+    ("nombre", "relacion"),
+    [
+        ("Trittico Trazodona 100 mg 20 Comprimidos", "exact"),
+        ("Trazodona 100 mg X 30 Cpr", "partial"),
+        ("Trazodona 100 mg 20 Tabletas", "exact"),
+        ("Trazodona 100 mg Jarabe 100 ml", "partial"),
+        ("Trazodona 200 mg X 20 Comprimidos", "alternative"),
+        ("Tronsalan 100 Mg. X 30 Cpr", "unverified"),
+    ],
+)
+def test_la_clasificacion_usa_el_nombre_publicado(nombre: str, relacion: str) -> None:
+    criterios = cruzverde._query_criteria(LARGA)
+
+    assert cruzverde._query_relation(nombre, criterios) == relacion
+
+
+def test_la_clasificacion_no_depende_de_la_consulta_que_encontro_la_ficha() -> None:
+    criterios = cruzverde._query_criteria(LARGA)
+
+    assert (
+        cruzverde._query_relation("Trittico Trazodona 100 mg 20 Comprimidos", criterios)
+        == "exact"
+    )
+    assert (
+        cruzverde._query_relation("Trazodona 100 mg X 30 Cpr", criterios) == "partial"
+    )
+
+
+async def test_una_consulta_larga_hace_dos_consultas_y_ordena_por_coincidencia(monkeypatch) -> None:
+    consultas, productos = await _buscar(
+        {
+            AJUSTADA: {"hits": [_hit_con("30", "Trazodona 100 mg X 30 Cpr")]},
+            ESENCIAL: {"hits": [_hit_con("20", "Trittico Trazodona 100 mg 20 Comprimidos")]},
+        },
+        monkeypatch,
+    )
+
+    assert consultas == [AJUSTADA, ESENCIAL]
+    assert [p["chain_item_id"] for p in productos] == ["20", "30"]
+    assert productos[0]["match"]["query_relation"] == "exact"
+    assert productos[1]["match"]["query_relation"] == "partial"
+    assert productos[0]["provenance"]["query_original"] == LARGA
+    assert productos[0]["provenance"]["query_used"] == ESENCIAL
+    assert productos[1]["provenance"]["query_used"] == AJUSTADA
+
+
+async def test_una_consulta_de_50_caracteres_hace_una_sola_consulta(monkeypatch) -> None:
+    consultas, productos = await _buscar(
+        {AJUSTADA: {"hits": [_hit_con("1", "Trittico Trazodona 100 mg 20 Comprimidos")]}},
+        monkeypatch,
+        query=AJUSTADA,
+    )
+
+    assert consultas == [AJUSTADA]
+    assert productos[0]["provenance"]["query_original"] == AJUSTADA
+
+
+async def test_no_se_repite_una_consulta_identica(monkeypatch) -> None:
+    consulta = "ibuprofeno comprimidos recubiertos de liberación prolongada x caja"
+    ajustada = cruzverde.fit_query(consulta)
+
+    consultas, _ = await _buscar({ajustada: {"hits": []}}, monkeypatch, query=consulta)
+
+    assert consultas == [ajustada]
+
+
+async def test_una_ficha_repetida_entre_consultas_se_conserva_una_vez(monkeypatch) -> None:
+    ficha = _hit_con("20", "Trittico Trazodona 100 mg 20 Comprimidos")
+
+    _, productos = await _buscar(
+        {AJUSTADA: {"hits": [ficha]}, ESENCIAL: {"hits": [ficha]}}, monkeypatch
+    )
+
+    assert [p["chain_item_id"] for p in productos] == ["20"]
+    assert productos[0]["provenance"]["query_used"] == AJUSTADA
+
+
+async def test_si_la_consulta_ajustada_es_rechazada_se_usa_la_esencial(monkeypatch) -> None:
+    consultas, productos = await _buscar(
+        {
+            AJUSTADA: cruzverde.CruzVerdeQueryRejected("estado 400"),
+            ESENCIAL: {"hits": [_hit_con("20", "Trittico Trazodona 100 mg 20 Comprimidos")]},
+        },
+        monkeypatch,
+    )
+
+    assert consultas == [AJUSTADA, ESENCIAL]
+    assert [p["chain_item_id"] for p in productos] == ["20"]
+
+
+async def test_si_todas_las_consultas_son_rechazadas_es_query_rejected(monkeypatch) -> None:
+    with pytest.raises(cruzverde.CruzVerdeQueryRejected):
+        await _buscar(
+            {
+                AJUSTADA: cruzverde.CruzVerdeQueryRejected("estado 400"),
+                ESENCIAL: cruzverde.CruzVerdeQueryRejected("estado 400"),
+            },
+            monkeypatch,
+        )
+
+
+async def test_un_error_de_red_no_amplia_la_consulta(monkeypatch) -> None:
+    consultas = await _buscar_con(
+        monkeypatch, {AJUSTADA: cruzverde.CruzVerdeFetchError("caída")}
+    )
+
+    with pytest.raises(cruzverde.CruzVerdeFetchError):
+        await cruzverde.search_products(
+            LARGA,
+            session_manager=_SesionFalsa(),
+            sitemap_index=_SitemapFalso(),
+            budget_seconds=3,
+        )
+
+    assert consultas == [AJUSTADA]
+
+
+async def test_un_fallo_de_la_segunda_consulta_conserva_la_primera(monkeypatch) -> None:
+    _, productos = await _buscar(
+        {
+            AJUSTADA: {"hits": [_hit_con("20", "Trittico Trazodona 100 mg 20 Comprimidos")]},
+            ESENCIAL: cruzverde.CruzVerdeFetchError("caída"),
+        },
+        monkeypatch,
+    )
+
+    assert [p["chain_item_id"] for p in productos] == ["20"]
+
+
+async def test_un_400_del_buscador_es_query_rejected(monkeypatch) -> None:
+    _ClienteFalso.rutas = [_Respuesta(status=400)]
+    monkeypatch.setattr(cruzverde.httpx, "AsyncClient", _ClienteFalso)
+
+    with pytest.raises(cruzverde.CruzVerdeQueryRejected):
+        await cruzverde.fetch_search_json(
+            "ibuprofeno", session=_SesionFalsa(), timeout_seconds=5
+        )
+
+
+async def test_un_400_de_una_ficha_no_se_confunde_con_un_rechazo_de_consulta(monkeypatch) -> None:
+    _ClienteFalso.rutas = [_Respuesta(status=400)]
+    monkeypatch.setattr(cruzverde.httpx, "AsyncClient", _ClienteFalso)
+
+    with pytest.raises(cruzverde.CruzVerdeFetchError) as exc:
+        await cruzverde.fetch_product_detail(
+            "263909", session=_SesionFalsa(), timeout_seconds=5
+        )
+
+    assert not isinstance(exc.value, cruzverde.CruzVerdeQueryRejected)
+
+
+async def test_el_conector_traduce_el_rechazo_de_consulta(monkeypatch) -> None:
+    async def rechaza(*args, **kwargs):
+        raise cruzverde.CruzVerdeQueryRejected("estado 400")
+
+    monkeypatch.setattr(
+        cruzverde_connector,
+        "get_settings",
+        lambda: _settings(
+            chain_search_enabled=["cruz_verde"],
+            cruzverde_live_search_enabled=True,
+        ),
+    )
+    monkeypatch.setattr(cruzverde, "search_products", rechaza)
+
+    with pytest.raises(ChainUnavailable) as exc:
+        await cruzverde_connector.search(LARGA)
+
+    assert exc.value.reason == "query_rejected"
+
+
+async def test_el_rechazo_de_consulta_queda_contenido_en_su_cadena(monkeypatch) -> None:
+    from app.services import chain_search
+
+    async def rechaza(*args, **kwargs):
+        raise cruzverde.CruzVerdeQueryRejected("estado 400")
+
+    monkeypatch.setattr(
+        cruzverde_connector,
+        "get_settings",
+        lambda: _settings(
+            chain_search_enabled=["cruz_verde"],
+            cruzverde_live_search_enabled=True,
+        ),
+    )
+    monkeypatch.setattr(cruzverde, "search_products", rechaza)
+
+    source = await chain_search._source_for("cruz_verde", LARGA)
+
+    assert source["state"] == "failed"
+    assert source["reason"] == "query_rejected"
+    assert source["outcome"] is None
+    assert source["results"] == []

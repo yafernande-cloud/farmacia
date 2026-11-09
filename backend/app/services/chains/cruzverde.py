@@ -33,5 +33,8 @@ async def search(query: str) -> list[dict[str, Any]]:
             timeout_seconds=settings.cruzverde_live_search_timeout_seconds,
             budget_seconds=settings.cruzverde_live_search_budget_seconds,
         )
+    except cruzverde.CruzVerdeQueryRejected as exc:
+        # El buscador rechazó la consulta: no es una fuente caída ni «sin resultados».
+        raise ChainUnavailable("query_rejected") from exc
     except cruzverde.CruzVerdeFetchError as exc:
         raise ChainUnavailable("fetch_failed") from exc

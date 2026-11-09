@@ -22,7 +22,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.services.chains import CONNECTORS, ChainNotConfigured
+from app.services.chains import CONNECTORS, ChainNotConfigured, ChainUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,20 @@ async def _source_for(chain: str, query: str) -> dict[str, Any]:
         results = await connector(query)
     except ChainNotConfigured as exc:
         return _source(chain, exc.reason)
+    except ChainUnavailable as exc:
+        # La fuente falló con un motivo propio (`fetch_failed`, `query_rejected`). Se conserva para
+        # que el frontend no confunda un rechazo de la consulta con una caída de conexión.
+        logger.warning(
+            "E15: el conector de %s no respondió (%s)", chain, exc.reason, exc_info=True
+        )
+        return {
+            "chain": chain,
+            "state": "failed",
+            "reason": exc.reason,
+            "outcome": None,
+            "observed_at": None,
+            "results": [],
+        }
     except Exception:
         # Un bloqueo, un CAPTCHA, un tiempo de espera o una respuesta inválida son `failed`,
         # nunca «sin resultados», y solo afectan a esta cadena.
