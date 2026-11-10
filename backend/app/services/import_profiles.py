@@ -13,6 +13,7 @@ Nada de esto crea artículos ni vínculos; eso solo ocurre en una importación r
 perfil lo pide explícitamente (`options.create_missing_items`).
 """
 
+import hashlib
 import re
 import uuid
 from datetime import UTC, datetime
@@ -41,12 +42,15 @@ from app.services.imports import (
     MAX_ROWS,
     ROLES,
     UNITS,
+    UNKNOWN_UNIT,
+    _header_variants,
     _json_value,
     _load_profile,
     _normalize_header,
     _text,
     detect_file_format,
     read_raw_rows,
+    run_import,
 )
 from app.services.provenance import org_kind, origin_for
 
@@ -81,6 +85,15 @@ HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
         "id producto",
         "codigo articulo",
         "código artículo",
+        "cod articulo",
+        "codigo interno",
+        "código interno",
+        "cod interno",
+        "codigo de producto",
+        "sku proveedor",
+        "codigo sku",
+        "nro codigo",
+        "n° codigo",
     ),
     "name": (
         "nombre",
@@ -92,6 +105,13 @@ HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
         "descripción producto",
         "detalle",
         "glosa",
+        "descripcion articulo",
+        "descripción artículo",
+        "nombre articulo",
+        "nombre del producto",
+        "descripcion del producto",
+        "detalle producto",
+        "nombre comercial",
     ),
     "price": (
         "precio",
@@ -103,6 +123,13 @@ HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
         "precio de lista",
         "valor",
         "price",
+        "precio costo",
+        "costo",
+        "valor unitario",
+        "precio unitario neto",
+        "precio neto unitario",
+        "precio por unidad",
+        "valor neto",
     ),
     "sale_unit": (
         "unidad",
@@ -112,23 +139,57 @@ HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
         "presentacion",
         "presentación",
         "um",
+        "u m",
         "u/m",
         "unidad medida",
         "unidad de medida",
+        "unidad de compra",
+        "tipo unidad",
+        "tipo de unidad",
+        "formato de venta",
+        "presentacion comercial",
+        "envase",
+        "embalaje",
     ),
-    "currency": ("moneda", "currency"),
-    "basis": ("base", "base precio", "base de precio", "price basis"),
+    "currency": ("moneda", "currency", "tipo moneda", "tipo de moneda", "moneda lista"),
+    "basis": ("base", "base precio", "base de precio", "price basis", "base del precio"),
     "pack": (
         "contenido",
         "contenido por unidad",
         "cantidad por caja",
         "unidades por caja",
         "unidades por empaque",
+        "unidades por envase",
+        "cantidad por envase",
         "pack",
+        "contenido neto",
     ),
-    "minimum": ("minimo", "mínimo", "compra minima", "compra mínima", "min"),
-    "multiple": ("multiplo", "múltiplo", "multiple", "multiplicador"),
-    "stock": ("stock", "disponible", "inventario", "existencia"),
+    "minimum": (
+        "minimo",
+        "mínimo",
+        "compra minima",
+        "compra mínima",
+        "cantidad minima",
+        "cantidad mínima",
+        "min",
+    ),
+    "multiple": (
+        "multiplo",
+        "múltiplo",
+        "multiple",
+        "multiplicador",
+        "multiplo compra",
+        "múltiplo compra",
+    ),
+    "stock": (
+        "stock",
+        "disponible",
+        "inventario",
+        "existencia",
+        "stock disponible",
+        "disponibilidad",
+        "unidades disponibles",
+    ),
     "observed_at": (
         "fecha",
         "fecha precio",
@@ -136,6 +197,11 @@ HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
         "fecha actualizacion",
         "fecha actualización",
         "vigencia",
+        "fecha lista",
+        "fecha de lista",
+        "fecha vigencia",
+        "ultima actualizacion",
+        "última actualización",
     ),
     "conditions": (
         "condiciones",
@@ -143,10 +209,18 @@ HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
         "observaciones",
         "observacion",
         "observación",
+        "condicion",
+        "condición",
+        "nota",
+        "notas",
+        "comentario",
+        "comentarios",
     ),
 }
 _HEADER_SCAN = 15
 _SAMPLE_ROWS = 5
+# Filas interpretadas que devuelve la revisión previa; los agregados cubren todas.
+_CHECK_ROWS = 200
 
 
 def _synonym_index() -> dict[str, str]:
@@ -155,6 +229,15 @@ def _synonym_index() -> dict[str, str]:
         for role, aliases in HEADER_SYNONYMS.items()
         for alias in aliases
     }
+
+
+def _synonym_role(value: Any, synonyms: dict[str, str]) -> str | None:
+    """Papel de una cabecera, probando también su forma sin paréntesis («Precio (CLP)»)."""
+    for key in _header_variants(value):
+        role = synonyms.get(key)
+        if role is not None:
+            return role
+    return None
 
 
 async def _source(session: AsyncSession, actor: Actor, source_id: uuid.UUID) -> Source:
@@ -465,15 +548,66 @@ def _sheet_names(content: bytes, file_format: str) -> list[str]:
         wb.release_resources()
 
 
-def _guess_header_row(rows: list[tuple[int, tuple[Any, ...]]]) -> int:
-    """Fila con más cabeceras reconocidas entre las primeras; si no hay, la primera."""
+def _best_header(rows: list[tuple[int, tuple[Any, ...]]]) -> tuple[int, int]:
+    """(fila, puntaje) con más cabeceras reconocidas entre las primeras filas."""
     synonyms = _synonym_index()
-    best_row, best_score = 1, 0
+    best_row, best_score = (rows[0][0] if rows else 1), 0
     for number, values in rows[:_HEADER_SCAN]:
-        score = sum(1 for value in values if _normalize_header(value) in synonyms)
+        score = sum(1 for value in values if _synonym_role(value, synonyms) is not None)
         if score > best_score:
             best_row, best_score = number, score
+    return best_row, best_score
+
+
+def _guess_header_row(rows: list[tuple[int, tuple[Any, ...]]]) -> int:
+    """Fila con más cabeceras reconocidas entre las primeras; si no hay, la primera."""
+    best_row, best_score = _best_header(rows)
     return best_row if best_score >= 2 else (rows[0][0] if rows else 1)
+
+
+def _peek_sheet(content: bytes, file_format: str, sheet: str) -> list[tuple[int, tuple[Any, ...]]]:
+    """Primeras filas de una hoja, sin leerla entera: basta para reconocer su cabecera."""
+    if file_format == "xlsx":
+        wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
+        try:
+            ws = wb[sheet]
+            return [
+                (index, tuple(values))
+                for index, values in enumerate(
+                    ws.iter_rows(max_row=_HEADER_SCAN, values_only=True), start=1
+                )
+            ]
+        finally:
+            wb.close()
+    wb = xlrd.open_workbook(file_contents=content, on_demand=True)
+    try:
+        hoja = wb.sheet_by_name(sheet)
+        return [
+            (index + 1, tuple(hoja.row_values(index)))
+            for index in range(min(hoja.nrows, _HEADER_SCAN))
+        ]
+    finally:
+        wb.release_resources()
+
+
+def _suggest_sheet(content: bytes, file_format: str, sheets: list[str]) -> str | None:
+    """Hoja que más se parece a una lista de productos; la primera si ninguna destaca.
+
+    Puntúa cada hoja por cantidad de cabeceras reconocidas en sus primeras filas. Solo cambia la
+    hoja por defecto cuando encuentra una cabecera clara (al menos dos nombres reconocidos): si
+    ninguna destaca, se mantiene el comportamiento anterior de leer la primera.
+    """
+    if file_format == "csv" or not sheets:
+        return None
+    best_name, best_score = sheets[0], 0
+    for name in sheets:
+        try:
+            _row, score = _best_header(_peek_sheet(content, file_format, name))
+        except Exception:  # noqa: BLE001 — una hoja ilegible no debe impedir revisar las demás
+            continue
+        if score > best_score:
+            best_name, best_score = name, score
+    return best_name if best_score >= 2 else sheets[0]
 
 
 def _suggested_columns(header: tuple[Any, ...]) -> dict[str, dict[str, Any]]:
@@ -481,7 +615,7 @@ def _suggested_columns(header: tuple[Any, ...]) -> dict[str, dict[str, Any]]:
     used: set[int] = set()
     suggested: dict[str, dict[str, Any]] = {}
     for index, value in enumerate(header, start=1):
-        role = synonyms.get(_normalize_header(value))
+        role = _synonym_role(value, synonyms)
         if role is None or role in suggested or index in used:
             continue
         text = _text(value)
@@ -524,8 +658,8 @@ async def preview_import(
     """Lee el archivo tal como viene. No escribe perfil, ofertas ni artículos.
 
     `sheet` y `header_row` permiten repetir la lectura con otra hoja o cabecera cuando la detección
-    automática no coincide con el archivo real; sin ellos se usa la primera hoja y la cabecera con
-    más nombres reconocidos.
+    automática no coincide con el archivo real; sin ellos se elige la hoja que más se parece a una
+    lista de productos (la primera si ninguna destaca) y la cabecera con más nombres reconocidos.
     """
     await _source(session, actor, source_id)
     if len(content) > MAX_BYTES:
@@ -534,6 +668,9 @@ async def preview_import(
         )
     file_format = detect_file_format(file_name, content)
     sheets = _sheet_names(content, file_format)
+    suggested_sheet = _suggest_sheet(content, file_format, sheets) if sheet is None else None
+    if sheet is None:
+        sheet = suggested_sheet
     rows = read_raw_rows(content, file_format, sheet)
     if len(rows) > MAX_ROWS + _HEADER_SCAN:
         raise DomainError(
@@ -567,8 +704,9 @@ async def preview_import(
     return {
         "file_format": file_format,
         "sheets": sheets,
-        # La hoja que realmente se leyó: la pedida o, si no se pidió, la primera.
+        # La hoja que realmente se leyó y, cuando no se pidió, la que se propone.
         "sheet": sheet or (sheets[0] if sheets else None),
+        "suggested_sheet": suggested_sheet,
         "header_row": header_row,
         "headers": [_text(value) for value in header],
         "sample_rows": sample,
@@ -589,6 +727,187 @@ async def preview_import(
             "price_basis": None,
             "default_sale_unit": None,
         },
+    }
+
+
+# ---------- revisión previa (sin escrituras) ----------
+
+
+def _aggregate_problems(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Problemas agrupados por código y campos: una pregunta cubre muchas filas."""
+    groups: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
+    for item in rows:
+        problem = item.get("problem")
+        if not problem:
+            continue
+        fields = tuple(problem.get("fields") or ())
+        key = (problem["code"], fields)
+        group = groups.get(key)
+        if group is None:
+            group = {
+                "code": problem["code"],
+                "message": problem["message"],
+                "fields": list(fields),
+                "count": 0,
+                "sample_rows": [],
+            }
+            groups[key] = group
+        group["count"] += 1
+        if len(group["sample_rows"]) < 20:
+            group["sample_rows"].append(item["row"])
+    return sorted(groups.values(), key=lambda g: (-g["count"], g["code"]))
+
+
+def _unrecognised_units(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Textos de unidad que el perfil todavía no traduce, con cuántas filas afectan."""
+    groups: dict[str, dict[str, Any]] = {}
+    for item in rows:
+        problem = item.get("problem")
+        if not problem or problem["code"] != UNKNOWN_UNIT:
+            continue
+        text = str((problem.get("values") or {}).get("sale_unit") or "").strip()
+        if not text:
+            continue
+        group = groups.setdefault(
+            text, {"text": text, "count": 0, "sample_rows": []}
+        )
+        group["count"] += 1
+        if len(group["sample_rows"]) < 20:
+            group["sample_rows"].append(item["row"])
+    return sorted(groups.values(), key=lambda g: (-g["count"], g["text"]))
+
+
+def _profile_values(
+    session_profile: ImportProfile | None,
+    payload: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, str], dict[str, Any], str, int]:
+    """Columnas, unidades y opciones a usar, más su procedencia y versión."""
+    if payload is not None:
+        return (
+            payload.get("columns") or {},
+            payload.get("units") or {},
+            payload.get("options") or {},
+            "request",
+            0,
+        )
+    if session_profile is None:
+        raise DomainError(
+            "IMPORT_FORMAT_INVALID",
+            "Esta fuente todavía no tiene un mapeo de columnas. Revisa las columnas antes de "
+            "continuar.",
+            status_code=422,
+        )
+    return (
+        dict(session_profile.columns or {}),
+        dict(session_profile.units or {}),
+        dict(session_profile.options or {}),
+        "saved",
+        session_profile.version,
+    )
+
+
+async def check_import(
+    session: AsyncSession,
+    actor: Actor,
+    source_id: uuid.UUID,
+    *,
+    file_name: str | None,
+    content: bytes,
+    sheet: str | None = None,
+    header_row: int | None = None,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Revisa la planilla con el mapeo indicado y devuelve el resultado por fila.
+
+    **No escribe nada**: ni ofertas, ni artículos, ni perfil, ni `import_run`. Reutiliza el motor de
+    E8 con `dry_run`, así que lo que muestra es exactamente lo que la importación haría. El mapeo
+    puede venir en la petición (todavía sin guardar) o tomarse del perfil guardado de la fuente.
+    """
+    source = await _source(session, actor, source_id)
+    if len(content) > MAX_BYTES:
+        raise DomainError(
+            "PAYLOAD_TOO_LARGE", "El archivo supera los 10 MB permitidos.", status_code=413
+        )
+    file_format = detect_file_format(file_name, content)
+    sheets = _sheet_names(content, file_format)
+    if file_format == "csv":
+        sheet = None
+    elif sheet is None:
+        sheet = _suggest_sheet(content, file_format, sheets)
+    rows = read_raw_rows(content, file_format, sheet)
+    if len(rows) > MAX_ROWS + _HEADER_SCAN:
+        raise DomainError(
+            "PAYLOAD_TOO_LARGE",
+            f"La planilla supera las {MAX_ROWS} filas de datos permitidas.",
+            status_code=413,
+        )
+    if not rows:
+        raise DomainError("IMPORT_FORMAT_INVALID", "El archivo no tiene filas.", status_code=422)
+    if header_row is None:
+        header_row = _guess_header_row(rows)
+    elif header_row not in {number for number, _values in rows}:
+        raise DomainError(
+            "IMPORT_FORMAT_INVALID",
+            f"La fila {header_row} no existe en la hoja seleccionada.",
+            status_code=422,
+        )
+    header = next((values for number, values in rows if number == header_row), ())
+    saved = (
+        await session.execute(
+            select(ImportProfile).where(
+                ImportProfile.organization_id == actor.organization_id,
+                ImportProfile.source_id == source.id,
+            )
+        )
+    ).scalar_one_or_none()
+    columns, units, options, profile_source, profile_version = _profile_values(saved, payload)
+    clean_columns = _clean_columns(
+        columns, default_sale_unit=options.get("default_sale_unit")
+    )
+    clean_units = _clean_units(units)
+    clean_options = _clean_options(options)
+    probe = ImportProfile(
+        id=uuid.uuid4(),
+        organization_id=actor.organization_id,
+        source_id=source.id,
+        file_format=file_format,
+        sheet=sheet,
+        header_row=header_row,
+        columns=clean_columns,
+        units=clean_units,
+        options=clean_options,
+        status="active",
+        version=profile_version,
+    )
+    # Misma validación que usará la importación real; un perfil inválido falla aquí y no al final.
+    _load_profile(probe)
+    outcome = await run_import(
+        session,
+        actor,
+        source_id=source.id,
+        file_name=file_name or "planilla",
+        content=content,
+        dry_run=True,
+        profile_override=probe,
+        reuse_previous=False,
+    )
+    return {
+        "file_format": file_format,
+        "sheets": sheets,
+        "sheet": sheet,
+        "header_row": header_row,
+        "headers": [_text(value) for value in header],
+        "rows_total": outcome.rows_total,
+        "rows_accepted": outcome.rows_accepted,
+        "rows_rejected": outcome.rows_rejected,
+        "rows_needs_review": sum(1 for row in outcome.rows if row["status"] == "review"),
+        "rows": outcome.rows[:_CHECK_ROWS],
+        "rows_truncated": len(outcome.rows) > _CHECK_ROWS,
+        "problems": _aggregate_problems(outcome.rows),
+        "unrecognised_units": _unrecognised_units(outcome.rows),
+        "profile_source": profile_source,
+        "profile_version": profile_version,
+        "file_hash": hashlib.sha256(content).hexdigest(),
     }
 
 

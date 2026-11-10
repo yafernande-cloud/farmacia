@@ -125,7 +125,11 @@ TIME_SUFFIXES = {"HH:MM": "%H:%M", "HH:MM:SS": "%H:%M:%S"}
 
 @dataclass
 class ImportOutcome:
-    """Resultado de una importación. `as_response()` conserva exactamente la forma de C0 (E8)."""
+    """Resultado de una importación. `as_response()` conserva exactamente la forma de C0 (E8).
+
+    `rows` solo se llena en `dry_run` y solo lo consume la revisión previa: no forma parte del
+    sobre congelado y `as_response()` nunca lo expone.
+    """
 
     status: str
     rows_total: int
@@ -136,6 +140,7 @@ class ImportOutcome:
     observed_at: datetime | None = None
     repeated: bool = False
     dry_run: bool = False
+    rows: list[dict[str, Any]] = field(default_factory=list)
 
     def as_response(self) -> dict[str, Any]:
         return {
@@ -206,7 +211,31 @@ def _text(value: Any) -> str | None:
 
 
 def _normalize_header(value: Any) -> str:
-    return " ".join(_text(value).split()).casefold() if _text(value) else ""
+    """Clave de comparación de una cabecera: sin mayúsculas, sin signos y con espacios únicos.
+
+    No traduce ni interpreta: solo unifica las formas habituales de escribir el mismo nombre
+    («Código», «CODIGO», «Código:», «código  proveedor»).
+    """
+    text = _text(value)
+    if not text:
+        return ""
+    text = text.casefold()
+    text = re.sub(r"[^\wáéíóúüñ]+", " ", text)
+    return " ".join(text.split())
+
+
+def _header_variants(value: Any) -> list[str]:
+    """Claves candidatas de una cabecera, de la más literal a la más permisiva.
+
+    La segunda variante descarta el texto entre paréntesis («Precio (CLP)» → «precio»), que en las
+    planillas suele aclarar la unidad o la moneda sin cambiar el papel de la columna.
+    """
+    text = _text(value)
+    if not text:
+        return []
+    key = _normalize_header(text)
+    base = _normalize_header(re.sub(r"\([^)]*\)|\[[^\]]*\]", " ", text))
+    return [key] if not base or base == key else [key, base]
 
 
 FILE_FORMATS = ("xlsx", "xls", "csv")
@@ -426,7 +455,12 @@ def _read_sheet(
 def _resolve_columns(
     columns: dict, header: tuple[Any, ...], *, required_roles: tuple[str, ...] = REQUIRED_ROLES
 ) -> dict[str, int]:
-    """Cada papel del perfil se busca por nombre de cabecera (con sus alias) y, si no, por posición."""
+    """Cada papel del perfil se busca por nombre de cabecera (con sus alias) y, si no, por posición.
+
+    La posición solo se usa cuando el mapeo **no declara nombre**: si declara `header` y ese nombre
+    no está en el archivo, se falla en vez de aplicar la configuración a una columna equivocada
+    porque el proveedor cambió el orden.
+    """
     if not isinstance(columns, dict) or not columns:
         raise DomainError(
             "IMPORT_FORMAT_INVALID", "El perfil no declara ninguna columna.", status_code=422
@@ -448,15 +482,25 @@ def _resolve_columns(
                 status_code=422,
             )
         candidates = [spec.get("header"), *(spec.get("aliases") or [])]
+        declared_name = bool(spec.get("header"))
         found = None
         for name in candidates:
-            key = _normalize_header(name)
-            if key and key in normalized:
-                found = normalized.index(key)
+            for key in _header_variants(name):
+                if key in normalized:
+                    found = normalized.index(key)
+                    break
+            if found is not None:
                 break
-        if found is None and isinstance(spec.get("position"), int):
+        if found is None and not declared_name and isinstance(spec.get("position"), int):
             pos = spec["position"] - 1
             found = pos if 0 <= pos < len(normalized) else None
+        if found is None and declared_name:
+            raise DomainError(
+                "IMPORT_FORMAT_INVALID",
+                f"El archivo no tiene la columna «{spec['header']}» que el mapeo guardado espera "
+                f"para «{role}». Revisa las columnas: la planilla cambió.",
+                status_code=422,
+            )
         if found is None:
             raise DomainError(
                 "IMPORT_FORMAT_INVALID",
@@ -902,6 +946,61 @@ def _rejected_row(
     }
 
 
+def _check_accepted_row(row: AcceptedRow, warning: str | None) -> dict[str, Any]:
+    """Fila aceptada tal como la interpreta el perfil, para la revisión previa (no se escribe).
+
+    Solo se expone lo que el motor ya calculó: el precio es el decimal validado, no una
+    reconstrucción del texto original.
+    """
+    return {
+        "row": row.row,
+        "status": "review" if warning is not None else "ready",
+        "sku": row.external_id,
+        "name": row.external_name,
+        "price": str(row.price),
+        "currency": row.currency,
+        "price_basis": row.price_basis,
+        "sale_unit": row.sale_unit,
+        "sale_unit_text": row.sale_unit_text,
+        "pack_units": str(row.pack_units) if row.pack_units is not None else None,
+        "stock": str(row.stock) if row.stock is not None else None,
+        "observed_at": row.observed_at.isoformat(),
+        "warnings": [warning] if warning is not None else [],
+        "problem": None,
+    }
+
+
+def _check_rejected_row(
+    rejected: dict[str, Any], problem: RowProblem
+) -> dict[str, Any]:
+    """Fila rechazada para la revisión previa: motivo, campos culpables y nada más.
+
+    Reutiliza lo que ya guarda `_rejected_row` (SKU, nombre y las celdas del propio `RowProblem`);
+    nunca expone la fila completa.
+    """
+    return {
+        "row": rejected["row"],
+        "status": "rejected",
+        "sku": rejected.get("sku"),
+        "name": rejected.get("name"),
+        "price": None,
+        "currency": None,
+        "price_basis": None,
+        "sale_unit": None,
+        "sale_unit_text": None,
+        "pack_units": None,
+        "stock": None,
+        "observed_at": None,
+        "warnings": [],
+        "problem": {
+            "code": problem.code,
+            "message": problem.message,
+            "fields": list(problem.fields),
+            "values": rejected.get("fields", {}),
+        },
+    }
+
+
 async def _create_item_for_row(
     session: AsyncSession,
     actor: Actor,
@@ -991,8 +1090,15 @@ async def run_import(
     file_name: str,
     content: bytes,
     dry_run: bool = False,
+    profile_override: ImportProfile | None = None,
+    reuse_previous: bool = True,
 ) -> ImportOutcome:
-    """Procesa una planilla de una fuente de proveedor. `dry_run` valida y cuenta sin escribir nada."""
+    """Procesa una planilla de una fuente de proveedor. `dry_run` valida y cuenta sin escribir nada.
+
+    `profile_override` permite revisar una interpretación que todavía no se ha guardado, sin
+    escribirla. `reuse_previous=False` obliga a clasificar de nuevo aunque el hash ya exista: la
+    revisión previa siempre describe el mapeo que la persona está viendo ahora.
+    """
     if Role.ADMIN.value not in (actor.roles or []):
         raise DomainError(
             "FORBIDDEN", "Solo la administración puede importar listas de precios.", status_code=403
@@ -1020,26 +1126,31 @@ async def run_import(
     file_hash = hashlib.sha256(content).hexdigest()
     await advisory_lock(session, f"import:{org}:{source.id}")
 
-    previous = (
-        await session.execute(
-            select(ImportRun).where(
-                ImportRun.organization_id == org,
-                ImportRun.source_id == source.id,
-                ImportRun.file_hash == file_hash,
+    if reuse_previous:
+        previous = (
+            await session.execute(
+                select(ImportRun).where(
+                    ImportRun.organization_id == org,
+                    ImportRun.source_id == source.id,
+                    ImportRun.file_hash == file_hash,
+                )
             )
-        )
-    ).scalar_one_or_none()
-    if previous is not None:
-        # Mismo archivo (mismo hash) para la misma fuente: resultado original, sin escribir de nuevo.
-        return _outcome_of(previous, dry_run=dry_run)
+        ).scalar_one_or_none()
+        if previous is not None:
+            # Mismo archivo (mismo hash) para la misma fuente: resultado original, sin escribir de
+            # nuevo.
+            return _outcome_of(previous, dry_run=dry_run)
 
-    profile = (
-        await session.execute(
-            select(ImportProfile).where(
-                ImportProfile.organization_id == org, ImportProfile.source_id == source.id
+    if profile_override is not None:
+        profile = profile_override
+    else:
+        profile = (
+            await session.execute(
+                select(ImportProfile).where(
+                    ImportProfile.organization_id == org, ImportProfile.source_id == source.id
+                )
             )
-        )
-    ).scalar_one_or_none()
+        ).scalar_one_or_none()
     if profile is None:
         raise DomainError(
             "IMPORT_FORMAT_INVALID",
@@ -1073,6 +1184,7 @@ async def run_import(
     accepted: list[tuple[AcceptedRow, str | None]] = []
     rejected: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    detail: list[dict[str, Any]] = []
     seen: set[str] = set()
     for row_number, values in rows:
         external_id = _text(values[prof.columns["sku"]] if prof.columns["sku"] < len(values) else None)
@@ -1084,6 +1196,13 @@ async def run_import(
             )
             rejected.append(_rejected_row(row_number, values, prof, source.id, file_hash, problem))
             errors.append({"row": row_number, "code": problem.code, "message": problem.message})
+            if dry_run:
+                detail.append(
+                    _check_rejected_row(
+                        _rejected_row(row_number, values, prof, source.id, file_hash, problem),
+                        problem,
+                    )
+                )
             continue
         if external_id is not None:
             seen.add(external_id)
@@ -1092,8 +1211,17 @@ async def run_import(
         except RowProblem as problem:
             rejected.append(_rejected_row(row_number, values, prof, source.id, file_hash, problem))
             errors.append({"row": row_number, "code": problem.code, "message": problem.message})
+            if dry_run:
+                detail.append(
+                    _check_rejected_row(
+                        _rejected_row(row_number, values, prof, source.id, file_hash, problem),
+                        problem,
+                    )
+                )
             continue
         accepted.append((row, warning))
+        if dry_run:
+            detail.append(_check_accepted_row(row, warning))
         if warning is not None:
             errors.append(
                 {
@@ -1121,6 +1249,7 @@ async def run_import(
             errors=errors,
             observed_at=now,
             dry_run=True,
+            rows=detail,
         )
 
     # Artículos nuevos: solo para las filas que ya pasaron toda la validación. Una fila rechazada

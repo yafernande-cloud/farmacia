@@ -70,12 +70,76 @@ class PreviewOut(BaseModel):
     file_format: str
     sheets: list[str]
     sheet: str | None
+    # Hoja propuesta cuando no se pidió una; `sheet` es la que realmente se leyó.
+    suggested_sheet: str | None = None
     header_row: int
     headers: list[str | None]
     sample_rows: list[PreviewRow]
     row_count: int
     suggested_columns: dict[str, dict[str, Any]]
     suggested_options: dict[str, Any]
+
+
+class ImportCheckProblemOut(BaseModel):
+    """Un motivo de rechazo agrupado: cuántas filas y algunas de ellas como ejemplo."""
+
+    code: str
+    message: str
+    fields: list[str]
+    count: int
+    sample_rows: list[int]
+
+
+class ImportCheckUnitOut(BaseModel):
+    """Texto de unidad que el mapeo todavía no traduce."""
+
+    text: str
+    count: int
+    sample_rows: list[int]
+
+
+class ImportCheckRow(BaseModel):
+    """Fila interpretada por el motor. `problem` solo existe cuando la fila se rechaza."""
+
+    row: int
+    status: Literal["ready", "review", "rejected"]
+    sku: str | None
+    name: str | None
+    price: str | None
+    currency: str | None
+    price_basis: str | None
+    sale_unit: str | None
+    sale_unit_text: str | None
+    pack_units: str | None
+    stock: str | None
+    observed_at: str | None
+    warnings: list[str]
+    problem: dict[str, Any] | None
+
+
+class ImportCheckOut(BaseModel):
+    """Revisión previa: lo que la importación haría, sin escribir nada.
+
+    `rows` trae las primeras `_CHECK_ROWS` filas; `problems` y `unrecognised_units` agregan
+    **todas** las filas, para que una sola corrección cubra muchas filas.
+    """
+
+    file_format: str
+    sheets: list[str]
+    sheet: str | None
+    header_row: int
+    headers: list[str | None]
+    rows_total: int
+    rows_accepted: int
+    rows_rejected: int
+    rows_needs_review: int
+    rows: list[ImportCheckRow]
+    rows_truncated: bool
+    problems: list[ImportCheckProblemOut]
+    unrecognised_units: list[ImportCheckUnitOut]
+    profile_source: Literal["saved", "request"]
+    profile_version: int
+    file_hash: str
 
 
 class OfferOut(BaseModel):
@@ -195,6 +259,55 @@ async def preview_import(
         sheet=sheet,
         header_row=header_row,
     )
+
+
+@router.post(
+    "/sources/{source_id}/import-check",
+    response_model=ImportCheckOut,
+    responses={**ERRORS, 413: {"description": "Archivo demasiado grande"}},
+    summary="Revisar la planilla con un mapeo sin guardar ni importar nada",
+)
+async def check_import(
+    source_id: uuid.UUID,
+    session: Session,
+    actor: StrongActor,
+    file: Annotated[UploadFile, File(description="Archivo .xlsx, .xls o .csv del proveedor")],
+    sheet: Annotated[
+        str | None, Form(description="Hoja a revisar; por defecto se detecta la de productos")
+    ] = None,
+    header_row: Annotated[
+        int | None, Form(ge=1, le=1000, description="Fila de encabezado; por defecto se detecta")
+    ] = None,
+    profile: Annotated[
+        str | None,
+        Form(
+            description="Mapeo a revisar como JSON (file_format, columns, units, options). "
+            "Si falta, se usa el perfil guardado de la fuente."
+        ),
+    ] = None,
+):
+    body = None
+    if profile is not None:
+        try:
+            body = ImportProfileIn.model_validate_json(profile).model_dump()
+        except ValueError as exc:
+            raise DomainError(
+                "IMPORT_FORMAT_INVALID",
+                "El mapeo enviado para revisar no tiene el formato esperado.",
+                status_code=422,
+            ) from exc
+    content = await _read_limited(file)
+    async with transaction(session):
+        return await svc.check_import(
+            session,
+            actor,
+            source_id,
+            file_name=file.filename,
+            content=content,
+            sheet=sheet,
+            header_row=header_row,
+            payload=body,
+        )
 
 
 @router.get(
