@@ -411,8 +411,11 @@ La suite no hace llamadas externas:
 
 El perfil guardado en `source_connector_profile` conserva su propia copia de `config` y `field_map`;
 por eso un despliegue del backend **no** activa por sí solo los mapeos nuevos
-(`available_for_sale`, `reference_price`). Sin ellos la consulta sigue funcionando y `published` queda
-vacío. Para activarlos hay que reaplicar el preset:
+(`available_for_sale`, `reference_price`). Sin ellos la consulta sigue funcionando y las publicaciones
+directas **sí aparecen** en `published` —`published` solo necesita identidad, nombre y moneda—, pero
+sin los datos que añaden esos dos mapeos: `stock_status` queda `unknown` y `reference_price` queda
+`null`. Reaplicar el preset es una mejora (disponibilidad y precio de lista), no un requisito para
+que los productos publicados se muestren. Para activar los mapeos nuevos hay que reaplicar el preset:
 
 ```
 PUT /api/v1/sources/{source_id}/connector-profile  {"preset":"farmaloop"}
