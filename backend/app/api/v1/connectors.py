@@ -109,6 +109,28 @@ class SupplierOfferOut(BaseModel):
     cart_blockers: list[str]
 
 
+class PublishedProductOut(BaseModel):
+    """Publicación del catálogo sin precio comercial vigente.
+
+    Se muestra porque existe en el portal, pero no es una oferta: no tiene precio de venta, el
+    precio de lista (`reference_price`) es solo referencial y nunca es elegible para el carrito.
+    """
+
+    external_id: str
+    name: str
+    laboratory: str | None
+    presentation: str | None
+    stock_status: Literal["unknown", "in_stock", "out_of_stock"]
+    reference_price: MoneyOut | None
+    image_url: str | None
+    product_url: str | None
+    ean: str | None
+    match_relation: Literal["direct", "related", "unverified"]
+    match_reasons: list[str]
+    cart_eligible: bool
+    cart_blockers: list[str]
+
+
 class SupplierSearchOut(BaseModel):
     search_id: uuid.UUID
     source_id: uuid.UUID
@@ -125,6 +147,8 @@ class SupplierSearchOut(BaseModel):
     discarded: int
     warnings: list[str]
     offers: list[SupplierOfferOut]
+    # Separadas de `offers` a propósito: no son ofertas comerciales ni se pueden cotizar.
+    published: list[PublishedProductOut]
 
 
 @router.get(

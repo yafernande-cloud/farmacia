@@ -30,6 +30,7 @@ from app.services.connectors.base import (
     ConnectorIntervention,
     ConnectorNotConfigured,
     ConnectorResult,
+    PublishedProduct,
     SupplierOffer,
 )
 from app.services.connectors.store import store
@@ -54,6 +55,20 @@ def offer(**over):
     return SupplierOffer(**data)
 
 
+def published_product(**over):
+    data = dict(
+        external_id="140640",
+        name="Predual Pamabron 25 mg 12 Comprimidos",
+        currency="CLP",
+        laboratory="Laboratorio Ficticio",
+        presentation="Comprimido",
+        stock_status="out_of_stock",
+        reference_price=Decimal("2290"),
+    )
+    data.update(over)
+    return PublishedProduct(**data)
+
+
 class FakeStrategy:
     mechanism = "algolia"
 
@@ -62,6 +77,7 @@ class FakeStrategy:
         self.error: Exception | None = None
         self.fingerprint = "huella-1"
         self.offers = [offer()]
+        self.published = []
 
     async def search(self, query, *, config, field_map, limit, transport=None):
         self.calls += 1
@@ -71,6 +87,7 @@ class FakeStrategy:
             offers=list(self.offers),
             observed_at=datetime.now(UTC),
             fingerprint=self.fingerprint,
+            published=list(self.published),
             warnings=[],
         )
 
@@ -276,6 +293,7 @@ async def test_busqueda_exitosa_no_persiste_ofertas(api, sessions, fake):
     # La presentación no confirma unidad de venta ni base del precio: sigue bloqueada.
     assert found["cart_eligible"] is False
     assert found["cart_blockers"] == ["sale_unit_unconfirmed", "price_basis_unconfirmed"]
+    assert body["published"] == []
     assert fake.calls == 1
 
     row = await profile_row(sessions)
@@ -284,6 +302,72 @@ async def test_busqueda_exitosa_no_persiste_ofertas(api, sessions, fake):
     assert row.last_error_kind is None
     assert row.schema_fingerprint == "huella-1"
     assert await count(sessions, OfferSnapshot) == 0
+
+
+async def test_una_publicacion_sin_precio_se_muestra_aparte_y_nunca_es_elegible(
+    api, sessions, fake
+):
+    """Predual Pamabron existe en el catálogo sin precio vigente: se muestra, no se cotiza."""
+    assert (await put(api)).status_code == 200
+    fake.offers = [offer(external_id="140429", name="Predual 125 comprimidos")]
+    fake.published = [
+        published_product(),
+        published_product(
+            external_id="8127",
+            name="Pedialyte 60 Manzana x 500 ml Solución Oral",
+            stock_status="unknown",
+            reference_price=None,
+        ),
+    ]
+
+    r = await search(api, query="predual")
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    assert body["state"] == "connected"
+    assert body["outcome"] == "matches"
+    assert [o["external_id"] for o in body["offers"]] == ["140429"]
+
+    by_id = {item["external_id"]: item for item in body["published"]}
+    assert set(by_id) == {"140640", "8127"}
+
+    directa = by_id["140640"]
+    assert directa["match_relation"] == "direct"
+    assert directa["stock_status"] == "out_of_stock"
+    # El precio de lista es solo referencial: no se copia al precio de venta ni existe aquí.
+    assert directa["reference_price"] == {"amount": "2290", "currency": "CLP"}
+    assert "price" not in directa
+    assert directa["cart_eligible"] is False
+    assert directa["cart_blockers"] == [
+        "not_available_for_sale",
+        "no_current_price",
+        "sale_unit_unconfirmed",
+        "price_basis_unconfirmed",
+    ]
+
+    sin_stock_informado = by_id["8127"]
+    assert sin_stock_informado["stock_status"] == "unknown"
+    assert sin_stock_informado["reference_price"] is None
+    assert sin_stock_informado["match_relation"] == "related"
+    assert "not_available_for_sale" not in sin_stock_informado["cart_blockers"]
+    assert "no_current_price" in sin_stock_informado["cart_blockers"]
+
+    assert all(item["cart_eligible"] is False for item in body["offers"])
+    assert await count(sessions, OfferSnapshot) == 0
+
+
+async def test_solo_publicaciones_sin_precio_sigue_siendo_una_busqueda_con_resultados(
+    api, fake
+):
+    assert (await put(api)).status_code == 200
+    fake.offers = []
+    fake.published = [published_product()]
+
+    body = (await search(api, query="pamabron")).json()
+
+    assert body["offers"] == []
+    assert body["outcome"] == "matches"
+    assert [item["external_id"] for item in body["published"]] == ["140640"]
 
 
 async def test_los_resultados_relacionados_se_muestran_pero_no_se_presentan_como_coincidencia(

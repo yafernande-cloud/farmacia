@@ -32,9 +32,10 @@ from app.services.connectors.base import (
     ConnectorIntervention,
     ConnectorNotConfigured,
     ConnectorResult,
+    PublishedProduct,
     SupplierOffer,
 )
-from app.services.connectors.commercial import cart_blockers
+from app.services.connectors.commercial import cart_blockers, published_blockers
 from app.services.connectors.config import validate_profile
 from app.services.connectors.matching import classify_match
 from app.services.connectors.store import store
@@ -380,6 +381,32 @@ def _clean_query(query: str) -> str:
     return text
 
 
+def _published_payload(product: PublishedProduct, *, query: str) -> dict[str, Any]:
+    """Publicación sin precio comercial: se muestra, nunca es una oferta ni entra a un carrito."""
+    relation, reasons = classify_match(query, product.name)
+    return {
+        "external_id": product.external_id,
+        "name": product.name,
+        "laboratory": product.laboratory,
+        "presentation": product.presentation,
+        "stock_status": product.stock_status,
+        # Precio de lista del catálogo, solo referencial; `None` si no se informó.
+        "reference_price": (
+            {"amount": str(product.reference_price), "currency": product.currency}
+            if product.reference_price is not None
+            else None
+        ),
+        "image_url": product.image_url,
+        "product_url": product.product_url,
+        "ean": product.ean,
+        "match_relation": relation,
+        "match_reasons": reasons,
+        # Sin precio de venta no hay nada que cotizar: la elegibilidad es siempre falsa.
+        "cart_eligible": False,
+        "cart_blockers": published_blockers(product, match_relation=relation),
+    }
+
+
 def _offer_payload(offer: SupplierOffer, *, query: str) -> dict[str, Any]:
     relation, reasons = classify_match(query, offer.name)
     blockers = cart_blockers(offer, match_relation=relation)
@@ -418,12 +445,14 @@ def _snapshot(
     offers: list[SupplierOffer] | None = None,
     observed_at: datetime | None = None,
     discarded: int = 0,
+    published: list[PublishedProduct] | None = None,
     warnings: list[str] | None = None,
     profile: SupplierConnectorProfile | None,
 ) -> dict[str, Any]:
     settings = get_settings()
     now = _now()
     offers = offers or []
+    published = published or []
     return {
         "search_id": uuid.uuid4(),
         # Uso interno para comprobar la organización; no forma parte de la respuesta HTTP.
@@ -433,8 +462,10 @@ def _snapshot(
         "query": query,
         "state": state,
         "reason": reason,
+        # Una publicación sin precio también es una coincidencia del catálogo, aunque no se pueda
+        # cotizar: el mensaje de «sin resultados» solo corresponde cuando no hay nada que mostrar.
         "outcome": (
-            ("matches" if offers else "no_matches")
+            ("matches" if (offers or published) else "no_matches")
             if state in {"connected", "requires_intervention"}
             else None
         ),
@@ -446,6 +477,7 @@ def _snapshot(
         "discarded": discarded,
         "warnings": warnings or [],
         "offers": [_offer_payload(offer, query=query) for offer in offers],
+        "published": [_published_payload(product, query=query) for product in published],
     }
 
 
@@ -578,6 +610,7 @@ async def search_live(
             offers=result.offers,
             observed_at=result.observed_at,
             discarded=result.discarded,
+            published=result.published,
             warnings=warnings,
             profile=profile,
         )

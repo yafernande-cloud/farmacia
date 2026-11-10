@@ -83,11 +83,34 @@ class SupplierOffer:
 
 
 @dataclass(frozen=True)
+class PublishedProduct:
+    """Publicación del catálogo sin precio comercial vigente.
+
+    No es una oferta: no tiene precio de venta, no puede entrar a un carrito y no participa de
+    comparaciones ni totales. `reference_price` es el precio de lista del proveedor y se muestra
+    **solo** como referencial. Un dato ausente queda en `None`, nunca en 0/1.
+    """
+
+    external_id: str
+    name: str
+    currency: str
+    laboratory: str | None = None
+    presentation: str | None = None
+    stock_status: str = "unknown"
+    reference_price: Decimal | None = None
+    image_url: str | None = None
+    product_url: str | None = None
+    ean: str | None = None
+
+
+@dataclass(frozen=True)
 class ConnectorResult:
     offers: list[SupplierOffer]
     observed_at: datetime
     fingerprint: str | None = None
     discarded: int = 0
+    # Publicaciones con identidad válida pero sin precio de venta: se muestran, no se compran.
+    published: list[PublishedProduct] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 

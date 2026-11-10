@@ -25,6 +25,8 @@ CANONICAL_FIELDS = {
     "price",
     "currency",
     "stock",
+    "available_for_sale",
+    "reference_price",
     "image_url",
     "product_url",
     "ean",
@@ -38,6 +40,10 @@ EXPECTED_TYPES = {
     "price": "decimal",
     "currency": "string",
     "stock": "decimal",
+    # Señal explícita del proveedor sobre si la publicación está disponible para la venta.
+    "available_for_sale": "bool",
+    # Precio de lista del catálogo. Nunca se usa como precio de venta ni alimenta el carrito.
+    "reference_price": "decimal",
     "image_url": "url",
     "product_url": "url",
     "ean": "string",

@@ -160,13 +160,36 @@ es la unidad de venta ni la base del precio. El preset de Farmaloop no mapea `sa
 el precio es por caja. Se completa cada campo solo cuando el proveedor lo declara de manera
 verificable y el mapeo lo refleja. Un dato faltante nunca se reemplaza por 0, 1 ni un texto supuesto.
 
+### Publicaciones sin precio comercial vigente
+
+Un producto puede existir en el catálogo del proveedor sin precio de venta: es el caso de las
+publicaciones con `bestPrice = 0` que el portal sigue mostrando. Se devuelven en una colección
+**separada**, `published`, y no se convierten en ofertas:
+
+- el ítem necesita identidad válida (`external_id` y `name`); si no la tiene, se descarta como antes;
+- `price` no existe: **el precio de lista (`reference_price`, mapeado desde `basePrice`) se muestra
+  solo como «Precio de lista referencial»** y nunca se copia a `price`, al carrito, a comparaciones
+  ni a totales;
+- `stock_status` sale de la señal explícita del proveedor `available_for_sale`
+  (`availableForSale`): `0` es `out_of_stock` («Sin stock»), ausente es `unknown` («Stock no
+  informado»); no se deduce de `basePrice` ni de los lotes;
+- `cart_eligible` siempre es `false`; entre los motivos aparecen `no_current_price` y, cuando
+  corresponde, `not_available_for_sale`;
+- no se guardan en la base de datos ni generan `offer_snapshot`.
+
+Los descartes ya no se publican como advertencia visible: el contador `discarded` sigue en la
+respuesta para diagnóstico, pero un descarte técnico no se muestra en la pantalla de cotización.
+
 ### Habilitación para carrito
 
 `cart_eligible` es `false` mientras exista algún bloqueo en `cart_blockers`, en este orden:
 
 1. `match_not_direct` — la oferta no es una coincidencia directa.
-2. `sale_unit_unconfirmed` — no hay unidad de venta confirmada.
-3. `price_basis_unconfirmed` — no hay base del precio confirmada.
+2. `not_available_for_sale` — el proveedor informó que no está disponible para la venta
+   (`stock_status = "out_of_stock"`).
+3. `no_current_price` — solo en `published`: no hay precio comercial vigente.
+4. `sale_unit_unconfirmed` — no hay unidad de venta confirmada.
+5. `price_basis_unconfirmed` — no hay base del precio confirmada.
 
 En esta etapa el carrito **no está conectado**: estos campos informan la condición comercial para la
 integración futura y permiten verificar que ninguna oferta de Farmaloop quedaría habilitada hoy. Una
@@ -241,11 +264,16 @@ La respuesta nunca incluye el valor de una clave: solo el nombre de la variable 
 { "source_id": "<uuid>", "query": "predual", "limit": 10 }
 ```
 
-Devuelve `search_id`, estado, motivo, ofertas normalizadas, `discarded`, `warnings` y `cached`.
-Cada oferta incluye `external_id`, `name`, `laboratory`, `presentation`,
+Devuelve `search_id`, estado, motivo, ofertas normalizadas, `published`, `discarded`, `warnings` y
+`cached`. Cada oferta incluye `external_id`, `name`, `laboratory`, `presentation`,
 `price.amount`/`price.currency`, `price_basis`, `sale_unit`, `stock_status`, `stock_quantity`,
 `stock_unit`, `image_url`, `product_url`, `ean`, `match_relation`, `match_reasons`, `cart_eligible`
 y `cart_blockers`.
+
+`published` es una colección aparte, con la misma identidad y clasificación textual pero **sin
+`price`**: incluye `reference_price` (`null` si el proveedor no informó precio de lista),
+`stock_status` derivado de `available_for_sale`, `cart_eligible = false` y sus `cart_blockers`. Un
+publicado nunca se mezcla con `offers` ni se puede cotizar.
 
 Los campos no informados quedan en `null`:
 `price_basis`, `sale_unit`, `stock_quantity`, `stock_unit`, `product_url`, etc. **No se completa un
@@ -286,15 +314,15 @@ Verificado manualmente el 2026-11-09 contra el índice público:
 
 - índice `f_products_prod` y búsqueda pública sin autenticación de cuenta;
 - campos `sku`, `fullName`, `laboratoryName`, `presentation`, `bestPrice`, `basePrice`,
-  `photoURL`, `ean`, `slug`, `batchs[].stock`;
+  `photoURL`, `ean`, `slug`, `batchs[].stock`, `availableForSale`;
 - consultas de «Predual» devolvieron, entre otras, ofertas de $12.990 y $1.990. Es una observación
   puntual, no una promesa de precio ni una generalización a otros productos.
 
 El preset **no** declara:
 
 - `sale_unit` ni `price_basis`, porque no están confirmados;
-- `stock_unit`, porque la unidad de `batchs[].stock` no está confirmada; por eso el stock se informa
-  `unknown` aunque la ruta esté mapeada;
+- `stock_unit`, porque la unidad de `batchs[].stock` no está confirmada; la cantidad no se expone
+  aunque la ruta esté mapeada, y el estado sale de `available_for_sale`;
 - `product_url`, porque no se verificó una plantilla de ficha estable;
 - `unitCost`, que es un dato de cuenta y no se mapea ni se registra.
 
@@ -313,13 +341,18 @@ validación.
 Resultado observado (registro `2026-11-10T01:20:56Z`, consulta «predual»):
 
 - respuesta HTTP correcta, estado `connected`, sin error de estructura;
-- **5 ofertas válidas y 5 ítems descartados** por mapeo inválido (no por clasificación);
+- **5 ofertas válidas y 5 publicaciones sin precio de venta** (`bestPrice = 0`,
+  `availableForSale = 0`, sin lotes ni listas de precio); con el criterio vigente ya no se cuentan
+  como descartes;
 - dos SKU que sí corresponden a Predual: `140429` («Predual 125 comprimidos», $12.990) y `105469`
   («Predual x 10 Comprimidos», $1.990), ambos con moneda CLP, presentación, imagen y laboratorio;
+- **`140640` («Predual Pamabron 25 mg 12 Comprimidos», Maver)**: coincidencia directa sin precio
+  vigente, con precio de lista referencial $2.290 y «Sin stock» informado por el proveedor;
+- las otras cuatro publicaciones son `related` (Pregalin 150, Pedialyte 60 y dos Reduclim);
 - tres productos de **pregabalina** (Pregalex y Pregalin) devueltos por el buscador del proveedor:
   quedaron como `related`, no como coincidencias;
-- `sale_unit` y `price_basis` en `null` en todas las ofertas; `cart_eligible = false`;
-- `stock_status = "unknown"`;
+- `sale_unit` y `price_basis` en `null` en todas las ofertas; `cart_eligible = false` en ofertas y
+  publicaciones;
 - **`offer_snapshot` permaneció vacío** (0 filas): la búsqueda no persiste ofertas.
 
 Limitaciones de esa evidencia:
@@ -360,15 +393,34 @@ La suite no hace llamadas externas:
 5. `POST /api/v1/supplier-searches` con `{"source_id":"…","query":"predual","limit":10}`.
    Confirmar `state="connected"` y revisar cada oferta: nombre, laboratorio, presentación, precio,
    moneda e imagen; la URL de ficha solo aparece si el perfil declara una plantilla verificada (el
-   preset de Farmaloop no la declara). Confirmar que `stock_status="unknown"`, `sale_unit=null`,
-   `price_basis=null` y `cart_eligible=false` mientras no estén confirmados, y que Predual aparezca
-   como `direct` mientras Pregalex/Pregalin quedan como `related` **sin desaparecer** de la lista.
+   preset de Farmaloop no la declara). Confirmar que `stock_status` refleja `availableForSale`
+   (`in_stock`/`out_of_stock`, `unknown` si no viene), que `sale_unit=null`, `price_basis=null` y
+   `cart_eligible=false` mientras no estén confirmados, y que Predual aparezca como `direct`
+   mientras Pregalex/Pregalin quedan como `related` **sin desaparecer** de la lista. Revisar
+   `published`: `140640` debe aparecer como directa con `out_of_stock` y `reference_price` $2.290,
+   sin `price` y sin entrar al carrito.
 6. Contrastar manualmente los precios y presentaciones con la ficha pública. Registrar la fecha, la
    consulta y el `search_id`; no convertir esa observación en una oferta persistida.
 7. Si aparece `requires_intervention`, corregir el mapeo o las credenciales y repetir. Si aparece
    `error`, distinguir el fallo transitorio y reintentar; no cambiar la configuración a ciegas.
-8. Solo después de esa validación conectar Lovable. En esta etapa el frontend **no** se modifica y el
-   endpoint no alimenta el carrito ni las cotizaciones.
+8. Solo después de esa validación conectar Lovable. El frontend ya muestra las publicaciones sin
+   precio vigente en una tarjeta aparte, con el precio de lista como «referencial» y el carrito
+   deshabilitado; el endpoint sigue sin alimentar el carrito ni las cotizaciones.
+
+### Perfiles ya guardados
+
+El perfil guardado en `source_connector_profile` conserva su propia copia de `config` y `field_map`;
+por eso un despliegue del backend **no** activa por sí solo los mapeos nuevos
+(`available_for_sale`, `reference_price`). Sin ellos la consulta sigue funcionando y `published` queda
+vacío. Para activarlos hay que reaplicar el preset:
+
+```
+PUT /api/v1/sources/{source_id}/connector-profile  {"preset":"farmaloop"}
+```
+
+Eso sube `version` y borra `last_success_at`: el estado vuelve a «not_configured / not_tested» y el
+frontend muestra «Sin conexión» hasta la primera consulta correcta. Es un cambio de configuración de
+producción y requiere autorización expresa.
 
 ## 11. Siguiente etapa
 

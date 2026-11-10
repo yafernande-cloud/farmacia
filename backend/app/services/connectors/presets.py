@@ -51,6 +51,10 @@ _PRESET: dict[str, Any] = {
         "ean": {"path": "ean", "type": "string"},
         # Se conserva la ruta para cuando una persona confirme la unidad; hoy no se expone stock.
         "stock": {"path": "batchs[].stock", "transform": "sum", "type": "decimal"},
+        # El portal informa si la publicación está disponible para la venta (0/1).
+        "available_for_sale": {"path": "availableForSale", "type": "bool"},
+        # Precio de lista: solo referencial cuando no hay precio comercial vigente.
+        "reference_price": {"path": "basePrice", "type": "decimal"},
     },
 }
 

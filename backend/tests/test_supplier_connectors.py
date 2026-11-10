@@ -107,19 +107,87 @@ async def test_algolia_lee_las_ofertas_y_no_expone_la_clave():
     assert result.fingerprint
 
 
-async def test_algolia_descarta_items_sin_precio_y_los_cuenta():
+async def test_algolia_publica_sin_precio_en_vez_de_descartar():
+    """Un producto con identidad válida y sin precio se muestra aparte; no es una oferta."""
     async def handler(_: httpx.Request):
-        return response([farmaloop_hit(), farmaloop_hit(sku="PRE-002", bestPrice=None)])
+        return response(
+            [
+                farmaloop_hit(),
+                farmaloop_hit(sku="PRE-002", bestPrice=None, availableForSale=0),
+            ]
+        )
 
     result = await search(handler)
+
     assert [o.external_id for o in result.offers] == ["PRE-001"]
-    assert result.discarded == 1
-    assert any("descartados" in w for w in result.warnings)
+    assert [p.external_id for p in result.published] == ["PRE-002"]
+    product = result.published[0]
+    assert product.name.startswith("Predual")
+    # El proveedor informó que no está disponible: «sin stock», no un dato inventado.
+    assert product.stock_status == "out_of_stock"
+    # El precio de lista se conserva aparte, solo como referencia.
+    assert product.reference_price == Decimal("15990")
+    assert result.discarded == 0
+    # Los descartes ya no viajan como advertencia visible.
+    assert result.warnings == []
 
 
-async def test_algolia_sin_ofertas_validas_pide_intervencion():
+async def test_algolia_publicado_sin_disponibilidad_informada_no_inventa_stock():
     async def handler(_: httpx.Request):
-        return response([farmaloop_hit(bestPrice="no es un precio")])
+        return response([farmaloop_hit(bestPrice=0, availableForSale=None, basePrice=0)])
+
+    result = await search(handler)
+
+    product = result.published[0]
+    assert product.stock_status == "unknown"
+    assert product.reference_price is None
+
+
+async def test_algolia_oferta_no_disponible_se_muestra_con_su_estado_real():
+    async def handler(_: httpx.Request):
+        return response(
+            [farmaloop_hit(availableForSale=0), farmaloop_hit(sku="PRE-003", availableForSale=1)]
+        )
+
+    result = await search(handler)
+
+    assert [o.stock_status for o in result.offers] == ["out_of_stock", "in_stock"]
+    assert [o.external_id for o in result.published] == []
+
+
+async def test_algolia_descarta_items_sin_identidad_aunque_no_tengan_precio():
+    async def handler(_: httpx.Request):
+        return response(
+            [
+                farmaloop_hit(),
+                farmaloop_hit(sku="", fullName="", bestPrice=0),
+                farmaloop_hit(sku="PRE-002", bestPrice="no es un precio"),
+            ]
+        )
+
+    result = await search(handler)
+
+    assert [o.external_id for o in result.offers] == ["PRE-001"]
+    # `PRE-002` tiene identidad válida y precio ilegible: se publica sin precio.
+    assert [p.external_id for p in result.published] == ["PRE-002"]
+    assert result.discarded == 1
+
+
+async def test_algolia_la_oferta_gana_sobre_la_publicacion_del_mismo_sku():
+    async def handler(_: httpx.Request):
+        return response(
+            [farmaloop_hit(sku="PRE-001", bestPrice=0), farmaloop_hit(sku="PRE-001")]
+        )
+
+    result = await search(handler)
+
+    assert [o.external_id for o in result.offers] == ["PRE-001"]
+    assert result.published == []
+
+
+async def test_algolia_sin_nada_legible_pide_intervencion():
+    async def handler(_: httpx.Request):
+        return response([farmaloop_hit(sku="", fullName="")])
 
     with pytest.raises(ConnectorIntervention) as exc:
         await search(handler)
@@ -260,6 +328,12 @@ def test_el_preset_de_farmaloop_declara_sus_limites():
     assert "sale_unit" not in field_map
     assert "unitCost" not in repr(field_map)
     assert field_map["price"]["type"] == "decimal"
+    # Disponibilidad explícita y precio de lista: nunca se usan como precio de venta.
+    assert field_map["available_for_sale"]["path"] == "availableForSale"
+    assert field_map["available_for_sale"]["type"] == "bool"
+    assert field_map["reference_price"]["path"] == "basePrice"
+    assert field_map["reference_price"]["type"] == "decimal"
+    assert field_map["price"]["path"] == "bestPrice"
 
 
 def test_un_perfil_sin_moneda_se_rechaza():

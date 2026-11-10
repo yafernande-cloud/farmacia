@@ -26,6 +26,7 @@ from app.services.connectors.base import (
     ConnectorIntervention,
     ConnectorNotConfigured,
     ConnectorResult,
+    PublishedProduct,
     SupplierOffer,
     schema_fingerprint,
 )
@@ -67,11 +68,8 @@ def _read(item: Any, spec: FieldSpec) -> Any:
     return spec.const
 
 
-def _normalise(item: Any, specs: dict[str, FieldSpec], cfg: AlgoliaConfig) -> SupplierOffer | None:
-    """Convierte un ítem crudo en oferta. Si falta un dato obligatorio, devuelve `None`.
-
-    Nunca completa un dato ausente con 0, 1 ni un texto inventado: el llamador cuenta el descarte.
-    """
+def _read_values(item: Any, specs: dict[str, FieldSpec]) -> dict[str, Any]:
+    """Lee y convierte cada campo canónico del ítem según su spec."""
     values: dict[str, Any] = {}
     for name, spec in specs.items():
         raw = _read(item, spec)
@@ -86,11 +84,19 @@ def _normalise(item: Any, specs: dict[str, FieldSpec], cfg: AlgoliaConfig) -> Su
             values[name] = as_bool(raw)
         else:
             values[name] = raw
+    return values
 
+
+def _identity(
+    values: dict[str, Any], specs: dict[str, FieldSpec], cfg: AlgoliaConfig
+) -> tuple[str, str, str] | None:
+    """Identidad mínima para nombrar una publicación: código, nombre y moneda válidos.
+
+    Devuelve `None` si el ítem no se puede publicar con identidad propia; el llamador lo descarta.
+    """
     external_id = _clean_text(values.get("external_id"), 120)
     name = _clean_text(values.get("name"), 300)
-    price = values.get("price")
-    if not isinstance(price, Decimal) or price <= 0:
+    if external_id is None or name is None:
         return None
     currency = _clean_text(values.get("currency"), 3) or cfg.currency
     if currency is None:
@@ -98,24 +104,54 @@ def _normalise(item: Any, specs: dict[str, FieldSpec], cfg: AlgoliaConfig) -> Su
     currency = currency.upper()
     if CURRENCY.fullmatch(currency) is None:
         return None
-    if external_id is None or name is None:
-        return None
 
     # Un campo marcado `required` también descarta el ítem si no se pudo leer.
     for field_name, spec in specs.items():
         if spec.required and values.get(field_name) is None:
             return None
+    return external_id, name, currency
 
-    stock_quantity: Decimal | None = None
+
+def _stock(
+    values: dict[str, Any], specs: dict[str, FieldSpec], cfg: AlgoliaConfig
+) -> tuple[str, Decimal | None, str | None]:
+    """Estado de stock desde datos del proveedor, sin inventar cantidades.
+
+    `available_for_sale` es la señal explícita del portal sobre si la publicación se puede vender
+    (0/1). Si el perfil confirma además la unidad de stock, la cantidad de los lotes la precisa.
+    """
     stock_status = "unknown"
+    stock_quantity: Decimal | None = None
     stock_unit: str | None = None
+
+    available = values.get("available_for_sale") if "available_for_sale" in specs else None
+    if isinstance(available, bool):
+        stock_status = "in_stock" if available else "out_of_stock"
+
     if cfg.stock_unit is not None and "stock" in specs:
-        stock_quantity = values.get("stock")
-        if isinstance(stock_quantity, Decimal):
+        amount = values.get("stock")
+        if isinstance(amount, Decimal):
+            stock_quantity = amount
             stock_unit = cfg.stock_unit
-            stock_status = "in_stock" if stock_quantity > 0 else "out_of_stock"
-        else:
-            stock_quantity = None
+            stock_status = "in_stock" if amount > 0 else "out_of_stock"
+    return stock_status, stock_quantity, stock_unit
+
+
+def _normalise(item: Any, specs: dict[str, FieldSpec], cfg: AlgoliaConfig) -> SupplierOffer | None:
+    """Convierte un ítem crudo en oferta. Si falta un dato obligatorio, devuelve `None`.
+
+    Nunca completa un dato ausente con 0, 1 ni un texto inventado. Un ítem sin precio de venta no
+    es una oferta: `_published` decide si todavía puede mostrarse como publicación del catálogo.
+    """
+    values = _read_values(item, specs)
+    price = values.get("price")
+    if not isinstance(price, Decimal) or price <= 0:
+        return None
+    identity = _identity(values, specs, cfg)
+    if identity is None:
+        return None
+    external_id, name, currency = identity
+    stock_status, stock_quantity, stock_unit = _stock(values, specs, cfg)
 
     return SupplierOffer(
         external_id=external_id,
@@ -129,6 +165,45 @@ def _normalise(item: Any, specs: dict[str, FieldSpec], cfg: AlgoliaConfig) -> Su
         stock_status=stock_status,
         stock_quantity=stock_quantity,
         stock_unit=stock_unit,
+        image_url=values.get("image_url") if isinstance(values.get("image_url"), str) else None,
+        product_url=(
+            values.get("product_url") if isinstance(values.get("product_url"), str) else None
+        ),
+        ean=_clean_text(values.get("ean"), 32),
+    )
+
+
+def _published(
+    item: Any, specs: dict[str, FieldSpec], cfg: AlgoliaConfig
+) -> PublishedProduct | None:
+    """Publicación del catálogo sin precio comercial vigente.
+
+    Solo llega aquí un ítem que `_normalise` ya rechazó. Se publica cuando la **única** falla es el
+    precio: identidad, moneda y campos requeridos siguen siendo obligatorios. El precio de lista
+    (`reference_price`) se conserva aparte y nunca se presenta como precio de venta.
+    """
+    values = _read_values(item, specs)
+    price = values.get("price")
+    if isinstance(price, Decimal) and price > 0:
+        # Tenía precio: si no salió como oferta, falló por identidad o moneda; no se publica.
+        return None
+    identity = _identity(values, specs, cfg)
+    if identity is None:
+        return None
+    external_id, name, currency = identity
+    stock_status, _, _ = _stock(values, specs, cfg)
+    reference = values.get("reference_price")
+
+    return PublishedProduct(
+        external_id=external_id,
+        name=name,
+        currency=currency,
+        laboratory=_clean_text(values.get("laboratory"), 200),
+        presentation=_clean_text(values.get("presentation"), 300),
+        stock_status=stock_status,
+        reference_price=(
+            reference if isinstance(reference, Decimal) and reference > 0 else None
+        ),
         image_url=values.get("image_url") if isinstance(values.get("image_url"), str) else None,
         product_url=(
             values.get("product_url") if isinstance(values.get("product_url"), str) else None
@@ -244,28 +319,43 @@ class AlgoliaStrategy:
             raise ConnectorIntervention("schema_changed", details={"field": cfg.item_path})
 
         offers: list[SupplierOffer] = []
-        seen: set[str] = set()
+        published: list[PublishedProduct] = []
+        seen_offers: set[str] = set()
+        seen_published: set[str] = set()
         discarded = 0
         for item in raw_items[:wanted]:
             offer = _normalise(item, specs, cfg)
-            if offer is None:
-                discarded += 1
+            if offer is not None:
+                if offer.external_id in seen_offers:
+                    discarded += 1
+                    continue
+                seen_offers.add(offer.external_id)
+                offers.append(offer)
                 continue
-            if offer.external_id in seen:
-                discarded += 1
-                continue
-            seen.add(offer.external_id)
-            offers.append(offer)
 
-        if raw_items and not offers:
+            product = _published(item, specs, cfg)
+            if product is None:
+                discarded += 1
+                continue
+            if product.external_id in seen_offers or product.external_id in seen_published:
+                discarded += 1
+                continue
+            seen_published.add(product.external_id)
+            published.append(product)
+
+        # Una oferta comercial manda sobre una publicación sin precio del mismo SKU.
+        if seen_offers:
+            published = [p for p in published if p.external_id not in seen_offers]
+
+        # Solo se pide intervención cuando no se pudo leer ni una publicación con identidad: un
+        # catálogo sin precios vigentes es un estado legítimo del proveedor, no un mapeo roto.
+        if raw_items and not offers and not published:
             raise ConnectorIntervention(
                 "field_mapping_failed",
                 details={"items": len(raw_items), "discarded": discarded},
             )
 
         warnings: list[str] = []
-        if discarded:
-            warnings.append(f"{discarded} ítem(s) descartados por datos incompletos o inválidos.")
         if not raw_items:
             warnings.append("La consulta no devolvió resultados.")
 
@@ -274,6 +364,7 @@ class AlgoliaStrategy:
             observed_at=datetime.now(UTC),
             fingerprint=schema_fingerprint(raw_items),
             discarded=discarded,
+            published=published,
             warnings=warnings,
         )
 
