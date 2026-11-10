@@ -36,7 +36,7 @@ GitHub main   ──► Lovable (editor, preview y publicación)
 | Pruebas | pytest + PostgreSQL real; Vitest + Testing Library | Reglas verificadas contra la base real |
 
 No hay Redis, colas externas, SSE ni WebSockets en producción. El estado en memoria se usa solo para
-las búsquedas E15 y para el limitador de tasa.
+las búsquedas E15, la caché de búsquedas de proveedores y los limitadores de tasa.
 
 ## 3. Monolito modular
 
@@ -51,7 +51,7 @@ las búsquedas E15 y para el limitador de tasa.
 | `telegram` | Parseo, cliente de Bot API, runtime de polling |
 | `models` | Modelos SQLAlchemy |
 | `core` | Configuración, errores, permisos, autenticación, cifrado |
-| `migrations` | Alembic; la cabeza actual es `0026` |
+| `migrations` | Alembic; la cabeza actual es `0027` |
 
 Patrón de servicios: reciben un `Actor` y una `AsyncSession`, verifican permiso, aplican reglas y
 emiten auditoría/outbox con `services.events.emit`. La API abre `transaction()` y hace commit; si algo
@@ -96,6 +96,7 @@ Los permisos viven en PostgreSQL, no en claims editables del token. Detalle:
 | Fotos y visión | Implementado | `services/photo_processing.py`, `services/storage.py`, `interpretation/openai_vision.py` |
 | Catálogo, proveedores, fuentes e importación | Implementado | `services/catalog.py`, `services/suppliers.py`, `services/imports.py` |
 | Búsqueda E1–E3 y cadenas E15 | Implementado | `api/v1/search.py`, `services/chain_search.py`, `services/chains/` |
+| Motor de proveedores: perfiles y búsqueda en vivo | Implementado en backend; estrategia Algolia | `services/connectors/`, `api/v1/connectors.py` |
 | Comparación E5 y criterios E9 | Implementado | `services/comparison.py`, `api/v1/comparisons.py` |
 | Cotizaciones, carritos y asignaciones E10 | Implementado en backend | `services/quotes.py`, `api/v1/quotes.py` |
 | Observaciones comerciales e IA A6/O2 | Implementado en backend | `services/observation_ai.py`, `api/v1/observations.py` |
@@ -129,6 +130,16 @@ Cada cadena tiene su conector en `services/chains/`. `chain_search` los consulta
 presupuesto propio, y publica un estado por cadena (`ok`, `failed`, `not_configured`). Los resultados
 viven en memoria (TTL 10 min, 50 búsquedas) y **no se persisten**. Una cadena caída o que rechaza la
 consulta no se convierte en «sin resultados».
+
+### Proveedores
+
+`services/connectors/` implementa un motor declarativo: un perfil por fuente describe **cómo**
+consultar (mecanismo, endpoint, referencias de secretos y mapeo de campos) y una estrategia por
+mecanismo ejecuta la consulta. Farmaloop usa la estrategia Algolia genérica; no hay código por
+proveedor. La búsqueda no persiste ofertas, usa caché en memoria y deriva su estado
+(`not_configured`, `connected`, `error`, `requires_intervention`). La clave se lee de una variable de
+entorno y nunca se guarda. Detalle y validación de Predual:
+[`MOTOR_PROVEEDORES.md`](MOTOR_PROVEEDORES.md).
 
 ### Supabase
 

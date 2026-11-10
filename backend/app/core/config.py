@@ -75,6 +75,15 @@ class Settings(BaseSettings):
     # Sin clave, guardar una credencial se rechaza: nunca se guarda una contraseña en claro.
     # Generar con: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     supplier_credentials_key: SecretStr | None = None
+    # ---- Motor declarativo de proveedores (perfiles + estrategias)
+    # Apagado por defecto: ninguna consulta sale aunque exista un perfil guardado. El perfil se
+    # puede administrar igual; el estado informa `engine_disabled`. Las claves se leen del entorno
+    # por el nombre declarado en el perfil y nunca se guardan en la base.
+    supplier_connector_enabled: bool = False
+    supplier_connector_cache_seconds: int = Field(default=60, ge=5, le=600)
+    supplier_connector_max_live: int = Field(default=50, ge=1, le=500)
+    supplier_connector_max_results: int = Field(default=20, ge=1, le=50)
+    supplier_connector_rate_limit_per_minute: int = Field(default=20, ge=1, le=120)
     timezone: str = "America/Santiago"
     currency: str = "CLP"
     # Una fuente sin observación exitosa en esta ventana se informa `stale` (E4). No inventa frescura.

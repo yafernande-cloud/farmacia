@@ -1,16 +1,18 @@
 # Pruebas y criterios de evidencia
 
 Actualizado: 2026-11-09. Este documento reúne cómo se prueba el sistema, qué cubre cada suite y qué
-significa cada nivel de evidencia. Los resultados que se citan son **ejecuciones informadas por la
-propietaria** en la última corrida registrada; no se volvieron a ejecutar para esta actualización
-documental y no se presentan como una garantía permanente ni se extrapolan a producción.
+significa cada nivel de evidencia. Los resultados que se citan son ejecuciones registradas; la
+corrida de **1044 aprobadas y 8 omitidas** se ejecutó localmente al cerrar la etapa del motor de
+proveedores con clasificación de coincidencias y bloqueo comercial (2026-11-09). Las demás cifras
+provienen de las corridas informadas por la propietaria. Ninguna cifra es una garantía permanente ni
+se extrapola a producción.
 
 ## 1. Niveles de evidencia
 
 | Nivel | Significado | Ejemplo |
 |---|---|---|
 | **Implementado en código** | La ruta, el servicio o la migración existen y la suite los ejercita | Endpoints de cotizaciones |
-| **Probado localmente** | Se ejecutó la suite o una prueba dirigida contra PostgreSQL local | 997 pruebas backend |
+| **Probado localmente** | Se ejecutó la suite o una prueba dirigida contra PostgreSQL local | 1044 pruebas backend |
 | **Verificado en producción** | Se comprobó manualmente en Heroku/Lovable, con evidencia anotada | Inicio de sesión del profesor; foto tras redespliegue |
 | **Pendiente** | Existe una decisión o un diseño, pero no código, o código sin conexión visual | Compras; carrito real en Lovable |
 
@@ -81,12 +83,14 @@ La primera corrida migra la base desde cero y tarda bastante más que las siguie
 
 | Fecha | Comando | Resultado informado |
 |---|---|---|
-| 2026-11-09 | `REQUIRE_DB=1 .venv/bin/pytest` | **997 aprobadas, 8 omitidas** |
+| 2026-11-09 | `REQUIRE_DB=1 .venv/bin/pytest` | **1044 aprobadas, 8 omitidas** |
 
 Las 8 omitidas no son fallos, pero tampoco evidencia de lo que omiten; el motivo de cada omisión
-debe leerse en la salida de pytest y no se interpreta aquí. La corrida informada al cerrar D-148 fue
-de 963 aprobadas y 8 omitidas; la última corrida informada es de 997 aprobadas y 8 omitidas. El
-desglose entre ambas no se reconstruye en este documento.
+debe leerse en la salida de pytest y no se interpreta aquí. La corrida al cerrar D-148 fue de 963
+aprobadas y 8 omitidas; la anterior a esta etapa era de 997. La corrida de 1034 se ejecutó localmente
+el 2026-11-09 al incorporar el motor de proveedores (35 pruebas nuevas); al agregar la clasificación
+de coincidencias y el bloqueo comercial se sumaron **10 pruebas** (9 puras de clasificación y 1 de
+API con Predual frente a Pregalex/Pregalin), para un total de 1044.
 
 Pruebas dirigidas relevantes:
 
@@ -95,6 +99,9 @@ Pruebas dirigidas relevantes:
 | `tests/test_cruzverde.py` | Límite de 50 caracteres, variantes, rechazo tipado y clasificación | 68 aprobadas |
 | `tests/test_web_access_api.py` | Solicitud, aprobación, rechazo, campanita, límites | 16 aprobadas |
 | `tests/test_telegram_accounts.py` | Auxiliares por cuenta, identificación y sucursal | 44 focalizadas al cerrar T1 |
+| `tests/test_supplier_connectors.py` | Estrategia Algolia pura: normalización, errores HTTP, secretos, stock y huella | 23 aprobadas |
+| `tests/test_supplier_matching.py` | Clasificación textual directo/relacionado y bloqueo comercial del carrito | 9 aprobadas |
+| `tests/test_supplier_connectors_api.py` | Perfil, estados, caché, límite de tasa, clasificación Predual/Pregalex y no persistencia de ofertas | 15 aprobadas |
 | `tests/test_auth_identity.py` | JWT, `iss`/`aud`, expiración, enlace de identidad | Suite completa |
 | `tests/test_bootstrap_admin.py` | Restricciones de `create-admin` | Suite completa |
 
@@ -105,8 +112,12 @@ Los nombres de archivo pueden cambiar; si una ruta no existe, buscar con
 
 - No llama a Telegram: usa un cliente simulado y eventos de canal.
 - No llama a OpenAI: usa un doble de `ObservationModel` y del proveedor de visión.
-- No llama a los portales de cadena: usa respuestas HTTP simuladas. La única verificación contra un
-  servicio real fue manual: el límite de 50 caracteres de Cruz Verde, el 2026-11-09.
+- No llama a los portales de cadena ni a Algolia/Farmaloop: usa respuestas HTTP simuladas y un doble
+  de la estrategia. Las únicas verificaciones contra servicios reales fueron manuales y puntuales: el
+  límite de 50 caracteres de Cruz Verde (2026-11-09) y **una** búsqueda real «predual» contra el
+  índice público de Farmaloop (registrada el 2026-11-10T01:20:56Z), que devolvió 5 ofertas válidas y
+  5 descartadas, sin persistir ofertas. Esa observación no forma parte de la suite, no se repite
+  automáticamente y no se generaliza a otros productos, precios ni stock.
 - No usa Supabase real: firma JWT con claves de prueba.
 - No prueba el despliegue, CORS, el iframe de Lovable ni la publicación. Eso es verificación manual.
 

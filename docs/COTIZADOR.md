@@ -20,6 +20,7 @@ contrato y las decisiones registradas mandan sobre este resumen.
 | Historial con búsqueda | **No implementado** | Pantalla con datos de demostración | — |
 | Observaciones comerciales e IA A6/O2 | Implementado | «Enseñar a la IA» deshabilitado | — |
 | Proveedores e importación | Implementado | Pantalla real | Desplegado |
+| Motor de proveedores: perfiles y búsqueda en vivo | Implementado en backend; apagado por defecto | No conectado | Migración `0027` no aplicada |
 
 La suite backend cubre estos módulos con PostgreSQL real. La suite no llama a cadenas reales, a
 OpenAI ni a Telegram: usa dobles y simuladores. Las excepciones documentadas son verificaciones
@@ -135,7 +136,7 @@ La corrección (`582d7b5`) hace lo siguiente:
 7. Aplica **solo a Cruz Verde**: Ahumada y Salcobrand no cambian. Sin migración ni variables nuevas.
 
 Estado: implementado; `test_cruzverde.py` con 68 pruebas aprobadas, suite frontend 238, `tsc` y `ruff`
-limpios. La última suite backend informada quedó en 997 aprobadas y 8 omitidas. El límite de
+limpios. La última suite backend informada quedó en 1044 aprobadas y 8 omitidas. El límite de
 50 caracteres se verificó manualmente contra el buscador público el 2026-11-09; las pruebas
 automatizadas usan dobles.
 

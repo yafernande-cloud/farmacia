@@ -9,6 +9,7 @@ Documentación de referencia (solo en este repositorio):
 
 - Arquitectura y stack: [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md)
 - Faltantes, búsquedas, cadenas, carrito, cotizaciones, compras e IA: [`docs/COTIZADOR.md`](docs/COTIZADOR.md)
+- Motor declarativo de proveedores: perfiles, estrategias y búsqueda en vivo: [`docs/MOTOR_PROVEEDORES.md`](docs/MOTOR_PROVEEDORES.md)
 - Autenticación, usuarios y permisos: [`docs/AUTH_SUPABASE.md`](docs/AUTH_SUPABASE.md)
 - Telegram, sesiones de auxiliar y fotografías: [`docs/H1B_TELEGRAM.md`](docs/H1B_TELEGRAM.md)
 - Despliegue manual en Heroku y publicación en Lovable: [`docs/DEPLOY_HEROKU.md`](docs/DEPLOY_HEROKU.md)
@@ -51,13 +52,14 @@ identidades. Toda regla de negocio vive en el backend.
 | Visión de fotos con OpenAI | Implementado como adaptador | Dobles de red; sin llamadas facturables | Depende de `VISION_PROVIDER`/`OPENAI_VISION_MODEL`; la validación general del reconocimiento sigue pendiente |
 | Búsqueda de catálogo (E1–E3) | Implementado | Suite backend y frontend | En uso desde Lovable |
 | Búsqueda de cadenas (E15) | Implementado | Suite backend y frontend | Según configuración por cadena; límite de Cruz Verde verificado manualmente y caso Predual verificado tras el despliegue con resultados de Cruz Verde, Salcobrand y Ahumada |
+| Motor de proveedores: perfiles y búsqueda en vivo | Implementado en backend; estrategia Algolia y preset Farmaloop, con clasificación directo/relacionado y bloqueo comercial | 47 pruebas nuevas con transporte simulado y PostgreSQL | Apagado por defecto (`SUPPLIER_CONNECTOR_ENABLED=false`); `0027` aplicada solo en una base desechable; una búsqueda real «predual» validada el 2026-11-10 (5 ofertas válidas, sin persistencia); sin conectar a Lovable |
 | Comparación, cotizaciones y carrito (E5/E10) | Implementado en backend | Suite backend | Pantallas de cotizaciones/carrito aún con datos de demostración; sin conectar |
 | Compras registradas y cierre de faltantes | **No implementado** | — | — |
 | Observaciones comerciales e IA (A6/O2) | Implementado en backend | Suite con proveedor simulado | Botón «Enseñar a la IA» deshabilitado; sin conectar |
 | Acceso web con Google y correo+contraseña | Implementado | Suite backend y frontend | Inicio de sesión con ambos métodos verificado en Lovable Preview |
 | Solicitudes de acceso web y campanita | Backend implementado; frontend solo demostración | Suite backend | **No verificado de punta a punta**: la campanita de Lovable no llama a la API |
 
-La última suite backend informada con `REQUIRE_DB=1` queda en **997 pruebas aprobadas y 8 omitidas**;
+La última suite backend informada con `REQUIRE_DB=1` queda en **1044 pruebas aprobadas y 8 omitidas**;
 la última suite frontend informada, en **238 pruebas aprobadas**. Los números y comandos vigentes están en
 [`docs/PRUEBAS.md`](docs/PRUEBAS.md).
 
@@ -213,8 +215,10 @@ Procedimientos, restricciones y estados: [`docs/AUTH_SUPABASE.md`](docs/AUTH_SUP
 - **Frontend en Lovable**: el repositorio `farmacia-frontend` está conectado a la rama `main`; cada
   push se sincroniza con el editor. La publicación al dominio final es manual.
 - El despliegue de Heroku es **manual** desde `master`; no hay despliegue automático.
-- Las migraciones se aplican en cada release. La cabeza del repositorio es **0026**; las migraciones
-  `0021`–`0023` están reservadas para compras e historial y no existen todavía.
+- Las migraciones se aplican en cada release. La cabeza del repositorio es **0027**; la `0027` (motor
+  de proveedores) **no está aplicada** a `farmacia`, `farmacia_demo` ni producción; solo se aplicó en
+  la base desechable usada para la validación local. Las migraciones `0021`–`0023` están reservadas
+  para compras e historial y no existen todavía.
 - El `Procfile` versionado define `web` y `release`. El polling de Telegram puede correr como proceso
   `worker`; esa línea está en el árbol de trabajo pero no en la versión versionada al cierre de este
   documento, así que debe confirmarse antes de escalar el proceso en Heroku.

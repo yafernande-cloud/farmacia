@@ -1,0 +1,311 @@
+"""Motor declarativo de proveedores: estrategia Algolia pura, sin red.
+
+El transporte HTTP es `httpx.MockTransport`: ninguna prueba sale a Internet, ninguna usa una clave
+real y ninguna escribe ofertas. Los perfiles se validan antes de ejecutarse.
+"""
+
+from datetime import UTC, datetime
+from decimal import Decimal
+
+import httpx
+import pytest
+
+from app.core.errors import DomainError
+from app.services.connectors.algolia import AlgoliaStrategy
+from app.services.connectors.base import (
+    ConnectorError,
+    ConnectorIntervention,
+    ConnectorNotConfigured,
+)
+from app.services.connectors.config import validate_profile
+from app.services.connectors.presets import preset
+
+
+def farmaloop_hit(**over):
+    hit = {
+        "sku": "PRE-001",
+        "fullName": "Predual 30 mg comprimidos recubiertos",
+        "laboratoryName": "Laboratorio Ficticio",
+        "presentation": "Caja 30 comprimidos",
+        "bestPrice": 12990,
+        "basePrice": 15990,
+        "photoURL": "https://img.farmaloop.test/predual.jpg",
+        "slug": "predual-30-mg",
+        "ean": "7801234567890",
+        "batchs": [{"stock": 5}, {"stock": 3}],
+        # Dato de cuenta: no está en el mapeo y no debe salir.
+        "unitCost": 9999,
+    }
+    hit.update(over)
+    return hit
+
+
+def response(items, status=200):
+    return httpx.Response(status, json={"hits": items, "nbHits": len(items)})
+
+
+def profile(*, with_stock_unit=False):
+    base = preset("farmaloop")
+    if with_stock_unit:
+        base["config"]["stock_unit"] = "unit"
+    return base
+
+
+async def search(handler, *, cfg=None, limit=10, query="predual"):
+    base = cfg or profile()
+    return await AlgoliaStrategy().search(
+        query,
+        config=base["config"],
+        field_map=base["field_map"],
+        limit=limit,
+        transport=httpx.MockTransport(handler),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _secrets(monkeypatch):
+    monkeypatch.setenv("FARMALOOP_ALGOLIA_APP_ID", "APPFICTICIA")
+    monkeypatch.setenv("FARMALOOP_ALGOLIA_API_KEY", "clave-publica-de-prueba")
+    yield
+
+
+async def test_algolia_lee_las_ofertas_y_no_expone_la_clave():
+    seen = {}
+
+    async def handler(request: httpx.Request):
+        seen["url"] = str(request.url)
+        seen["headers"] = dict(request.headers)
+        seen["body"] = request.read().decode()
+        return response([farmaloop_hit()])
+
+    result = await search(handler)
+
+    assert len(result.offers) == 1
+    offer = result.offers[0]
+    assert offer.external_id == "PRE-001"
+    assert offer.name.startswith("Predual")
+    assert offer.laboratory == "Laboratorio Ficticio"
+    assert offer.presentation == "Caja 30 comprimidos"
+    assert offer.price == Decimal("12990")
+    assert offer.currency == "CLP"
+    # El portal no informó unidad de venta ni base: quedan desconocidas, no se inventan.
+    assert offer.sale_unit is None
+    assert offer.price_basis is None
+    assert offer.stock_status == "unknown"
+    assert offer.stock_quantity is None
+    assert offer.stock_unit is None
+    assert offer.image_url == "https://img.farmaloop.test/predual.jpg"
+    assert offer.ean == "7801234567890"
+    assert not hasattr(offer, "unit_cost")
+    assert "9999" not in repr(offer)
+
+    assert "appficticia-dsn.algolia.net" in seen["url"].lower()
+    assert "/f_products_prod/query" in seen["url"]
+    assert seen["headers"]["x-algolia-api-key"] == "clave-publica-de-prueba"
+    assert seen["headers"]["x-algolia-application-id"] == "APPFICTICIA"
+    assert '"hitsPerPage":10' in seen["body"].replace(" ", "")
+    assert result.fingerprint
+
+
+async def test_algolia_descarta_items_sin_precio_y_los_cuenta():
+    async def handler(_: httpx.Request):
+        return response([farmaloop_hit(), farmaloop_hit(sku="PRE-002", bestPrice=None)])
+
+    result = await search(handler)
+    assert [o.external_id for o in result.offers] == ["PRE-001"]
+    assert result.discarded == 1
+    assert any("descartados" in w for w in result.warnings)
+
+
+async def test_algolia_sin_ofertas_validas_pide_intervencion():
+    async def handler(_: httpx.Request):
+        return response([farmaloop_hit(bestPrice="no es un precio")])
+
+    with pytest.raises(ConnectorIntervention) as exc:
+        await search(handler)
+    assert exc.value.reason == "field_mapping_failed"
+
+
+async def test_algolia_respuesta_sin_hits_pide_intervencion():
+    async def handler(_: httpx.Request):
+        return httpx.Response(200, json={"nbHits": 0})
+
+    with pytest.raises(ConnectorIntervention) as exc:
+        await search(handler)
+    assert exc.value.reason == "schema_changed"
+
+
+async def test_algolia_json_invalido_pide_intervencion():
+    async def handler(_: httpx.Request):
+        return httpx.Response(200, content=b"<html>bloqueo</html>")
+
+    with pytest.raises(ConnectorIntervention) as exc:
+        await search(handler)
+    assert exc.value.reason == "invalid_response"
+
+
+@pytest.mark.parametrize(
+    ("status", "error", "reason"),
+    [
+        (401, ConnectorIntervention, "credentials_rejected"),
+        (403, ConnectorIntervention, "credentials_rejected"),
+        (429, ConnectorError, "rate_limited"),
+        (500, ConnectorError, "provider_error"),
+        (400, ConnectorIntervention, "request_rejected"),
+    ],
+)
+async def test_algolia_traduce_estados_http(status, error, reason):
+    async def handler(_: httpx.Request):
+        return httpx.Response(status, json={"message": "detalle del proveedor"})
+
+    with pytest.raises(error) as exc:
+        await search(handler)
+    assert exc.value.reason == reason
+
+
+async def test_algolia_sin_secreto_no_consulta_ni_filtra_el_valor(monkeypatch):
+    monkeypatch.delenv("FARMALOOP_ALGOLIA_API_KEY")
+
+    async def handler(_: httpx.Request):  # nunca debe ejecutarse
+        raise AssertionError("no debe hacerse la solicitud")
+
+    with pytest.raises(ConnectorNotConfigured) as exc:
+        await search(handler)
+    assert exc.value.reason == "secret_missing:FARMALOOP_ALGOLIA_API_KEY"
+
+
+async def test_algolia_corta_respuestas_demasiado_grandes():
+    async def handler(_: httpx.Request):
+        return httpx.Response(200, content=b"{" + b"0" * 20_000 + b"}")
+
+    base = profile()
+    base["config"]["max_response_bytes"] = 10_000
+    with pytest.raises(ConnectorIntervention) as exc:
+        await search(handler, cfg=base)
+    assert exc.value.reason == "response_too_large"
+
+
+async def test_algolia_expone_stock_solo_si_la_unidad_esta_confirmada():
+    async def handler(_: httpx.Request):
+        return response([farmaloop_hit()])
+
+    result = await search(handler, cfg=profile(with_stock_unit=True))
+    offer = result.offers[0]
+    assert offer.stock_status == "in_stock"
+    assert offer.stock_quantity == Decimal("8")
+    assert offer.stock_unit == "unit"
+
+
+async def test_algolia_permite_plantilla_para_url_de_ficha():
+    base = profile()
+    base["field_map"]["product_url"] = {
+        "template": "https://tienda.test/producto/{slug}",
+        "type": "url",
+    }
+
+    async def handler(_: httpx.Request):
+        return response([farmaloop_hit()])
+
+    result = await search(handler, cfg=base)
+    assert result.offers[0].product_url == "https://tienda.test/producto/predual-30-mg"
+
+
+async def test_algolia_url_de_ficha_invalida_no_se_inventa():
+    base = profile()
+    base["field_map"]["product_url"] = {
+        "template": "javascript:alert('{slug}')",
+        "type": "url",
+    }
+
+    async def handler(_: httpx.Request):
+        return response([farmaloop_hit()])
+
+    result = await search(handler, cfg=base)
+    assert result.offers[0].product_url is None
+
+
+async def test_algolia_la_huella_cambia_con_la_estructura_no_con_el_precio():
+    async def handler(request: httpx.Request):
+        item = farmaloop_hit()
+        if b"15990" in request.content:
+            item = farmaloop_hit(bestPrice=13990)
+        return response([item])
+
+    first = await search(handler)
+    # Mismo esquema, precio distinto: la huella no cambia.
+    async def same_shape(_: httpx.Request):
+        return response([farmaloop_hit(bestPrice=13990)])
+
+    second = await search(same_shape)
+    assert first.fingerprint == second.fingerprint
+
+    async def changed_shape(_: httpx.Request):
+        item = farmaloop_hit()
+        item["bestPrice"] = "13990"
+        return response([item])
+
+    third = await search(changed_shape)
+    assert third.fingerprint != first.fingerprint
+
+
+def test_el_preset_de_farmaloop_declara_sus_limites():
+    mechanism, config, field_map = validate_profile(**preset("farmaloop"))
+    assert mechanism == "algolia"
+    assert config["index"] == "f_products_prod"
+    assert config["currency"] == "CLP"
+    # No hay unidad de venta, base de precio ni unidad de stock confirmadas.
+    assert "sale_unit" not in config
+    assert "price_basis" not in config
+    assert "stock_unit" not in config
+    assert "sale_unit" not in field_map
+    assert "unitCost" not in repr(field_map)
+    assert field_map["price"]["type"] == "decimal"
+
+
+def test_un_perfil_sin_moneda_se_rechaza():
+    base = preset("farmaloop")
+    base["field_map"].pop("currency")
+    base["config"].pop("currency")
+    with pytest.raises(DomainError) as exc:
+        validate_profile(**base)
+    assert "moneda" in str(exc.value).lower()
+
+
+def test_un_campo_con_dos_fuentes_se_rechaza():
+    base = preset("farmaloop")
+    base["field_map"]["price"] = {"path": "bestPrice", "const": 1}
+    with pytest.raises(DomainError):
+        validate_profile(**base)
+
+
+def test_un_campo_con_tipo_incorrecto_se_rechaza():
+    base = preset("farmaloop")
+    base["field_map"]["price"]["type"] = "string"
+    with pytest.raises(DomainError) as exc:
+        validate_profile(**base)
+    assert "price" in str(exc.value)
+
+
+async def test_algolia_no_sigue_redirecciones():
+    async def handler(_: httpx.Request):
+        return httpx.Response(302, headers={"Location": "https://otro.test/"})
+
+    with pytest.raises(ConnectorIntervention) as exc:
+        await search(handler)
+    assert exc.value.reason == "unexpected_redirect"
+
+
+def test_un_mecanismo_sin_estrategia_no_se_guarda():
+    with pytest.raises(DomainError) as exc:
+        validate_profile("rest_json", {}, {})
+    assert "rest_json" in str(exc.value)
+
+
+async def test_algolia_observa_en_utc():
+    async def handler(_: httpx.Request):
+        return response([farmaloop_hit()])
+
+    before = datetime.now(UTC)
+    result = await search(handler)
+    assert result.observed_at >= before
+    assert result.observed_at.tzinfo is not None

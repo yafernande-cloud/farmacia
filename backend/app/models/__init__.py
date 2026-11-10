@@ -35,6 +35,7 @@ from app.models.comparison import (
     ComparisonRun,
     ComparisonSupplierTotal,
 )
+from app.models.connector import SupplierConnectorProfile
 from app.models.core import AppUser, AuxiliaryProfile, Organization
 from app.models.demand import (
     CommercialReference,
@@ -70,7 +71,7 @@ __all__ = [
     "ImportProfile", "ImportRequest", "ImportRun", "InboundEvent", "OfferSnapshot", "Organization", "OutboundMessage", "OutboxEvent",
     "PharmaIdentity", "ProductAlias", "PurchaseCycle", "QuantityEvent", "ReferencePrice",
     "SearchResult", "SearchRun", "SearchSourceResult",
-    "ShippingTermsSnapshot", "Source", "Supplier", "SupplierCredential", "SupplierProductMapping", "TelegramAccessAttempt",
+    "ShippingTermsSnapshot", "Source", "Supplier", "SupplierConnectorProfile", "SupplierCredential", "SupplierProductMapping", "TelegramAccessAttempt",
     "TelegramAccessRequest", "TelegramAccount", "TelegramAccountAuxiliary", "TempPhoto", "TradeItem",
     "TradeItemAlias", "WebAccessRequest",
 ]  # fmt: skip
