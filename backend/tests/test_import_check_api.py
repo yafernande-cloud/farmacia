@@ -539,3 +539,245 @@ async def test_auto_revision_y_importacion_leen_la_misma_hoja(api, sessions):
     assert importacion.status_code == 200, importacion.text
     salida = importacion.json()
     assert (salida["status"], salida["rows_accepted"]) == ("completed", 1)
+
+
+# ---------- listas reales: cabeceras canónicas, unidades y base por proveedor ----------
+
+FARMA_HEADER = [
+    "sku",
+    "name",
+    "presentation",
+    "barcode",
+    "category",
+    "sale_unit",
+    "currency",
+    "price",
+    "net_price",
+    "stock",
+    "minimum",
+    "multiple",
+    "pack",
+    "basis",
+    "observed_at",
+    "conditions",
+]
+
+
+async def mapear(api, sessions, source_key, *external_ids):
+    """Vincula los SKU de la prueba a un artículo existente; crear artículos no es el tema aquí."""
+    async with sessions() as s, s.begin():
+        item_id = (
+            await s.execute(
+                select(TradeItem.id).where(TradeItem.organization_id == api.farm["org"])
+            )
+        ).scalar_one()
+        for external_id in external_ids:
+            s.add(
+                SupplierProductMapping(
+                    organization_id=api.farm["org"],
+                    source_id=api.farm[source_key],
+                    supplier_id=api.farm["supplier"],
+                    trade_item_id=item_id,
+                    external_id=external_id,
+                    origin="explicit",
+                    data_origin="simulated",
+                )
+            )
+
+
+def farma_row(**over):
+    values = {
+        "sku": "PAR500-20",
+        "name": "PARACETAMOL 500 MG X 20",
+        "presentation": "Caja x 20 comprimidos",
+        "barcode": "780000000001",
+        "category": "Analgésico",
+        "sale_unit": "caja",
+        "currency": "CLP",
+        "price": "1012",
+        "net_price": "850",
+        "stock": "10",
+        "minimum": "1",
+        "multiple": "1",
+        "pack": "20",
+        "basis": "per_commercial_unit",
+        "observed_at": "2026-11-05",
+        "conditions": "Retiro en 24 horas",
+    }
+    values.update(over)
+    return [values[columna] for columna in FARMA_HEADER]
+
+
+async def test_auto_reconoce_cabeceras_canonicas_y_no_confunde_presentacion_con_unidad(
+    api, sessions
+):
+    await mapear(api, sessions, "source_2", "PAR500-20")
+    content = xlsx([farma_row()], header=FARMA_HEADER)
+    r = await revisar(api, content, source=api.farm["source_2"], profile=None, auto="true")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    columnas = body["profile"]["columns"]
+
+    assert columnas["sku"]["header"] == "sku"
+    assert columnas["name"]["header"] == "name"
+    assert columnas["sale_unit"]["header"] == "sale_unit"
+    assert columnas["currency"]["header"] == "currency"
+    # «price» exacta gana a «net_price»: no se elige por posición ni por orden alfabético.
+    assert columnas["price"]["header"] == "price"
+    assert columnas["minimum"]["header"] == "minimum"
+    assert columnas["observed_at"]["header"] == "observed_at"
+    assert columnas["conditions"]["header"] == "conditions"
+    # La presentación describe el producto; no es la unidad comercial.
+    assert {spec["header"] for spec in columnas.values()} >= {"sku", "sale_unit"}
+    assert "presentation" not in {spec["header"] for spec in columnas.values()}
+    assert "barcode" not in {spec["header"] for spec in columnas.values()}
+
+    # Las unidades inequívocas se traducen solas: no se pregunta una unidad global.
+    assert body["profile"]["units"] == {"caja": "box"}
+    assert body["missing_columns"] == []
+    assert (body["rows_total"], body["rows_accepted"], body["rows_rejected"]) == (1, 1, 0)
+    assert body["unrecognised_units"] == []
+
+    # `pack` se reconoce, pero sin unidad base no se puede guardar: se omite y se explica.
+    assert "pack" not in columnas
+    assert [c["role"] for c in body["ignored_columns"]] == ["pack"]
+    assert body["ignored_columns"][0]["header"] == "pack"
+    assert "unidad" in body["ignored_columns"][0]["reason"]
+
+
+async def test_auto_traduce_unidades_conocidas_y_rechaza_solo_la_fila_desconocida(api, sessions):
+    await mapear(api, sessions, "source_2", "SKU-001", "SKU-002", "SKU-003")
+    header = ["Código", "Descripción", "Precio", "Moneda", "Base", "Unidad"]
+    content = xlsx(
+        [
+            ["SKU-001", "LOSARTAN", "1000", "CLP", "per_commercial_unit", "caja"],
+            ["SKU-002", "IBUPROFENO", "2000", "CLP", "per_commercial_unit", "unidad"],
+            ["SKU-003", "PARACETAMOL", "3000", "CLP", "per_commercial_unit", "FCO"],
+        ],
+        header=header,
+    )
+    r = await revisar(api, content, source=api.farm["source_2"], profile=None, auto="true")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["profile"]["units"] == {"caja": "box", "unidad": "unit"}
+    # La columna de unidad existe: nunca se pregunta una unidad global por unas pocas filas.
+    assert body["missing_columns"] == []
+    assert (body["rows_total"], body["rows_accepted"], body["rows_rejected"]) == (3, 2, 1)
+    assert [u["text"] for u in body["unrecognised_units"]] == ["FCO"]
+    rechazada = next(row for row in body["rows"] if row["status"] == "rejected")
+    assert rechazada["sku"] == "SKU-003"
+    assert rechazada["problem"]["code"] == "UNKNOWN_UNIT"
+
+
+async def test_auto_base_ambigua_se_confirma_por_proveedor_y_no_se_generaliza(api, sessions):
+    await mapear(api, sessions, "source_2", "PAR500-20", "IBU400-20")
+    await mapear(api, sessions, "source", "PAR500-20", "IBU400-20")
+    header = ["sku", "name", "sale_unit", "currency", "price", "basis"]
+    contenido = xlsx(
+        [
+            ["PAR500-20", "PARACETAMOL 500", "caja", "CLP", "1012", "unit"],
+            ["IBU400-20", "IBUPROFENO 400", "unidad", "CLP", "800", "unit"],
+        ],
+        header=header,
+    )
+
+    inicial = await revisar(
+        api, contenido, source=api.farm["source_2"], profile=None, auto="true"
+    )
+    assert inicial.status_code == 200, inicial.text
+    cuerpo = inicial.json()
+    # «unit» a secas no se interpreta solo: se pregunta como aclaración comercial.
+    assert cuerpo["rows_rejected"] == 2
+    assert cuerpo["unrecognised_bases"] == [
+        {"text": "unit", "count": 2, "sample_rows": [2, 3]}
+    ]
+
+    perfil = cuerpo["profile"]
+    perfil["options"] = {
+        **perfil["options"],
+        "basis_values": {"unit": "per_commercial_unit"},
+    }
+    confirmada = await revisar(
+        api, contenido, source=api.farm["source_2"], profile=perfil, auto="true"
+    )
+    assert confirmada.status_code == 200, confirmada.text
+    assert confirmada.json()["rows_accepted"] == 2
+    assert confirmada.json()["unrecognised_bases"] == []
+
+    guardado = await api.put(
+        f"/api/v1/sources/{api.farm['source_2']}/import-profile",
+        json=perfil,
+        headers={**H(api), "If-Match": '"0"'},
+    )
+    assert guardado.status_code == 200, guardado.text
+    reutilizada = await revisar(
+        api, contenido, source=api.farm["source_2"], profile=None, auto="true"
+    )
+    cuerpo_reutilizado = reutilizada.json()
+    assert cuerpo_reutilizado["profile_source"] == "saved"
+    assert cuerpo_reutilizado["rows_accepted"] == 2
+    # La aclaración quedó guardada en el perfil de ESA fuente: no se vuelve a preguntar.
+    assert cuerpo_reutilizado["unrecognised_bases"] == []
+    assert cuerpo_reutilizado["profile"]["options"]["basis_values"] == {
+        "unit": "per_commercial_unit"
+    }
+
+    # La equivalencia vive en el perfil de ESA fuente: la lista de otro proveedor no la hereda.
+    otra = await revisar(api, contenido, profile=None, auto="true")
+    assert otra.status_code == 200, otra.text
+    assert otra.json()["unrecognised_bases"] == [
+        {"text": "unit", "count": 2, "sample_rows": [2, 3]}
+    ]
+
+
+async def test_auto_omite_pack_sin_unidad_base_y_lo_deja_en_diagnostico(api, sessions):
+    await mapear(api, sessions, "source_2", "PAR500-20")
+    header = ["sku", "sale_unit", "currency", "price", "pack", "basis"]
+    content = xlsx(
+        [["PAR500-20", "caja", "CLP", "1012", "20", "per_commercial_unit"]], header=header
+    )
+    r = await revisar(api, content, source=api.farm["source_2"], profile=None, auto="true")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "pack" not in body["profile"]["columns"]
+    assert body["ignored_columns"][0]["role"] == "pack"
+    assert body["rows_accepted"] == 1, body["problems"]
+    assert body["rows"][0]["pack_units"] is None
+
+
+async def test_auto_no_depende_del_orden_de_las_columnas(api):
+    header = ["Precio", "Código", "Unidad", "Descripción"]
+    fila_invertida = ["1500", "SKU-009", "caja", "IBUPROFENO 400"]
+    r = await revisar(
+        api,
+        xlsx([fila_invertida], header=header),
+        source=api.farm["source_2"],
+        profile=None,
+        auto="true",
+    )
+    assert r.status_code == 200, r.text
+    columnas = r.json()["profile"]["columns"]
+    assert columnas["sku"] == {"header": "Código", "position": 2}
+    assert columnas["price"] == {"header": "Precio", "position": 1}
+    assert columnas["sale_unit"] == {"header": "Unidad", "position": 3}
+    assert columnas["name"] == {"header": "Descripción", "position": 4}
+
+
+async def test_auto_unidad_vacia_rechaza_su_fila_sin_preguntar_por_todo_el_archivo(api, sessions):
+    await mapear(api, sessions, "source_2", "SKU-001", "SKU-002")
+    header = ["Código", "Precio", "Moneda", "Unidad", "Base"]
+    content = xlsx(
+        [
+            ["SKU-001", "1000", "CLP", "caja", "per_commercial_unit"],
+            ["SKU-002", "2000", "CLP", "", "per_commercial_unit"],
+        ],
+        header=header,
+    )
+    r = await revisar(api, content, source=api.farm["source_2"], profile=None, auto="true")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["missing_columns"] == []
+    assert (body["rows_accepted"], body["rows_rejected"]) == (1, 1)
+    rechazada = next(row for row in body["rows"] if row["status"] == "rejected")
+    assert rechazada["problem"]["code"] == "MISSING_REQUIRED_FIELD"
+    assert rechazada["problem"]["fields"] == ["sale_unit"]

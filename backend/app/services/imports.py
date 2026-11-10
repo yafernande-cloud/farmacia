@@ -220,7 +220,9 @@ def _normalize_header(value: Any) -> str:
     if not text:
         return ""
     text = text.casefold()
-    text = re.sub(r"[^\wáéíóúüñ]+", " ", text)
+    # El guion bajo también separa palabras: las cabeceras técnicas («sale_unit») deben
+    # reconocerse igual que sus formas habituales («sale unit»).
+    text = re.sub(r"[^\wáéíóúüñ]+|_", " ", text)
     return " ".join(text.split())
 
 
@@ -236,6 +238,28 @@ def _header_variants(value: Any) -> list[str]:
     key = _normalize_header(text)
     base = _normalize_header(re.sub(r"\([^)]*\)|\[[^\]]*\]", " ", text))
     return [key] if not base or base == key else [key, base]
+
+
+# Equivalencias de base de precio que no dejan ambigüedad. «unit»/«unidad» a secas **no** están
+# aquí: pueden significar la unidad de venta o la unidad base. Esas se confirman por proveedor en
+# `options.basis_values` y nunca se generalizan a otros.
+_BASIS_ALIASES: dict[str, str] = {
+    "per commercial unit": "per_commercial_unit",
+    "commercial unit": "per_commercial_unit",
+    "unidad comercial": "per_commercial_unit",
+    "por unidad comercial": "per_commercial_unit",
+    "precio por unidad comercial": "per_commercial_unit",
+    "per base unit": "per_base_unit",
+    "base unit": "per_base_unit",
+    "unidad base": "per_base_unit",
+    "por unidad base": "per_base_unit",
+    "precio por unidad base": "per_base_unit",
+}
+
+
+def _basis_from_text(value: Any) -> str | None:
+    """Base de precio publicada, solo cuando su significado es inequívoco."""
+    return _BASIS_ALIASES.get(_normalize_header(value))
 
 
 FILE_FORMATS = ("xlsx", "xls", "csv")
@@ -566,6 +590,7 @@ class _Profile:
     units: dict[str, str]
     currency: str | None
     price_basis: str | None
+    basis_values: dict[str, str]
     decimal_sep: str
     thousands_sep: str | None
     date_format: str | None
@@ -607,6 +632,30 @@ def _load_profile(profile: ImportProfile) -> _Profile:
             f"La base de precio del perfil debe ser {' o '.join(PRICE_BASES)}.",
             status_code=422,
         )
+    raw_basis_values = options.get("basis_values", {})
+    if not isinstance(raw_basis_values, dict):
+        raise DomainError(
+            "IMPORT_FORMAT_INVALID",
+            "«basis_values» del perfil debe ser un objeto texto → base de precio.",
+            status_code=422,
+        )
+    bad_basis_values = sorted(
+        {
+            str(value)
+            for value in raw_basis_values.values()
+            if str(value) not in PRICE_BASES
+        }
+    )
+    if bad_basis_values:
+        raise DomainError(
+            "IMPORT_FORMAT_INVALID",
+            "El perfil traduce bases de precio a valores no permitidos: "
+            f"{', '.join(bad_basis_values)}. Válidas: {', '.join(PRICE_BASES)}.",
+            status_code=422,
+        )
+    basis_values = {
+        _normalize_header(key): str(value) for key, value in raw_basis_values.items()
+    }
     decimal_sep = options.get("decimal_separator", ".")
     thousands_sep = options.get("thousands_separator")
     if decimal_sep not in (".", ",", None):
@@ -669,6 +718,7 @@ def _load_profile(profile: ImportProfile) -> _Profile:
         units={str(k).strip().casefold(): str(v) for k, v in units.items()},
         currency=currency,
         price_basis=basis,
+        basis_values=basis_values,
         decimal_sep=decimal_sep or ".",
         thousands_sep=thousands_sep,
         date_format=_parse_date_format(options["date_format"]) if options.get("date_format") else None,
@@ -812,15 +862,28 @@ def _classify_row(
             fields=("currency",),
         )
 
-    basis = _text(cell("basis")) if "basis" in prof.columns else None
-    basis = (basis or prof.price_basis or "").strip().lower()
-    if basis not in PRICE_BASES:
-        raise RowProblem(
-            INVALID_BASIS,
-            f"La base de precio debe ser {PRICE_BASES[0]} o {PRICE_BASES[1]}, y ni la fila ni el "
-            "perfil la declaran.",
-            fields=("basis",),
+    basis_text = _text(cell("basis")) if "basis" in prof.columns else None
+    if basis_text is None:
+        basis = prof.price_basis or ""
+    else:
+        # Primero la equivalencia confirmada para ESTE proveedor; después solo los valores
+        # inequívocos. Un «unit» genérico sin confirmación sigue siendo inválido.
+        basis = (
+            prof.basis_values.get(_normalize_header(basis_text))
+            or _basis_from_text(basis_text)
+            or basis_text.strip().lower()
         )
+    if basis not in PRICE_BASES:
+        message = (
+            f"La lista indica «{basis_text}» como base del precio, pero ese valor no está "
+            "confirmado para este proveedor."
+            if basis_text is not None
+            else (
+                f"La base de precio debe ser {PRICE_BASES[0]} o {PRICE_BASES[1]}, y ni la fila "
+                "ni el perfil la declaran."
+            )
+        )
+        raise RowProblem(INVALID_BASIS, message, fields=("basis",))
 
     unit_text = _text(cell("sale_unit"))
     if unit_text is None:

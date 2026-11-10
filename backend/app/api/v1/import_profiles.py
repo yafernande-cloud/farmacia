@@ -98,6 +98,22 @@ class ImportCheckUnitOut(BaseModel):
     sample_rows: list[int]
 
 
+class ImportCheckBasisOut(BaseModel):
+    """Texto de base de precio que el mapeo todavía no confirma para este proveedor."""
+
+    text: str
+    count: int
+    sample_rows: list[int]
+
+
+class ImportIgnoredColumnOut(BaseModel):
+    """Columna reconocida que se omitió a propósito, con el motivo en lenguaje claro."""
+
+    header: str | None
+    role: str
+    reason: str
+
+
 class ImportCheckRow(BaseModel):
     """Fila interpretada por el motor. `problem` solo existe cuando la fila se rechaza."""
 
@@ -137,12 +153,16 @@ class ImportCheckOut(BaseModel):
     rows_truncated: bool
     problems: list[ImportCheckProblemOut]
     unrecognised_units: list[ImportCheckUnitOut]
+    # Bases de precio ambiguas («unit»): se confirman por proveedor, nunca en general.
+    unrecognised_bases: list[ImportCheckBasisOut] = Field(default_factory=list)
     profile_source: Literal["saved", "request", "detected"]
     profile_version: int
     # Mapeo efectivo: es el que hay que guardar antes de importar para leer las mismas celdas.
     profile: dict[str, Any] | None = None
     # Roles obligatorios que el mapeo no cubre (solo en modo automático). Nunca se inventan.
     missing_columns: list[str] = Field(default_factory=list)
+    # Columnas opcionales omitidas a propósito (por ejemplo `pack` sin unidad base).
+    ignored_columns: list[ImportIgnoredColumnOut] = Field(default_factory=list)
     file_hash: str
 
 

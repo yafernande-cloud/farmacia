@@ -38,6 +38,7 @@ from app.services.actors import Actor
 from app.services.events import advisory_lock, emit
 from app.services.imports import (
     FILE_FORMATS,
+    INVALID_BASIS,
     MAX_BYTES,
     MAX_ROWS,
     REQUIRED_ROLES,
@@ -59,6 +60,7 @@ from app.services.provenance import org_kind, origin_for
 OPTION_KEYS = {
     "currency",
     "price_basis",
+    "basis_values",
     "decimal_separator",
     "thousands_separator",
     "date_format",
@@ -75,6 +77,11 @@ OPTION_KEYS = {
 HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
     "sku": (
         "sku",
+        "product sku",
+        "supplier sku",
+        "product id",
+        "item id",
+        "external id",
         "codigo",
         "código",
         "cod",
@@ -98,6 +105,7 @@ HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
         "n° codigo",
     ),
     "name": (
+        "name",
         "nombre",
         "descripcion",
         "descripción",
@@ -105,6 +113,11 @@ HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
         "nombre producto",
         "descripcion producto",
         "descripción producto",
+        "product name",
+        "item name",
+        "article name",
+        "description",
+        "product description",
         "detalle",
         "glosa",
         "descripcion articulo",
@@ -116,16 +129,20 @@ HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
         "nombre comercial",
     ),
     "price": (
+        "price",
         "precio",
+        "net price",
         "precio neto",
+        "unit price",
         "precio unitario",
-        "precio compra",
-        "precio de compra",
+        "list price",
         "precio lista",
         "precio de lista",
+        "purchase price",
+        "precio compra",
+        "precio de compra",
         "precio final",
         "valor",
-        "price",
         "precio costo",
         "costo",
         "valor unitario",
@@ -135,28 +152,45 @@ HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
         "valor neto",
     ),
     "sale_unit": (
-        "unidad",
-        "unidad venta",
+        "sale unit",
+        "sales unit",
+        "unit of sale",
+        "selling unit",
+        "commercial unit",
         "unidad de venta",
-        "formato",
-        "presentacion",
-        "presentación",
-        "um",
-        "u m",
-        "u/m",
-        "unidad medida",
-        "unidad de medida",
+        "unidad venta",
+        "unidad comercial",
         "unidad de compra",
+        "venta unidad",
         "tipo unidad",
         "tipo de unidad",
-        "formato de venta",
-        "presentacion comercial",
-        "envase",
-        "embalaje",
+        "unidad",
     ),
-    "currency": ("moneda", "currency", "tipo moneda", "tipo de moneda", "moneda lista"),
-    "basis": ("base", "base precio", "base de precio", "price basis", "base del precio"),
+    "currency": (
+        "currency",
+        "currency code",
+        "price currency",
+        "moneda",
+        "tipo moneda",
+        "tipo de moneda",
+        "moneda lista",
+    ),
+    "basis": (
+        "basis",
+        "price basis",
+        "base de precio",
+        "base del precio",
+        "base precio",
+        "tipo de base",
+        "tipo base",
+        "base",
+    ),
     "pack": (
+        "pack",
+        "pack size",
+        "unit pack",
+        "units per pack",
+        "units per box",
         "contenido",
         "contenido por unidad",
         "cantidad por caja",
@@ -164,10 +198,15 @@ HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
         "unidades por empaque",
         "unidades por envase",
         "cantidad por envase",
-        "pack",
         "contenido neto",
     ),
     "minimum": (
+        "minimum",
+        "minimum order",
+        "minimum quantity",
+        "min order",
+        "min order qty",
+        "min quantity",
         "minimo",
         "mínimo",
         "compra minima",
@@ -177,23 +216,38 @@ HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
         "min",
     ),
     "multiple": (
+        "multiple",
+        "order multiple",
+        "selling multiple",
+        "multiple of",
         "multiplo",
         "múltiplo",
-        "multiple",
         "multiplicador",
         "multiplo compra",
         "múltiplo compra",
     ),
     "stock": (
         "stock",
+        "available stock",
+        "stock available",
+        "on hand",
         "disponible",
+        "disponibilidad",
         "inventario",
         "existencia",
         "stock disponible",
-        "disponibilidad",
         "unidades disponibles",
     ),
     "observed_at": (
+        "observed at",
+        "date",
+        "price date",
+        "last update",
+        "last updated",
+        "updated at",
+        "valid from",
+        "validity date",
+        "effective date",
         "fecha",
         "fecha precio",
         "fecha de precio",
@@ -207,6 +261,11 @@ HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
         "última actualización",
     ),
     "conditions": (
+        "conditions",
+        "commercial conditions",
+        "remarks",
+        "comments",
+        "notes",
         "condiciones",
         "condiciones comerciales",
         "observaciones",
@@ -219,6 +278,77 @@ HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
         "comentario",
         "comentarios",
     ),
+}
+
+# Nombre canónico de cada papel: una columna que se llama exactamente así manda sobre cualquier
+# sinónimo. Resuelve, por ejemplo, que «price» gane a «net_price» o que «sale_unit» gane a
+# «unidad» sin mirar la posición de las columnas.
+_CANONICAL_HEADERS: dict[str, str] = {}
+for _role, _names in {
+    "sku": ("sku", "codigo", "código"),
+    "name": ("name", "nombre", "descripcion", "descripción"),
+    "price": ("price", "precio"),
+    "sale_unit": ("sale unit", "unidad de venta", "unidad comercial"),
+    "currency": ("currency", "moneda"),
+    "basis": ("basis", "base de precio", "base del precio"),
+    "pack": ("pack",),
+    "minimum": ("minimum", "minimo", "mínimo"),
+    "multiple": ("multiple", "multiplo", "múltiplo"),
+    "stock": ("stock",),
+    "observed_at": ("observed at", "fecha"),
+    "conditions": ("conditions", "condiciones"),
+}.items():
+    for _name in _names:
+        _CANONICAL_HEADERS[_normalize_header(_name)] = _role
+
+# Alias válidos pero poco específicos: se aceptan si no hay una coincidencia mejor. Nunca se usa
+# «presentación» como unidad comercial: describe el producto, no cómo se vende.
+_GENERIC_HEADERS = frozenset(
+    {
+        "unidad",
+        "base",
+        "contenido",
+        "fecha",
+        "valor",
+        "detalle",
+        "glosa",
+        "cod",
+        "code",
+        "min",
+        "nota",
+        "notas",
+        "comentario",
+        "comentarios",
+        "observaciones",
+        "observacion",
+        "observación",
+    }
+)
+
+# Equivalencias de unidad comercial que no dejan ambigüedad. Solo se aplican al texto de la
+# columna de unidad: nunca se deducen de mg/ml, del nombre ni de la presentación del producto.
+_UNIT_ALIASES: dict[str, str] = {
+    "box": "box",
+    "boxes": "box",
+    "caja": "box",
+    "cajas": "box",
+    "package": "package",
+    "packages": "package",
+    "paquete": "package",
+    "paquetes": "package",
+    "pack": "package",
+    "packs": "package",
+    "pkg": "package",
+    "unit": "unit",
+    "units": "unit",
+    "unidad": "unit",
+    "unidades": "unit",
+    "bottle": "bottle",
+    "bottles": "bottle",
+    "frasco": "bottle",
+    "frascos": "bottle",
+    "botella": "bottle",
+    "botellas": "bottle",
 }
 _HEADER_SCAN = 15
 _SAMPLE_ROWS = 5
@@ -241,6 +371,31 @@ def _synonym_role(value: Any, synonyms: dict[str, str]) -> str | None:
         if role is not None:
             return role
     return None
+
+
+def _header_match(value: Any) -> tuple[str, int] | None:
+    """Papel y especificidad de una cabecera: exacta y canónica vale más que un alias genérico.
+
+    La posición nunca decide el papel; solo desempata cuando dos columnas son igual de
+    específicas para el mismo papel (por ejemplo, dos columnas llamadas «Precio»).
+    """
+    synonyms = _synonym_index()
+    best: tuple[str, int] | None = None
+    for depth, key in enumerate(_header_variants(value)):
+        role = synonyms.get(key)
+        if role is None:
+            continue
+        if _CANONICAL_HEADERS.get(key) == role:
+            score = 3
+        elif key in _GENERIC_HEADERS:
+            score = 1
+        else:
+            score = 2
+        # La forma entre paréntesis («Precio (CLP)») es una coincidencia un poco más débil.
+        score = max(score - depth, 1)
+        if best is None or score > best[1]:
+            best = (role, score)
+    return best
 
 
 async def _source(session: AsyncSession, actor: Actor, source_id: uuid.UUID) -> Source:
@@ -619,19 +774,53 @@ def _suggest_sheet(content: bytes, file_format: str, sheets: list[str]) -> str |
 
 
 def _suggested_columns(header: tuple[Any, ...]) -> dict[str, dict[str, Any]]:
-    synonyms = _synonym_index()
+    """Mapeo propuesto: primero las coincidencias exactas y específicas, nunca por posición.
+
+    Cada columna alimenta como mucho un papel y cada papel se queda con la mejor columna que lo
+    nombre. Una coincidencia genérica («Valor», «Base») solo se usa si ninguna otra más precisa
+    cubre el papel.
+    """
+    candidates: list[tuple[int, int, str, str]] = []
+    for index, value in enumerate(header, start=1):
+        match = _header_match(value)
+        text = _text(value)
+        if match is None or text is None:
+            continue
+        role, score = match
+        candidates.append((score, index, role, text[:120]))
+    candidates.sort(key=lambda item: (-item[0], item[1]))
     used: set[int] = set()
     suggested: dict[str, dict[str, Any]] = {}
-    for index, value in enumerate(header, start=1):
-        role = _synonym_role(value, synonyms)
-        if role is None or role in suggested or index in used:
+    for _score, index, role, text in candidates:
+        if role in suggested or index in used:
             continue
-        text = _text(value)
-        if text is None:
-            continue
-        suggested[role] = {"header": text[:120], "position": index}
+        suggested[role] = {"header": text, "position": index}
         used.add(index)
     return suggested
+
+
+def _suggested_units(
+    data_rows: list[tuple[int, tuple[Any, ...]]], sale_unit_index: int | None
+) -> dict[str, str]:
+    """Traduce los textos de unidad inequívocos del propio archivo (`caja`→`box`).
+
+    No se deduce nada de mg/ml, del nombre ni de la presentación: solo se traduce la palabra
+    escrita en la columna de unidad. Lo que no está aquí se pregunta por valor o se rechaza en su
+    fila, sin bloquear la lista completa.
+    """
+    if sale_unit_index is None:
+        return {}
+    units: dict[str, str] = {}
+    for _number, values in data_rows:
+        if sale_unit_index >= len(values):
+            continue
+        text = _text(values[sale_unit_index])
+        if text is None:
+            continue
+        unit = _UNIT_ALIASES.get(text.casefold())
+        if unit is not None:
+            units[text.casefold()] = unit
+    return units
 
 
 def _suggested_decimal_separator(rows: list[tuple[int, tuple[Any, ...]]], price_index: int | None) -> str:
@@ -766,23 +955,33 @@ def _aggregate_problems(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(groups.values(), key=lambda g: (-g["count"], g["code"]))
 
 
-def _unrecognised_units(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Textos de unidad que el perfil todavía no traduce, con cuántas filas afectan."""
+def _unrecognised_texts(
+    rows: list[dict[str, Any]], *, code: str, role: str
+) -> list[dict[str, Any]]:
+    """Valores de una columna que el mapeo todavía no interpreta, con cuántas filas afectan."""
     groups: dict[str, dict[str, Any]] = {}
     for item in rows:
         problem = item.get("problem")
-        if not problem or problem["code"] != UNKNOWN_UNIT:
+        if not problem or problem["code"] != code:
             continue
-        text = str((problem.get("values") or {}).get("sale_unit") or "").strip()
+        text = str((problem.get("values") or {}).get(role) or "").strip()
         if not text:
             continue
-        group = groups.setdefault(
-            text, {"text": text, "count": 0, "sample_rows": []}
-        )
+        group = groups.setdefault(text, {"text": text, "count": 0, "sample_rows": []})
         group["count"] += 1
         if len(group["sample_rows"]) < 20:
             group["sample_rows"].append(item["row"])
     return sorted(groups.values(), key=lambda g: (-g["count"], g["text"]))
+
+
+def _unrecognised_units(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Textos de unidad que el perfil todavía no traduce."""
+    return _unrecognised_texts(rows, code=UNKNOWN_UNIT, role="sale_unit")
+
+
+def _unrecognised_bases(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Textos de base de precio que el perfil todavía no confirma (p. ej. «unit»)."""
+    return _unrecognised_texts(rows, code=INVALID_BASIS, role="basis")
 
 
 def _profile_values(
@@ -900,6 +1099,7 @@ async def check_import(
             status_code=422,
         )
     header = next((values for number, values in rows if number == header_row), ())
+    ignored_columns: list[dict[str, Any]] = []
     if payload is not None:
         columns = payload.get("columns") or {}
         units = payload.get("units") or {}
@@ -918,13 +1118,31 @@ async def check_import(
         options = dict(saved.options or {})
         profile_source, profile_version = "saved", saved.version
     elif auto:
-        # Solo se propone lo que está en el archivo: columnas reconocidas y separador decimal.
-        # Moneda, base de precio y unidad por defecto no se infieren nunca.
+        # Solo se propone lo que está en el archivo: columnas reconocidas, traducción de unidades
+        # inequívocas y separador decimal. Moneda, base de precio y unidad por defecto no se
+        # infieren nunca.
         detected = _suggested_columns(header)
         price_position = detected.get("price", {}).get("position")
+        sale_position = detected.get("sale_unit", {}).get("position")
         data_rows = [(number, values) for number, values in rows if number > header_row]
+        # El contenido por envase es opcional y su unidad base no viene en el archivo. Sin esa
+        # unidad no se puede guardar: se omite y queda explicado en los detalles técnicos.
+        pack = detected.pop("pack", None)
+        if pack is not None:
+            ignored_columns.append(
+                {
+                    "header": pack.get("header"),
+                    "role": "pack",
+                    "reason": (
+                        "El archivo trae el contenido por envase, pero no indica en qué unidad se "
+                        "mide ese contenido. Se omitió para no inventar esa unidad."
+                    ),
+                }
+            )
         columns = detected
-        units = {}
+        units = _suggested_units(
+            data_rows, sale_position - 1 if isinstance(sale_position, int) else None
+        )
         options = {
             "decimal_separator": _suggested_decimal_separator(
                 data_rows,
@@ -962,6 +1180,9 @@ async def check_import(
         "profile_source": profile_source,
         "profile_version": profile_version,
         "profile": profile_payload,
+        # Columnas que se reconocieron pero se omitieron a propósito, con el motivo. Es
+        # diagnóstico: la pantalla no pregunta por ellas ni inventa su unidad.
+        "ignored_columns": ignored_columns,
         "file_hash": hashlib.sha256(content).hexdigest(),
     }
     missing_columns = _missing_required_roles(clean_columns, clean_options) if auto else []
@@ -978,6 +1199,7 @@ async def check_import(
             "rows_truncated": False,
             "problems": [],
             "unrecognised_units": [],
+            "unrecognised_bases": [],
             "missing_columns": missing_columns,
         }
     probe = ImportProfile(
@@ -1015,6 +1237,7 @@ async def check_import(
         "rows_truncated": len(outcome.rows) > _CHECK_ROWS,
         "problems": _aggregate_problems(outcome.rows),
         "unrecognised_units": _unrecognised_units(outcome.rows),
+        "unrecognised_bases": _unrecognised_bases(outcome.rows),
         "missing_columns": [],
     }
 
