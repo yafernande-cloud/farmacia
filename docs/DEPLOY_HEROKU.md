@@ -1,224 +1,251 @@
-# Despliegue del backend en Heroku — preparación
+# Despliegue en Heroku y publicación en Lovable
 
-Última revisión: 2026-11-03. Estado: **preparado para el primer despliegue manual; no se ha
-desplegado nada**. La app `cotizador-farmacia-demo` ya existe, tiene el repositorio GitHub
-`yafernande-cloud/farmacia` conectado, la rama `master` seleccionada, *Automatic Deploys*
-desactivado y un addon **Heroku Postgres Essential 0**. No se ejecutaron migraciones en Heroku ni
-se cargaron datos. Cada paso de este documento requiere autorización explícita.
+Actualizado: 2026-11-09. Procedimiento **manual**: nada se despliega ni se publica sin autorización
+explícita. No se escriben valores secretos en este documento, en el repositorio, en el chat ni en los
+logs.
 
-## 1. Cómo se instala y arranca
+## 1. Estado
 
-El buildpack de Python de Heroku lee la **raíz del repositorio**, no `backend/`. Por eso la
-instalación y el arranque se configuran en la raíz, apuntando al código de `backend/`:
+- La app de Heroku `cotizador-farmacia-demo` existe, con GitHub `yafernande-cloud/farmacia`
+  conectado, rama `master`, *Automatic Deploys* desactivado y addon **Heroku Postgres Essential 0**.
+- El backend está desplegado y responde en
+  `https://cotizador-farmacia-demo-3ea67af09b39.herokuapp.com`. La URL pública también está en el
+  frontend como valor por defecto.
+- El frontend `farmacia-frontend` está conectado a Lovable por la rama `main`; la vista previa y el
+  acceso del profesor fueron verificados. La publicación al dominio final es manual.
+- La cabeza de migraciones del repositorio es **0026**. Se verificó manualmente en Heroku con
+  `cd backend && alembic current`: **`0026 (head)`**. Repetir la consulta antes de cada despliegue y
+  no suponer la versión.
+- La última suite backend informada con `REQUIRE_DB=1` queda en 997 aprobadas y 8 omitidas; la de
+  frontend, en 238 aprobadas. Repetir antes de un despliegue que cambie código.
 
-- `requirements.txt` (raíz): dependencias fijadas. El buildpack lo detecta y ejecuta `pip install`.
-- `.python-version` (raíz): `3.14`. Heroku solo mantiene el último parche de cada versión mayor;
-  se indica major.minor para que resuelva el parche disponible. Se eliminó `runtime.txt`, que
-  fijaba `python-3.13.4` (un parche que Heroku puede no ofrecer).
-- `Procfile` (raíz):
-  - `web: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-  - `release: cd backend && alembic upgrade head`
-- El proceso escucha en `0.0.0.0` y en el puerto dinámico `$PORT`, como exige Heroku.
-- `backend/` no se instala como paquete: uvicorn se ejecuta desde ese directorio (`app.main:app`).
+## 2. Cómo arranca
 
-Verificado localmente con `APP_ENV=production` y `AUTH_MODE=supabase_jwt`: la app arranca, registra
-69 rutas y `GET /api/v1/health` responde `200`.
+El buildpack de Python lee la **raíz** del repositorio, no `backend/`. Por eso los archivos de
+despliegue viven en la raíz:
 
-Compatibilidad de Python 3.14: Heroku lo soporta (buildpack actual) y todas las dependencias
-fijadas lo admiten. Los paquetes con extensión nativa publican wheel para Linux x86_64 compatible
-con 3.14: `psycopg-binary` (cp314), `greenlet` (cp314), `pydantic-core` (cp314),
-`sqlalchemy` (cp314), `uvloop` (cp314), `httptools` (cp314) y `websockets` (cp314);
-`watchfiles` y `cryptography` usan wheels `abi3` (compatibles hacia adelante) y el resto son
-paquetes puros. No se requiere compilador en el build.
-
-## 2. Base de datos
-
-`DATABASE_URL` la inyecta el addon. La app acepta el formato `postgres://` de Heroku y lo normaliza
-a `postgresql+psycopg://` al arrancar (`backend/app/core/config.py`); conserva host, credenciales,
-base y parámetros de consulta. Alembic usa la misma URL.
-
-- TLS: Heroku Postgres exige SSL. `psycopg` negocia TLS con `sslmode=prefer` (intenta SSL primero),
-  así que la conexión funciona sin tocar la URL. Para **exigir** TLS y evitar una caída a texto
-  plano, configurar `PGSSLMODE=require` como variable de entorno (psycopg lee las variables de
-  libpq). Si se prefiere, añadir `?sslmode=require` a la URL.
-- Essential 0 admite **20 conexiones**. El motor usa `pool_size=5` + `max_overflow=0`: **máximo 5
-  por proceso**, más el release y como mucho un dyno de consola, queda margen amplio. **No**
-  escalar a varios dynos sin volver a calcularlo.
-- El disco del dyno es efímero, pero **las fotografías ya no viven ahí**: el binario se guarda en
-  PostgreSQL (`temp_photos`, `BYTEA`, clave SHA-256; migración `0024`). `STORAGE_DIR` y
-  `LocalPrivateStorage` quedan solo para pruebas/demostración, así que un reinicio no pierde fotos.
-  No hay TTL ni borrado por antigüedad: se liberan solo cuando ningún reporte u operación viva las
-  necesita, y las compartidas por SHA-256 se conservan mientras otra organización las use.
-
-## 3. Archivos preparados
-
-| Archivo | Para qué |
+| Archivo | Función |
 |---|---|
-| `Procfile` | Arranque web y fase `release` con Alembic |
-| `requirements.txt` | Dependencias de runtime fijadas; se añadió `httpx==0.28.1`, que el adaptador de OpenAI importa al arrancar |
-| `.python-version` | `3.14` para el buildpack |
-| `backend/pyproject.toml` | Dependencias de desarrollo y pruebas (no lo usa Heroku) |
+| `requirements.txt` | Dependencias de runtime fijadas; se actualiza a mano junto con `backend/pyproject.toml` |
+| `.python-version` | `3.14`; Heroku instala el último parche disponible |
+| `Procfile` | Procesos `web`, `release` y, opcionalmente, `worker` |
 
-`requirements.txt` se mantiene a mano: al cambiar `backend/pyproject.toml` hay que actualizarlo en
-el mismo cambio.
+`Procfile` versionado:
+
+```
+web: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+release: cd backend && alembic upgrade head
+```
+
+El árbol de trabajo añade una línea para el polling de Telegram:
+
+```
+worker: cd backend && PYTHONUNBUFFERED=1 python -m app.cli telegram-poll
+```
+
+Esa línea **no está versionada** al cierre de este documento. Si se quiere el polling como dyno
+permanente, primero debe formar parte de la rama desplegada; mientras tanto, el polling se ejecuta en
+una sesión de Run Console o en el entorno local autorizado. No se escala un proceso que el `Procfile`
+desplegado no define.
+
+## 3. Base de datos y conexiones
+
+- `DATABASE_URL` la inyecta el addon. La app acepta `postgres://` y la normaliza a
+  `postgresql+psycopg://`; conserva host, credenciales, base y parámetros.
+- Heroku Postgres exige TLS. `psycopg` negocia SSL; para **exigirlo**, configurar
+  `PGSSLMODE=require`.
+- Essential 0 admite **20 conexiones**. El motor usa `pool_size=5` y `max_overflow=0`: máximo 5 por
+  proceso. Con web, release y una consola hay margen; **no escalar a varios dynos sin recalcular**.
+- El disco del dyno es efímero, pero las fotos **no** viven ahí: se guardan en PostgreSQL
+  (`temp_photos`, `BYTEA`, clave SHA-256; migración `0024`). `STORAGE_DIR` y `LocalPrivateStorage`
+  quedan solo para pruebas/demostración.
+- No hay TTL de fotos: se liberan cuando ningún reporte u operación viva las necesita; una imagen
+  compartida por SHA-256 se conserva mientras otra organización la use.
 
 ## 4. Variables de entorno
 
-Nunca se escriben valores secretos en el repositorio, en el chat ni en logs. Los valores se cargan
-desde el gestor de secretos de la propietaria.
+Los valores se cargan desde el gestor de secretos de la propietaria. Las variables marcadas **Sí**
+son secretas y nunca se pegan en el chat ni en git.
 
-### Indispensables para el primer despliegue
+### Indispensables
 
-| Variable | Valor / uso | Secreto |
+| Variable | Uso | Secreto |
 |---|---|---|
 | `APP_ENV` | `production` | No |
 | `AUTH_MODE` | `supabase_jwt` (nunca `demo_header` en producción) | No |
 | `SUPABASE_JWKS_URL` | JWKS público del proyecto Supabase | No |
-| `SUPABASE_JWT_ISSUER` | Emisor esperado del JWT | No |
-| `SUPABASE_JWT_AUDIENCE` | `authenticated` (valor por defecto) | No |
+| `SUPABASE_JWT_ISSUER` | Emisor esperado, sin barra final | No |
+| `SUPABASE_JWT_AUDIENCE` | `authenticated` (por defecto) | No |
 | `DATABASE_URL` | La inyecta Heroku Postgres | **Sí** |
-| `CORS_ORIGINS` | Dominio del frontend Lovable, separado por comas | No |
+| `CORS_ORIGINS` | Orígenes exactos del frontend, separados por coma; sin `*` ni barra final | No |
 
-Sin `SUPABASE_JWKS_URL` y `SUPABASE_JWT_ISSUER`, la app **no arranca** con
-`AUTH_MODE=supabase_jwt` (validación deliberada). Con `AUTH_MODE=disabled` arranca, pero las rutas
-de negocio responden `503`; sirve para probar salud, no para usar el producto.
+Sin JWKS e issuer, la app **no arranca** con `AUTH_MODE=supabase_jwt`. Con `AUTH_MODE=disabled`
+arranca, pero las rutas de negocio responden `503`.
 
-Formatos esperados (sustituir los marcadores; no son secretos, salvo donde se indica):
-
-| Variable | Formato |
-|---|---|
-| `SUPABASE_JWKS_URL` | `https://<PROJECT_REF>.supabase.co/auth/v1/.well-known/jwks.json` |
-| `SUPABASE_JWT_ISSUER` | `https://<PROJECT_REF>.supabase.co/auth/v1` (sin barra final) |
-| `SUPABASE_JWT_AUDIENCE` | `authenticated` |
-| `CORS_ORIGINS` | `https://<proyecto>.lovable.app` o el dominio propio; varios separados por coma: `https://a.lovable.app,https://dominio.cl`. Sin `*`, sin barra final, con esquema `https://` |
-
-`CORS_ORIGINS` debe contener los orígenes exactos que abrirán el frontend; el backend los separa
-por comas y elimina espacios. No admite rutas ni comodines.
-
-### Recomendadas / según alcance
+### Según alcance
 
 | Variable | Uso | Secreto |
 |---|---|---|
-| `PGSSLMODE` | `require` para exigir TLS hacia Heroku Postgres | No |
-| `WEB_ACCESS_ORGANIZATION_ID` | Organización que recibe solicitudes de acceso web; sin ella el endpoint público responde `503` | No |
-| `LOG_LEVEL` | `INFO` por defecto | No |
-| `TELEGRAM_BOT_TOKEN` | Solo si se habilita el canal de Telegram | **Sí** |
-| `TELEGRAM_WEBHOOK_SECRET` | Solo con Telegram; 16–256 caracteres `[A-Za-z0-9_-]` | **Sí** |
+| `PGSSLMODE` | `require` para exigir TLS | No |
+| `WEB_ACCESS_ORGANIZATION_ID` | Organización que recibe solicitudes de acceso web; sin ella, `503` | No |
 | `TELEGRAM_ACCESS_ORGANIZATION_ID` | Organización que recibe solicitudes del bot | No |
-| `OBSERVATION_AI_ENABLED` | `false` en el primer despliegue; se deja apagado | No |
-| `OPENAI_API_KEY` | Solo al habilitar la interpretación | **Sí** |
-| `OPENAI_MODEL` | Sin valor no hay llamada; no se inventa un modelo por defecto | No |
+| `TELEGRAM_BOT_TOKEN` | Canal de Telegram | **Sí** |
+| `TELEGRAM_WEBHOOK_SECRET` | Solo si se usa webhook; 16–256 caracteres `[A-Za-z0-9_-]` | **Sí** |
+| `VISION_PROVIDER` | `none` (por defecto), `simulated` o `openai` | No |
+| `OPENAI_API_KEY` | Visión y/u observaciones | **Sí** |
+| `OPENAI_VISION_MODEL` | Modelo de visión; sin valor no hay llamada de visión | No |
+| `OPENAI_MODEL` | Modelo de observaciones; sin valor no hay interpretación | No |
+| `OBSERVATION_AI_ENABLED` | `false` por defecto | No |
+| `OPENAI_REASONING_EFFORT` | `low` por defecto | No |
+| `OPENAI_MAX_OUTPUT_TOKENS` | 2500 por defecto | No |
+| `SUPPLIER_CREDENTIALS_KEY` | Clave Fernet para cifrar contraseñas de portales | **Sí** |
+| `PHOTO_RECOVERY_ENABLED` | `false` por defecto; habilita recuperar fotos desde Telegram | No |
+| `CHAIN_SEARCH_ENABLED` | Lista de cadenas, p. ej. `cruz_verde,salcobrand,ahumada` | No |
+| `CRUZVERDE_LIVE_SEARCH_ENABLED` | Interruptor propio de Cruz Verde | No |
+| `SALCOBRAND_LIVE_SEARCH_ENABLED` | Interruptor propio de Salcobrand | No |
+| `AHUMADA_LIVE_SEARCH_ENABLED` | Interruptor propio de Farmacias Ahumada | No |
+| `LOG_LEVEL` | `INFO` por defecto | No |
 
-Con `OBSERVATION_AI_ENABLED=false` no se llama a OpenAI. La observación se guarda y la
-interpretación queda pendiente.
+Cada cadena tiene además sus URLs, credenciales de API (Salcobrand) y tiempos de espera. Los valores
+reales no se documentan aquí. Una cadena sin interruptor o sin configuración informa
+`not_configured` con su motivo; **no se inventan fichas ni precios**.
+
+La interpretación de observaciones y la visión son independientes: se puede tener una apagada y la
+otra encendida. Sin clave o modelo, el endpoint de interpretación responde
+`503 OBSERVATION_AI_DISABLED` y la foto queda `pending`.
 
 ## 5. Migraciones
 
-`alembic.ini` y `migrations/` viven en `backend/`; la fase `release` del `Procfile` ejecuta:
+`alembic.ini` y `migrations/` viven en `backend/`. La URL sale **solo** de `DATABASE_URL`; no hay
+respaldo a `TEST_DATABASE_URL` ni a una URL local.
 
 ```bash
+# La fase release ejecuta esto en cada despliegue, antes de liberar los dynos:
 cd backend && alembic upgrade head
 ```
 
-La URL de migración sale **solo** de `DATABASE_URL`: `alembic.ini` no define `sqlalchemy.url` y
-`migrations/env.py` usa `get_settings().database_url`; no hay respaldo a `TEST_DATABASE_URL` ni a
-una URL local. En el slug de Heroku no existe `.env`, así que la única fuente es la variable del
-addon. No se ejecutó ninguna migración.
+- La cabeza del repositorio es **0026**. `0024` baja de `0020` a propósito porque `0021`–`0023` están
+  reservadas para compras e historial; `0025` y `0026` continúan la cadena.
+- Autorizar un despliegue implica autorizar las migraciones pendientes sobre la base de Heroku.
+- Para separar despliegue y migración, quitar `release:` del `Procfile` (requiere commit) o ejecutar
+  primero en Run Console:
+  ```bash
+  cd backend && alembic current
+  cd backend && alembic upgrade head
+  ```
+- **Nunca** ejecutar migraciones contra `farmacia`, `farmacia_demo` o `farmacia_test` desde Heroku.
+- Antes de una migración destructiva: respaldo verificado. Un rollback de código **no revierte** el
+  esquema.
 
-Heroku la corre **automáticamente en cada despliegue** (incluido el primero), antes de liberar los
-dynos. Por tanto, autorizar el primer despliegue implica autorizar la aplicación de `0001`–`0019`
-sobre la base nueva de Heroku. Si se prefiere separar despliegue y migraciones, hay que quitar la
-línea `release:` del `Procfile` antes de desplegar y ejecutar después:
+## 6. Despliegue manual del backend (panel de Heroku)
+
+1. **Requisitos previos:** rama `master` en el estado deseado, pruebas verdes, migraciones revisadas
+   y variables cargadas. No desplegar desde una rama con cambios sin commit.
+2. **Settings → Config Vars:** confirmar las indispensables de §4. Los secretos se pegan desde el
+   gestor, nunca desde el chat.
+3. **Settings → Buildpacks:** `heroku/python` (detección por `requirements.txt`). No agregar otros.
+4. **Deploy → Deployment method:** GitHub conectado, rama `master`, *Automatic Deploys* desactivado.
+5. **Deploy → Manual deploy:** pulsar **Deploy Branch** solo con autorización.
+6. **Activity / View logs:** comprobar que el build instala dependencias, que el release ejecuta
+   Alembic sin error y que el dyno web arranca.
+7. **Verificar salud:**
+   - `GET /api/v1/health` → `200`, `purchase_execution: "blocked"`.
+   - `GET /api/v1/health/ready` → `200` y base `ok`; `503` si PostgreSQL no responde.
+   - `/docs` carga el OpenAPI.
+8. **Run Console** (More → Run console), solo para operaciones autorizadas:
+   ```bash
+   cd backend && alembic current
+   cd backend && python -m app.cli telegram-check
+   cd backend && python -m app.cli list-telegram-accounts --org real --by <ADMIN_ID>
+   ```
+9. **Proceso worker (opcional):** si el `Procfile` desplegado ya incluye `worker`, activarlo en
+   **Resources** y comprobar los logs. Si no está versionado, no aparece en la formación de dynos.
+10. **Frontend:** confirmar que `CORS_ORIGINS` contiene el origen exacto de Lovable; luego publicar
+    desde Lovable (§8).
+
+### Seeds y datos
+
+Solo en la organización de simulación, nunca en `real_test` ni en producción:
 
 ```bash
-heroku run --app cotizador-farmacia-demo bash -c 'cd backend && alembic upgrade head'
-heroku run --app cotizador-farmacia-demo bash -c 'cd backend && alembic current'
+cd backend && python -m app.cli seed-demo
+cd backend && python -m app.cli seed-catalog --org sim --by <ID_DE_PAO> --dry-run
+cd backend && python -m app.cli seed-catalog --org sim --by <ID_DE_PAO>
 ```
 
-`farmacia`, `farmacia_demo` y `farmacia_test` no se tocan: la base de Heroku es nueva y separada.
-Todavía no se ejecutó ninguna migración en Heroku.
+`create-admin` es solo bootstrap de `simulation`/`real_test`; no crea cuentas de Supabase ni enlaza
+identidad. No ejecutar `seed-real-test` sin decisión explícita.
 
-## 6. Datos de demostración
+## 7. Verificación de fotografías tras un redespliegue
 
-Solo en la organización de **simulación** creada por `seed-demo`; nunca en `real_test` ni en
-producción. Los comandos son idempotentes y no imprimen tokens.
+La persistencia se comprobó en producción con la fotografía del caso Predual: siguió visible después
+de un nuevo despliegue. Para repetir la verificación:
 
-```bash
-# 1) Organización de simulación, personal de database/seed/staff.json y ciclo abierto.
-#    Imprime los IDs (Pao es admin). Guardar el ID de Pao.
-heroku run --app cotizador-farmacia-demo bash -c 'cd backend && python -m app.cli seed-demo'
+1. Confirmar que la base está en `0024` o superior: `cd backend && alembic current`.
+2. Enviar una foto por Telegram o abrir un reporte con foto; comprobar la miniatura en Faltantes.
+3. Anotar el `attachment_id` (la API lo expone como `photo_url`:
+   `/api/v1/attachments/{id}/content`).
+4. Redesplegar o reiniciar el dyno web.
+5. Volver a abrir Faltantes: la misma foto debe cargar desde PostgreSQL. El binario **no** depende
+   del disco del dyno.
+6. Si una foto antigua no aparece, verificar `temp_photos` y, solo con `PHOTO_RECOVERY_ENABLED=true`,
+   ejecutar `POST /api/v1/photos/maintenance/recover` con `dry_run` primero. La recuperación descarga
+   desde Telegram únicamente fotos perdidas de reportes activos y verifica el SHA-256.
 
-# 2) Catálogo FICTICIO (30 artículos, 3 proveedores, 3 fuentes, 90 ofertas).
-#    Primero en seco; no escribe nada.
-heroku run --app cotizador-farmacia-demo bash -c \
-  'cd backend && python -m app.cli seed-catalog --org sim --by <ID_DE_PAO> --dry-run'
+No se borran fotos por antigüedad. El barrido (`POST /photos/maintenance/collect`) solo libera
+binarios sin referencias vivas y se limita a la organización del actor.
 
-# 3) Carga real del fixture, solo si la vista previa es correcta.
-heroku run --app cotizador-farmacia-demo bash -c \
-  'cd backend && python -m app.cli seed-catalog --org sim --by <ID_DE_PAO>'
-```
+## 8. Publicación en Lovable
 
-Para que Pao entre desde Lovable con Supabase, enlazar su `sub` (se obtiene al iniciar sesión; no
-es una credencial, pero no se pega en el chat):
+1. El repositorio `farmacia-frontend` está conectado a Lovable por `main`. Cada push se sincroniza
+   con el editor; no se reescribe historia publicada (nada de force push, rebase o amend de commits ya
+   subidos).
+2. Antes de publicar: `npm test`, `npm run lint` y `npx tsc --noEmit` en el repositorio del frontend.
+3. Abrir la **Preview** de Lovable y probar:
+   - ingreso con correo+contraseña y con Google;
+   - carga de Faltantes desde el backend;
+   - búsqueda de catálogo y de cadenas;
+   - pantalla de Telegram y proveedores.
+4. Verificar que el backend desplegado tenga en `CORS_ORIGINS` el origen exacto de la preview y del
+   dominio publicado. Sin eso, el navegador bloquea las llamadas aunque la API esté sana.
+5. Pulsar **Publish** / **Share** en Lovable para publicar el dominio final. Es una acción manual y
+   requiere autorización.
+6. Volver a probar el dominio publicado; la preview y el dominio final pueden tener orígenes
+   distintos.
 
-```bash
-heroku run --app cotizador-farmacia-demo bash -c \
-  'cd backend && python -m app.cli link-auth-subject <ID_DE_PAO> --org sim --by <ID_DE_PAO> --subject <SUB_DE_SUPABASE>'
-```
+El frontend solo usa variables públicas (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`,
+`VITE_API_URL`). La clave `anon` es pública, pero se mantiene fuera del repositorio. Nunca se pone una
+clave `service_role`, un token de Telegram ni una clave de OpenAI en el frontend.
 
-`create-admin` es solo para bootstrap de una administradora en `real_test`/`simulation`; no crea
-cuentas de Supabase ni enlaza identidad. No ejecutar `seed-real-test` sin una decisión explícita.
+## 9. Rollback
 
-## 7. Verificación de salud
+- **Código:** Heroku → Activity → Rollback a un release anterior. Requiere que el esquema siga siendo
+  compatible con ese código.
+- **Esquema:** no se revierte automáticamente. Un `alembic downgrade` exige autorización, respaldo
+  verificado y revisión de la migración; puede perder datos.
+- **Frontend:** Lovable conserva el historial; volver a un estado anterior implica un cambio de
+  código y un nuevo push, no un force push.
+- **Fotos:** permanecen en PostgreSQL aunque se revierta el código; no dependen del release.
 
-| Ruta | Uso | Qué expone |
-|---|---|---|
-| `GET /api/v1/health` | Liveness; no toca la base | `status`, `env`, `purchase_execution` (`blocked`) |
-| `GET /api/v1/health/ready` | Readiness; consulta `SELECT 1` | `status` y estado de la base; `503` si no responde |
+## 10. Problemas frecuentes
 
-Ninguno devuelve credenciales, la URL u host de la base, rutas internas, versión del modelo ni
-trazas. `/health` solo confirma que el proceso vive y el entorno lógico (`production`); `/health/ready`
-resume `ok`/`unavailable` de PostgreSQL y responde `503` cuando no está disponible. Los detalles de
-una falla de conexión se registran solo en el log del servidor. `purchase_execution` siempre es
-`blocked`: la compra real no se habilita por configuración.
+| Síntoma | Causa probable |
+|---|---|
+| La app no arranca | Faltan `SUPABASE_JWKS_URL` o `SUPABASE_JWT_ISSUER` con `AUTH_MODE=supabase_jwt` |
+| El navegador bloquea las llamadas | `CORS_ORIGINS` no contiene el origen exacto (esquema, dominio, sin barra final) |
+| `release` falla | `DATABASE_URL` ausente, migración inválida o base inaccesible; el dyno no se libera |
+| `503` en `/health/ready` | PostgreSQL no responde o el pool está agotado |
+| `403 USER_NOT_PROVISIONED` | JWT válido sin `app_user.auth_subject` enlazado |
+| `403 WEB_ACCESS_EXPIRED` | Acceso vencido o revocado |
+| Fotos no cargan tras redespliegue | Verificar `0024`, `temp_photos` y la ruta autenticada de la miniatura |
+| Una cadena no responde | Revisar su interruptor y configuración; `failed`/`not_configured` no es «sin resultados» |
+| El worker no existe | La línea `worker` no está en el `Procfile` desplegado |
 
-## 8. Bloqueos y riesgos antes del primer despliegue
-
-1. **Variables de Supabase**: sin JWKS e issuer, `AUTH_MODE=supabase_jwt` impide arrancar.
-2. **CORS**: sin el dominio de Lovable en `CORS_ORIGINS`, el navegador bloqueará las llamadas.
-3. **Migraciones**: el primer despliegue las aplica por `release`; decidir si se acepta o se pasa a
-   ejecución manual (ver §5).
-4. **Datos**: la base nueva está vacía; hasta correr los seeds no hay catálogo ni usuarios.
-5. **Fotos**: guardadas en PostgreSQL desde la migración `0024`; no requieren S3 ni un servicio
-   aparte. Las fotos que hayan quedado solo en el disco efímero de un dyno anterior se recuperan
-   manualmente desde Telegram con `POST /api/v1/photos/maintenance/recover` (ver §7 y
-   `docs/H1B_TELEGRAM.md` §5).
-6. **OpenAI**: apagado; no hay costo ni llamadas. Habilitarlo exige clave, modelo y presupuesto.
-7. **Conexiones**: Essential 0 permite 20; no escalar dynos sin ajustar el pool.
-8. **Python**: Heroku instalará el último parche de 3.14, no exactamente el 3.14.6 local. Las
-   dependencias fijadas se probaron en 3.14.6.
-
-## 9. Pasos exactos en el panel de Heroku
-
-1. **Settings → Config Vars**: cargar las variables de §4 (indispensables primero). Los secretos se
-   pegan desde el gestor de secretos, no desde el chat.
-2. **Settings → Buildpacks**: confirmar que está `heroku/python` (detección automática por
-   `requirements.txt`). No se agregan buildpacks adicionales.
-3. **Deploy → Deployment method**: GitHub ya conectado a `yafernande-cloud/farmacia`; rama
-   `master`; *Automatic Deploys* desactivado.
-4. **Deploy → Manual deploy**: pulsar *Deploy Branch* cuando se autorice. El build instala
-   `requirements.txt` con Python 3.14 y el release ejecuta Alembic (ver §5).
-5. **Activity / View logs**: comprobar que el release termina y el dyno web arranca sin errores.
-6. Abrir `https://cotizador-farmacia-demo.herokuapp.com/api/v1/health` y
-   `/api/v1/health/ready`.
-7. **More → Run console**: ejecutar los seeds de §6 (equivale a `heroku run`).
-8. Recién entonces, apuntar Lovable a la URL del backend y actualizar `CORS_ORIGINS` si cambia el
-   dominio.
-
-## 10. Reglas que no cambian
+## 11. Reglas que no cambian
 
 - `purchase_execution = blocked` en todos los entornos.
 - `AUTH_MODE=demo_header` solo en local/simulación; nunca en producción.
-- Ningún dato ficticio entra en una organización real; el catálogo de `fixtures/` es solo de
-  simulación.
-- No se contrata ni configura ningún servicio externo sin autorización puntual.
+- Ningún dato ficticio entra en una organización real.
+- Ningún servicio externo se contrata o configura sin autorización puntual.
+- Ningún secreto se escribe en el repositorio, en el chat o en un log.
+- No se despliega ni se publica sin autorización explícita.

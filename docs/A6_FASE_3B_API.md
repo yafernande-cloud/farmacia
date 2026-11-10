@@ -1,6 +1,8 @@
 # A6 Fase 3B — API REST de observaciones comerciales e interpretación
 
-Fecha: 2026-11-03. Estado: **implementado en el backend**; falta conectar Lovable.
+Fecha: 2026-11-03; estado actualizado 2026-11-09. **Implementado en el backend**; **Lovable no está
+conectado** y el botón «Enseñar a la IA» sigue deshabilitado. La suite usa un proveedor simulado y
+no consume cuota.
 Complementa el contrato `docs/contracts/cotizador-v0.2.md` §8.3 (espacio
 `/api/v1/commercial-observations`, D0/rev10-A6) y no crea un namespace nuevo.
 
@@ -210,6 +212,10 @@ seguro. Sin clave, cada guardado crea una observación nueva: el frontend debe e
 paginación usa `created_at` + `id` de `commercial_observation`.
 
 ## 8. Pendiente para Lovable
+
+**Estado 2026-11-09:** no hay pantalla conectada. En la interfaz actual, «Enseñar a la IA» está
+deshabilitado con «Disponible próximamente» y ninguna vista llama a `/commercial-observations` ni a
+`/articles/{id}/preferences`. No se registra una interpretación real contra OpenAI.
 
 - Emitir `Idempotency-Key` al guardar (UUID del formulario) y llamar a `interpretations` justo
   después del `201`.

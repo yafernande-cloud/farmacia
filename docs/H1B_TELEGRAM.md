@@ -1,7 +1,11 @@
 # H1-B — Telegram, sesiones de auxiliar, fotografías e interpretación contextual
 
-Estado (2026-10-28): **implementado y verificado con simuladores**. Telegram real y visión real **NO** se han
-probado (falta el token del bot y no hay proveedor de visión conectado). Ver «Qué se verificó y qué no».
+Actualizado: 2026-11-09. El canal está **implementado**; el bot real está configurado y el backend
+puede hacer *long polling*. La suite usa un simulador del canal y **no llama a Telegram**. La visión
+con OpenAI existe como adaptador. El caso Predual se verificó manualmente en producción, pero la
+**validación general del reconocimiento de fotografías con OpenAI sigue pendiente** y no se afirma que
+todos los productos se interpreten correctamente. Ver «Qué se verificó y qué no» (§6) antes de
+afirmar que algo se probó con servicios reales.
 
 ## 1. Flujo
 
@@ -111,6 +115,30 @@ deduce de otra.
 * La organización de acceso se configura explícitamente por entorno (`TELEGRAM_ACCESS_ORGANIZATION_ID`, sin valor por
   defecto): si falta, el bot no crea solicitudes y lo dice.
 
+### Baja de un auxiliar sin perder historial (D-148, migración `0026`)
+
+`POST /api/v1/staff/{id}/delete-auxiliary` da de baja a una persona **como auxiliar de Telegram**. No
+es un borrado físico ni un `DELETE`:
+
+- Marca la fila con `telegram_auxiliary_deleted_at` y `telegram_auxiliary_deleted_reason`; el índice
+  único de nombre activo excluye las filas dadas de baja, así que el nombre queda disponible para
+  una persona nueva.
+- Revoca sus sesiones y vínculos de Telegram (`channel_binding`) y la retira de las listas de
+  auxiliares de cada cuenta, sin borrar observaciones, reportes, auditoría ni historial.
+- **No toca** `active`, `roles`, `auth_subject` ni el acceso web. Una administradora dada de baja como
+  auxiliar **sigue entrando al Cotizador**; para que pierda el acceso web se usa la desactivación o
+  la revocación de §8 de [`AUTH_SUPABASE.md`](AUTH_SUPABASE.md).
+- No existe renombrado (`PATCH /staff` no está implementado) ni restauración: reincorporar como
+  auxiliar significa crear una persona nueva con un UUID nuevo.
+- Cada reporte nuevo guarda `author_name_snapshot` y cada faltante nuevo `reported_by_name`; los
+  históricos no se reescriben. Si el nombre cambió antes de `0026`, la lectura usa el nombre actual
+  como respaldo.
+- La operación exige `MANAGE_STAFF` + `StrongActor`, es idempotente en la práctica y deja auditoría
+  en la misma transacción.
+
+La baja como auxiliar es **terminal para ese rol de Telegram**, no para la persona. Esa distinción es
+deliberada: el plano del bot y el plano web son independientes.
+
 ## 3. Lo que el bot hace y NO hace
 
 Hace: registrar avisos, consultar la lista (páginas), mostrar/cambiar identidad, recibir fotos.
@@ -143,7 +171,9 @@ almacenamiento privado → visión → traducción con las **mismas reglas** que
 SHA-256: el archivo se identifica por su contenido, no por ruta ni por `file_id` de Telegram. El tipo se valida por
 firma de bytes (`detect_image_type`) y el tamaño por `MAX_IMAGE_BYTES`. El disco del dyno **no** se usa para fotos
 (`STORAGE_DIR` y `LocalPrivateStorage` quedan solo para pruebas/demostración); por eso un reinicio de Heroku no las
-pierde. El SHA-256 deduplica: dos auxiliares que reenvían la misma imagen comparten una sola fila física.
+pierde. La persistencia se comprobó en producción con la fotografía del caso Predual: siguió visible después de un
+nuevo despliegue, y la miniatura se sirve por `GET /api/v1/attachments/{attachment_id}/content`.
+El SHA-256 deduplica: dos auxiliares que reenvían la misma imagen comparten una sola fila física.
 
 **Cuándo se libera.** No hay TTL ni borrado por antigüedad: mientras un faltante siga activo en la grilla su
 fotografía debe poder verse, aunque pasen semanas. La baja se decide por **referencias vivas** —reporte `active`,
@@ -182,17 +212,20 @@ titular quedan desconocidos y pendientes.
 
 | Componente | Verificado con | NO verificado |
 |---|---|---|
-| Lógica de sesiones, canal, dominio, auditoría | PostgreSQL 17 **real** | — |
-| Formato de llamadas a la Bot API, webhook, polling, reintentos | **Simulador** de Telegram (`tests/tgsim.py`, `httpx.MockTransport`) | Servidores reales de Telegram |
-| Lectura de imágenes | **Simulación** etiquetada `mode="simulated"` (resultados escritos a mano) | Cualquier IA con visión real |
+| Lógica de sesiones, canal, dominio, auditoría | PostgreSQL 17 **real** en la suite | — |
+| Baja de auxiliar (D-148, `0026`) | PostgreSQL real y pruebas de API/servicio | Uso desde una pantalla administrativa real |
+| Formato de llamadas a la Bot API, webhook, polling, reintentos | **Simulador** de Telegram (`tests/tgsim.py`, `httpx.MockTransport`) | Una conversación real de punta a punta registrada en la suite |
+| Bot real | Creado y con token configurado fuera del repositorio; el polling se ejecuta por CLI o como `worker` si está versionado | Confirmación automatizada de entrega real, límites de Telegram y comportamiento en grupos |
+| Lectura de imágenes | **Simulación** etiquetada `mode="simulated"` y dobles del adaptador | **Validación general** del reconocimiento con OpenAI sobre productos diversos; el caso Predual no se generaliza |
+| Caso Predual | Verificación manual después del despliegue: el faltante muestra «Predual», la búsqueda lo usa y devuelve resultados de las tres cadenas; su fotografía siguió visible tras un nuevo despliegue | Que la lectura de esa foto por OpenAI sea correcta en todos los casos o que el resultado se repita con otros productos |
 | Foto de Migranol del usuario | Transcrita a mano en `MIGRANOL`; **ningún modelo la procesó** | Lectura real de esa imagen |
-| Entrega real de mensajes, límites de Telegram, mensajes en grupos | — | Pendiente al crear el bot |
-| Autorización multicuenta: solicitud, código, aprobación, bloqueo y rehabilitación | PostgreSQL 17 **real** + simulador del canal (solicitud, vencimiento, intentos, concurrencia, bloqueo/rehabilitación, API) | Solicitud y aprobación reales desde teléfonos y frontend |
+| Persistencia de fotos tras redespliegue | Verificación manual en Heroku | Prueba automatizada del redespliegue |
+| Autorización multicuenta: solicitud, código, aprobación, bloqueo y rehabilitación | PostgreSQL 17 **real** + simulador del canal (solicitud, vencimiento, intentos, concurrencia, bloqueo/rehabilitación, API) | Solicitud y aprobación reales desde teléfonos; la pantalla `/telegram` de Lovable está implementada pero no se registra una prueba suya contra el bot real |
 
 ## 7. Crear el bot y configurar el token de forma segura
 
 1. En Telegram abre **@BotFather** → `/newbot` → nombre y usuario (debe terminar en `bot`). BotFather te entrega un
-   **token** `123456789:AA…`. Trátalo como una contraseña: **no lo pegues en este chat ni en git**.
+   **token** con formato `<número>:<cadena>`. Trátalo como una contraseña: **no lo pegues en este chat ni en git**.
 2. (Opcional) `/setprivacy` → *Disable* solo si usarás el bot en un grupo. En chat privado no hace falta.
 3. Guarda el token en tu `.env` local **sin que quede en el historial del shell** (zsh):
    ```bash
@@ -213,8 +246,9 @@ titular quedan desconocidos y pendientes.
 
 ### Solicitar y aprobar accesos
 
-El bot **no autoriza**: solo recibe la solicitud y entrega el código. La decisión se toma en el frontend
-(Configuración → Accesos Telegram) o, mientras no exista pantalla, por API con una sesión administrativa fuerte.
+El bot **no autoriza**: solo recibe la solicitud y entrega el código. La decisión se toma en la
+pantalla **`/telegram`** del frontend, que usa la API real de solicitudes y aprobación. La API también
+puede ejercerse directamente con una sesión administrativa fuerte.
 
 1. **La persona pide acceso** desde su teléfono, en chat privado: `/solicitar`. El bot responde con el código y le
    pide compartirlo con Pao. La solicitud queda `pending` y **no habilita nada**. Si vuelve a pedir, el código
@@ -246,12 +280,15 @@ guardan y quedan `pending`.
 
 ## 8. Limitaciones y pendientes
 
-* Sin verificar contra Telegram real ni con visión real (ver §6). La solicitud, el código, la aprobación, el bloqueo y la
-  rehabilitación están probados contra PostgreSQL real con el simulador del canal, **no** desde teléfonos reales.
-* Multicuenta: en grupos no se solicita acceso; una cuenta `personal` no puede elegir otra identidad; falta la pantalla
-  de accesos en Lovable (hoy solo API y CLI de desarrollo) y el proyecto Supabase no existe todavía, así que en
-  organizaciones reales la API administrativa no puede ejercerse hasta configurarlo. `access_role` es descriptivo: las
-  restricciones entre cuentas administrativas y operativas **no están definidas** (D-053).
+* El canal y la visión están implementados, pero **no hay evidencia automatizada contra Telegram real ni
+  contra OpenAI real**. El bot está creado y el polling puede ejecutarse; la suite usa el simulador. La
+  solicitud, el código, la aprobación, el bloqueo y la rehabilitación están probados contra PostgreSQL
+  real con el simulador del canal, **no** desde teléfonos reales.
+* Multicuenta: en grupos no se solicita acceso; una cuenta `personal` no puede elegir otra identidad.
+  La pantalla `/telegram` de Lovable existe y consume la API real; falta registrar una prueba suya de
+  punta a punta con el bot. Supabase ya está configurado para el acceso web. `access_role` es
+  descriptivo: las restricciones entre cuentas administrativas y operativas **no están definidas**
+  (D-053).
 * No hay catálogo comercial completo (H3): hoy solo candidatos desde un catálogo mínimo verificado por compras.
 * Un mensaje «ibuprofeno y paracetamol» (con «y») se interpreta como un solo producto; se separa por línea, `;` o coma.
 * El PIN por Telegram y grupos con varios chats por farmacia: no implementados.

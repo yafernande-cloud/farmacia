@@ -1,90 +1,300 @@
-# Faltantes Farmacia — Asistente Inteligente de Compras
+# Faltantes Farmacia — Cotizador Inteligente
 
-Demo funcional de validación comercial. Documentación técnica disponible en `docs/`.
-Arquitectura: `docs/ARQUITECTURA.md`. Decisiones: `docs/decisions/`. Roadmap: `docs/ROADMAP.md`.
+Asistente de compras para Farmacia Parque Lantaño. El personal informa faltantes por Telegram o desde
+la web; compras busca el producto en el catálogo de proveedores y en las grandes cadenas, compara
+ofertas y prepara una cotización. La compra real permanece **bloqueada por diseño**
+(`purchase_execution = blocked`).
 
-## Ejecutar el backend
+Documentación de referencia (solo en este repositorio):
 
-```bash
-cp .env.example .env              # y ajusta valores locales
-scripts/dev.sh                    # crea .venv, instala y arranca en http://localhost:8000
-curl localhost:8000/api/v1/health
+- Arquitectura y stack: [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md)
+- Faltantes, búsquedas, cadenas, carrito, cotizaciones, compras e IA: [`docs/COTIZADOR.md`](docs/COTIZADOR.md)
+- Autenticación, usuarios y permisos: [`docs/AUTH_SUPABASE.md`](docs/AUTH_SUPABASE.md)
+- Telegram, sesiones de auxiliar y fotografías: [`docs/H1B_TELEGRAM.md`](docs/H1B_TELEGRAM.md)
+- Despliegue manual en Heroku y publicación en Lovable: [`docs/DEPLOY_HEROKU.md`](docs/DEPLOY_HEROKU.md)
+- Pruebas y criterios de evidencia: [`docs/PRUEBAS.md`](docs/PRUEBAS.md)
+- Roadmap y pendientes: [`docs/ROADMAP.md`](docs/ROADMAP.md)
+- Decisiones y acuerdos: [`docs/decisions/`](docs/decisions/)
+- Contrato funcional del cotizador: [`docs/contracts/cotizador-v0.2.md`](docs/contracts/cotizador-v0.2.md)
+
+> **Alcance de esta documentación.** Describe el sistema implementado a 2026-11-09 y distingue
+> explícitamente **implementado en código**, **probado localmente**, **verificado en producción** y
+> **pendiente**. No contiene contraseñas, tokens, claves ni credenciales. El HLD/LLD original
+> (`docs/Farmacia_Parque_Lantano_HLD_LLD.md`) se conserva sin cambios; donde difiere, rigen este
+> README, `docs/ARQUITECTURA.md` y las decisiones registradas.
+
+## 1. Problema y propuesta
+
+En una farmacia pequeña el faltante se detecta en el mesón y se pierde entre mensajes, listas y
+planillas. El costo de compra depende de comparar presentaciones, precios, despacho y disponibilidad
+entre proveedores y cadenas, tarea que suele hacerse a mano y sin trazabilidad.
+
+Este sistema propone un flujo único:
+
+1. **Reportar** el faltante (Telegram, con texto o foto, o la API web).
+2. **Buscar** el producto en el catálogo verificado de proveedores y en las cadenas.
+3. **Comparar** ofertas con reglas deterministas (precio, despacho, elegibilidad, preferencias).
+4. **Cotizar** por proveedor, con asignaciones explícitas a cada reporte.
+5. **Comprar** solo cuando exista una decisión humana y la compra esté habilitada; en esta etapa la
+   ejecución real está bloqueada.
+
+El principio de diseño es que **el LLM interpreta, pero no decide** dinero, cantidades, permisos ni
+identidades. Toda regla de negocio vive en el backend.
+
+## 2. Estado actual (2026-11-09)
+
+| Área | Código | Pruebas locales | Producción |
+|---|---|---|---|
+| Faltantes, observaciones, cantidades y cancelación | Implementado | Suite backend con PostgreSQL | Dashboard real en Lovable; acceso del profesor verificado |
+| Telegram: bot, cuentas, sesiones, solicitudes y aprobación | Implementado | PostgreSQL real + simulador del canal | Bot real configurado con polling; la suite no llama a Telegram |
+| Fotos: almacenamiento en PostgreSQL y miniatura autenticada | Implementado | Pruebas dedicadas | Persistencia comprobada tras un redespliegue, incluida la foto de Predual |
+| Visión de fotos con OpenAI | Implementado como adaptador | Dobles de red; sin llamadas facturables | Depende de `VISION_PROVIDER`/`OPENAI_VISION_MODEL`; la validación general del reconocimiento sigue pendiente |
+| Búsqueda de catálogo (E1–E3) | Implementado | Suite backend y frontend | En uso desde Lovable |
+| Búsqueda de cadenas (E15) | Implementado | Suite backend y frontend | Según configuración por cadena; límite de Cruz Verde verificado manualmente y caso Predual verificado tras el despliegue con resultados de Cruz Verde, Salcobrand y Ahumada |
+| Comparación, cotizaciones y carrito (E5/E10) | Implementado en backend | Suite backend | Pantallas de cotizaciones/carrito aún con datos de demostración; sin conectar |
+| Compras registradas y cierre de faltantes | **No implementado** | — | — |
+| Observaciones comerciales e IA (A6/O2) | Implementado en backend | Suite con proveedor simulado | Botón «Enseñar a la IA» deshabilitado; sin conectar |
+| Acceso web con Google y correo+contraseña | Implementado | Suite backend y frontend | Inicio de sesión con ambos métodos verificado en Lovable Preview |
+| Solicitudes de acceso web y campanita | Backend implementado; frontend solo demostración | Suite backend | **No verificado de punta a punta**: la campanita de Lovable no llama a la API |
+
+La última suite backend informada con `REQUIRE_DB=1` queda en **997 pruebas aprobadas y 8 omitidas**;
+la última suite frontend informada, en **238 pruebas aprobadas**. Los números y comandos vigentes están en
+[`docs/PRUEBAS.md`](docs/PRUEBAS.md).
+
+## 3. Funcionalidades implementadas
+
+### Faltantes y reportes
+
+- Grilla compartida de faltantes con cursor, detalle, observaciones e historial.
+- Un aviso repetido **no suma** cantidad; la cantidad desconocida es `NULL`, nunca 0 ni 1.
+- Cantidades solo por comandos explícitos `SET`/`ADD`/`CLEAR`, con `Idempotency-Key` e `If-Match`.
+- Reportes independientes por autor, cancelación lógica y asignaciones explícitas
+  (`quote_line_allocation`) sin reparto automático.
+- Memoria verificada de productos (alias) revisable y desactivable.
+- Cada reporte nuevo guarda una instantánea del nombre del autor; los históricos no se reescriben.
+
+### Telegram
+
+- Un bot, varias cuentas autorizadas; teléfono compartido o personal.
+- Solicitud con `/solicitar`, código temporal de un solo uso y aprobación desde la pantalla real de
+  Telegram en Lovable (`/telegram`).
+- Selección de auxiliar por cuenta, sucursal en la cuenta y una sola sesión activa por chat.
+- Baja terminal de un auxiliar: conserva autoría e historial, revoca sus sesiones de Telegram y
+  **no toca** su acceso web ni sus roles.
+
+### Fotografías y visión
+
+- El binario vive en PostgreSQL (`temp_photos`, `BYTEA`, clave SHA-256), no en el disco efímero del
+  dyno. Un redespliegue no borra las fotos.
+- Validación por firma de bytes y tamaño; deduplicación por contenido entre organizaciones.
+- Lectura con OpenAI opcional (`VISION_PROVIDER=openai`); la cantidad visible **no** es la cantidad
+  solicitada.
+- El nombre comercial visible manda sobre la marca genérica y sobre descripciones largas. La consulta
+  a cadenas se acorta (`search_query`) sin reescribir registros históricos.
+
+### Búsqueda, comparación y cotización
+
+- Búsqueda de cualquier producto comercializado, no solo medicamentos.
+- Catálogo verificado de proveedores y ofertas; importación de planillas `.xlsx`, `.xls` y `.csv` con
+  vista previa y estado de revisión.
+- Cadenas con conector propio: Farmacias Ahumada, Salcobrand y Cruz Verde. Cada una falla por
+  separado; una fuente caída nunca se presenta como «sin resultados».
+- Cruz Verde: consultas de más de 50 caracteres se resuelven con hasta dos consultas internas más
+  cortas, conservando la consulta original; un rechazo (`query_rejected`) se distingue de una caída.
+- Comparación determinista E5 con elegibilidad, totales completos, cota inferior y criterios.
+- Cotizaciones E10 con carritos por proveedor, líneas, cierre provisional y reapertura. El backend
+  está implementado; la pantalla de carrito/cotizaciones de Lovable todavía usa datos de
+  demostración y el botón «Agregar a cotización» está deshabilitado.
+- Proveedores con URL de portal y credenciales cifradas en reposo con Fernet. Guardar una credencial
+  **no** conecta ni prueba el portal.
+
+### IA generativa
+
+- Interpretación interna de observaciones comerciales con OpenAI Responses API, salida estructurada
+  estricta y validación todo o nada.
+- Preferencias **del producto específico**: ordenan sus ofertas, no se propagan por laboratorio,
+  marca o proveedor y no construyen perfiles globales.
+- Sin explicaciones, justificaciones ni puntuaciones visibles. La traza (modelo, prompt, estado) es
+  auditoría interna.
+- Endpoints REST implementados (`/commercial-observations`, `/articles/{id}/preferences`), pero
+  **Lovable no está conectado** y el botón «Enseñar a la IA» está deshabilitado.
+
+### Compras (no implementado)
+
+No existen tablas, endpoints ni pantalla de compras registradas. `purchase_execution` es `blocked` en
+todos los entornos. `fulfilled` no significa «recibido» y la recepción física está fuera del MVP.
+
+## 4. Arquitectura y tecnologías
+
+```
+Lovable / navegador ──HTTPS/JSON──► FastAPI ──SQL──► PostgreSQL
+        │                              │
+        └── Supabase Auth (JWT)        ├── OpenAI (visión / observaciones)
+                                       └── cadenas (HTTP público, en memoria)
+Telegram ──polling──► FastAPI ──► PostgreSQL
 ```
 
-Documentación interactiva: http://localhost:8000/docs
-
-## Base de datos y demo
-
-```bash
-open -a Docker                                              # Docker Desktop encendido
-cd database && docker compose --env-file ../.env up -d      # PostgreSQL 17 local
-cd ../backend && .venv/bin/alembic upgrade head
-.venv/bin/python -m app.cli seed-demo                       # Pao, Ana, Luis + ciclo piloto (imprime sus IDs)
-scripts/dev.sh                                              # en otra terminal
-backend/.venv/bin/python scripts/demo_h1a.py --reset        # demostración H1-A paso a paso
-```
-
-Endpoints (`/api/v1`, contrato en `docs/contracts/openapi.json`, interactivo en `/docs`). Identidad por
-cabecera `X-Demo-User-Id` mientras `AUTH_MODE=demo_header`. En organizaciones reales (`real_test`/`production`)
-las rutas administrativas —`/staff` y los accesos de Telegram— exigen `Authorization: Bearer <JWT de Supabase>`;
-la cabecera de demostración solo se acepta en simulación (`docs/AUTH_SUPABASE.md`):
-
-| Método y ruta | Uso |
+| Capa | Tecnología |
 |---|---|
-| `GET /me` | Identidad activa |
-| `GET /demand-items` · `GET /demand-items/{id}` | Lista compartida (cursor) · detalle con observaciones e historial |
-| `POST /observations` | Aviso de faltante (`Idempotency-Key`); deduplica, nunca suma |
-| `GET /observations` · `POST /observations/{id}/resolve` | Avisos dudosos y su resolución (compras) |
-| `POST /demand-items/{id}/quantity-commands` | SET/ADD/CLEAR (`Idempotency-Key` + `If-Match`) |
-| `POST /demand-items/{id}/resolve` | Confirmar unidad, forma, contenido… (`If-Match`; compras). Lo confirmado queda `confirmed` |
-| `GET /product-aliases` · `POST /product-aliases/{id}/deactivate` | Memoria verificada («400 sin unidad = 400 mg» para un producto), revisable |
+| Backend | Python 3.14, FastAPI, SQLAlchemy 2 async, psycopg 3, Alembic, Pydantic v2 |
+| Base de datos | PostgreSQL 17; único almacén transaccional; sin Redis ni colas externas |
+| Frontend | React 19, TanStack Start/Router, Vite, TypeScript, Tailwind, shadcn/ui, Vitest |
+| Autenticación | Supabase Auth (Google y correo+contraseña) + validación local del JWT contra JWKS |
+| IA | OpenAI por HTTP (Responses API); sin SDK; proveedor simulado en pruebas |
+| Canal | Telegram Bot API por polling; webhook disponible pero no expuesto |
+| Despliegue | Heroku (backend) + Lovable (frontend conectado a GitHub `main`) |
 
-Cada necesidad devuelve `attributes` (potencias, contenido, forma, envase, medidas sin unidad, con procedencia
-`explicit|inferred|confirmed` y la medida *como se escribió* junto a su valor normalizado) y `pending_validation`.
+El backend es un monolito modular: `backend/app/api/v1` (rutas), `services` (reglas y transacciones),
+`domain` (productos, unidades, cantidades), `interpretation` (texto, visión y observaciones),
+`telegram` (adaptador del canal) y `models` (SQLAlchemy). Los servicios reciben un `Actor` y una
+sesión, verifican permisos y **no hacen commit**; la API abre la transacción. Auditoría y outbox se
+emiten en la misma transacción que el cambio.
 
-## Organizaciones y datos (importante)
+El frontend solo consume `/api/v1`; no accede a tablas ni a lógica de negocio. La organización y los
+permisos salen del `Actor`, nunca de un campo del cuerpo.
 
-Tres tipos de organización, aislados: **simulación** (demos y pruebas automatizadas; chat ficticio 5550001), **prueba real** (bot real; chat de prueba no publicado) y
-un **archivo** con lo anterior a la separación. Las demos usan solo la de simulación. El personal sale de `database/seed/staff.json` (datos) y se administra por
-`/api/v1/staff`. Plan de migración de los datos existentes (pendiente de autorización): `docs/decisions/0002-plan-migracion-organizaciones.md`.
+Detalle completo: [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
 
-## Telegram (H1-B)
+## 5. Flujo general
 
-Documentación completa, arquitectura, límites y cómo crear el bot: **`docs/H1B_TELEGRAM.md`**.
+1. **Ingreso**: Supabase Auth entrega un JWT; FastAPI valida firma, `iss`, `aud`, `exp` y `sub`, y
+   busca el `sub` en `app_user.auth_subject`. Sin fila enlazada: `403 USER_NOT_PROVISIONED`.
+2. **Reporte**: Telegram o `POST /observations` crean el faltante. La foto se guarda en PostgreSQL.
+3. **Revisión**: compras ve la grilla, confirma atributos y corrige cantidades con comandos
+   explícitos.
+4. **Búsqueda**: E1–E3 sobre catálogo; E15 consulta cadenas en paralelo, cada una con su estado.
+5. **Comparación**: E5 ordena ofertas elegibles y calcula totales solo cuando están completos.
+6. **Cotización**: E10 arma carritos por proveedor y líneas en el backend; las asignaciones a
+   reportes son explícitas. La UI de Lovable aún usa datos de demostración. Cotizar cubre de forma
+   provisional y **no cierra** el faltante.
+7. **Compra**: **no implementada** en esta etapa. La compra real está bloqueada.
+
+## 6. Integraciones
+
+| Integración | Uso | Estado |
+|---|---|---|
+| **Telegram** | Reportes, sesiones, solicitudes y aprobación de cuentas | Implementado; bot real con polling; pruebas con simulador |
+| **OpenAI** | Visión de fotos y observaciones comerciales | Adaptadores implementados; apagados por defecto; suite sin llamadas reales |
+| **Supabase** | Google OAuth y correo+contraseña; JWT validado por JWKS | Implementado y verificado en Lovable Preview |
+| **Heroku** | Backend, PostgreSQL y ejecución de migraciones | Desplegado; procedimiento manual documentado |
+| **Lovable** | Frontend conectado a GitHub `main` | Desplegado; publicación manual desde el editor |
+| **Cadenas** | Precios públicos de Ahumada, Salcobrand y Cruz Verde | Conectores implementados; habilitación por variables y autorización |
+| **Proveedores** | Catálogo, ofertas, importación de planillas y credenciales de portal | Implementado; sin conector de portal |
+
+Ninguna credencial se guarda en el repositorio. Las variables y su formato están en
+[`docs/DEPLOY_HEROKU.md`](docs/DEPLOY_HEROKU.md) §4.
+
+## 7. Autenticación y usuarios
+
+- **Dos métodos, una identidad**: Google y correo+contraseña deben entregar el mismo `sub` de
+  Supabase. Ese `sub` se enlaza a **una sola** fila `app_user`.
+- No hay registro público ni recuperación de contraseña. Las cuentas se crean en Supabase y se
+  habilitan en el backend.
+- **Único perfil funcional web: `admin`**. `purchasing`, `auxiliary` y `approver` son roles de
+  negocio/Telegram; no habilitan el Cotizador por sí solos.
+- La matriz de permisos vive en PostgreSQL. `admin` puede ver la lista, administrar personal,
+  cuentas de Telegram, identidades y accesos web; **no** reporta faltantes (`REPORT_SHORTAGE`).
+- Una persona inactiva, sin fila enlazada o con acceso vencido recibe `403` y no ve datos.
+- **Solicitud y aprobación web**: el backend implementa solicitud pública, campanita, aprobación que
+  crea `admin`, rechazo, otorgamiento/revocación por superadministración y vencimiento. La campanita
+  de Lovable es **solo demostración** (estado local, sin llamar a la API), por lo que el flujo no
+  está verificado de punta a punta desde la interfaz.
+- **Alta operativa usada para Ahmad Armoush**: cuenta creada en Supabase Auth, persona creada en el
+  backend con rol `admin` mediante el servicio auditado `create_staff`, y `sub` enlazado con
+  `link-auth-subject`. Ingresó con correo y contraseña desde Lovable Preview y accedió al dashboard.
+  No se registran correo, UID ni contraseña en esta documentación.
+
+Procedimientos, restricciones y estados: [`docs/AUTH_SUPABASE.md`](docs/AUTH_SUPABASE.md).
+
+## 8. Despliegue
+
+- **Backend en Heroku**: app `cotizador-farmacia-demo`, buildpack Python 3.14, `release` ejecuta
+  `alembic upgrade head`, y el proceso `web` sirve FastAPI en `$PORT`.
+- **Frontend en Lovable**: el repositorio `farmacia-frontend` está conectado a la rama `main`; cada
+  push se sincroniza con el editor. La publicación al dominio final es manual.
+- El despliegue de Heroku es **manual** desde `master`; no hay despliegue automático.
+- Las migraciones se aplican en cada release. La cabeza del repositorio es **0026**; las migraciones
+  `0021`–`0023` están reservadas para compras e historial y no existen todavía.
+- El `Procfile` versionado define `web` y `release`. El polling de Telegram puede correr como proceso
+  `worker`; esa línea está en el árbol de trabajo pero no en la versión versionada al cierre de este
+  documento, así que debe confirmarse antes de escalar el proceso en Heroku.
+- La recuperación de fotos desde Telegram está apagada por defecto
+  (`PHOTO_RECOVERY_ENABLED=false`).
+
+Pasos exactos, variables, verificación y rollback: [`docs/DEPLOY_HEROKU.md`](docs/DEPLOY_HEROKU.md).
+
+## 9. Ejecutar en local
+
+Requisitos: Python 3.12+ (probado en 3.14), Docker Desktop y Node.js/npm para el frontend.
 
 ```bash
-backend/.venv/bin/python scripts/demo_h1b.py          # demo SIN bot real (solo org. de simulación): Telegram y visión SIMULADOS, PostgreSQL real
-cd backend && .venv/bin/python -m app.cli telegram-check   # valida el token (cuando lo configures)
-.venv/bin/python -m app.cli bind-telegram <chat_id> --org real   # bootstrap manual (--org sim|real, sin valor por defecto)
-.venv/bin/python -m app.cli list-telegram-accounts --org real --by <admin_id>
-.venv/bin/python -m app.cli block-telegram-account <account_id> --org real --by <admin_id> --reason "..."
-.venv/bin/python -m app.cli reactivate-telegram-account <account_id> --org real --by <admin_id>
-.venv/bin/python -m app.cli telegram-poll                   # escucha sin exponer el backend
-```
+# 1. Backend
+cp .env.example .env                 # ajustar valores locales; nunca commitear .env
+scripts/dev.sh                       # crea .venv, instala dependencias y arranca en :8000
+curl http://localhost:8000/api/v1/health
+# Documentación interactiva: http://localhost:8000/docs
 
-Varias cuentas pueden usar el mismo bot. Una cuenta nueva pide acceso con `/solicitar` en chat privado y recibe un código
-temporal (30 min, un solo uso); se lo comparte a Pao, que lo busca y aprueba desde el frontend (API
-`/api/v1/telegram-access-requests`), definiendo modo, persona y tipo de cuenta. Conocer el código no autoriza: aprobar,
-bloquear y rehabilitar exigen sesión administrativa fuerte (JWT de Supabase) y conservan el historial. Un teléfono personal
-reporta como su persona; el compartido sigue eligiendo auxiliar. Procedimiento completo: `docs/H1B_TELEGRAM.md` §7.
-
-## Base de datos (detalle)
-
-```bash
-cd database && docker compose --env-file ../.env up -d     # requiere Docker Desktop encendido
+# 2. PostgreSQL local
+open -a Docker
+cd database && docker compose --env-file ../.env up -d
 cd ../backend && .venv/bin/alembic upgrade head
+.venv/bin/python -m app.cli seed-demo          # Pao, Ana, Luis + ciclo piloto; imprime IDs
+scripts/dev.sh                                  # en otra terminal
+
+# 3. Frontend (repositorio separado)
+cd ../farmacia-frontend
+npm install
+npm run dev
 ```
 
-## Pruebas
+El frontend usa `VITE_API_URL`, `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`. La clave `anon` es
+pública, pero se mantiene fuera del repositorio. En la vista previa de Lovable se usa la configuración
+pública versionada como respaldo.
+
+## 10. Pruebas
 
 ```bash
+# Backend
 cd backend
-.venv/bin/pytest                    # usa TEST_DATABASE_URL del .env (base farmacia_test, se recrea sola)
-REQUIRE_DB=1 .venv/bin/pytest       # falla (en vez de omitir) si no hay PostgreSQL: usar para validar
+.venv/bin/pytest                         # usa TEST_DATABASE_URL (farmacia_test)
+REQUIRE_DB=1 .venv/bin/pytest            # falla si no hay PostgreSQL; usar para validar
 .venv/bin/ruff check .
+
+# Frontend
+cd ../farmacia-frontend
+npm test
+npm run lint
+npx tsc --noEmit
 ```
 
-## Estructura
+`TEST_DATABASE_URL` debe apuntar **solo** a una base de pruebas (`farmacia_test` o una base temporal
+aislada). Nunca a `farmacia`, `farmacia_demo` ni a la base de Heroku. Detalle y evidencia:
+[`docs/PRUEBAS.md`](docs/PRUEBAS.md).
 
-`backend/` API FastAPI · `database/` PostgreSQL local · `docs/` especificación y decisiones ·
-`scripts/` utilidades · `frontend/` (se crea al integrar Lovable) · `tests/` de negocio end-to-end (se crea con H1).
+## 11. Estructura del repositorio
+
+```
+backend/        API FastAPI, dominio, servicios, migraciones y pruebas
+database/       docker-compose de PostgreSQL y datos semilla
+docs/           arquitectura, módulos, despliegue, pruebas y decisiones
+scripts/        utilidades de desarrollo y demostraciones
+requirements.txt / Procfile / .python-version   preparación de Heroku en la raíz
+```
+
+El frontend vive en un repositorio separado: `farmacia-frontend` (Lovable). No se duplica su
+documentación aquí; este repositorio es la fuente de verdad del contrato y de las reglas.
+
+## 12. Limitaciones y pendientes
+
+- Compras registradas, cierre por compra e historial con búsqueda: no implementados.
+- Recepción física y diferencias de entrega: fuera del MVP.
+- La pantalla de carrito/cotizaciones de Lovable aún usa datos de demostración.
+- «Enseñar a la IA» y la campanita de solicitudes web de Lovable no están conectadas al backend.
+- No hay registro público ni recuperación de contraseña; el alta es operativa.
+- MFA y reautenticación fuerte: pendientes (H5); `StrongActor` no es MFA.
+- Cadenas reales: dependen de autorización y configuración por cadena; no hay precios persistidos.
+- No hay conector de portales de proveedor: guardar credenciales no prueba acceso.
+- La suite no llama a OpenAI ni a Telegram reales; usa dobles y simuladores.
+- Retención/anonimización de datos personales en fotos: política pendiente.
+
+Roadmap completo y criterios de aceptación: [`docs/ROADMAP.md`](docs/ROADMAP.md).

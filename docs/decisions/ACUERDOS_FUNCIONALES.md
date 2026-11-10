@@ -4,11 +4,39 @@
 del proyecto: queda en revisión hasta que lo apruebes expresamente. Registra lo ya acordado y su estado real, **no
 habilita implementación** de lo pendiente ni cambia decisiones por iniciativa propia.
 
-**Fecha:** 2026-11-02 (A6 actualizado el 2026-11-03; T1/D-146 el 2026-11-05). **Rama:** `master` (sin commit, sin push, sin despliegue).
-**Fuentes:** `docs/Farmacia_Parque_Lantano_HLD_LLD.md` (sin editar), `docs/ARQUITECTURA.md`, `docs/ROADMAP.md`,
-`docs/contracts/cotizador-v0.2.md` (revisión **10-A6**, aprobada el 2026-11-03 solo para A6; C9 y C11 siguen pendientes;
-texto de trabajo en `docs/contracts/cotizador-v0.2-rev10-propuesta.md`), `docs/decisions/0001-registro-de-decisiones.md`
-(D-015 a D-146), `CLAUDE.md` y el código y las pruebas de `backend/`.
+**Fecha:** 2026-11-02; actualizado 2026-11-09 (A6 fases 1–3B, T1/D-146, D-148 y D-149). **Rama:**
+`master`. Este documento sigue siendo una **propuesta en revisión**, no la referencia oficial.
+
+**Actualización 2026-11-09 — qué cambió desde la redacción original:**
+
+- **A3 ya tiene implementación parcial:** URL de portal, usuario y contraseña cifrada con Fernet
+  (`SUPPLIER_CREDENTIALS_KEY`), sin devolver secretos. **No** hay datos de contacto comercial ni
+  conector de portal; el estado público máximo es `credentials_saved`, nunca `connected`.
+- **A4 admite `.xlsx`, `.xls` y `.csv`**, además de la carga de catálogo y la importación manual.
+- **A5/A6 tienen endpoints REST implementados** (`/commercial-observations`,
+  `/articles/{id}/preferences`) y **Lovable sigue sin conectar**; el botón «Enseñar a la IA» está
+  deshabilitado. La suite usa un proveedor simulado y no consume cuota.
+- **Telegram:** bot real configurado y polling disponible; la suite sigue usando el simulador. La
+  baja de auxiliares es terminal y conserva historial (D-148, migración `0026`). La pantalla
+  `/telegram` de Lovable consume la API real de solicitudes y aprobación.
+- **Cadenas:** los conectores existen y se habilitan por variables; Cruz Verde se corrigió para
+  consultas de más de 50 caracteres (D-149). La verificación del límite fue manual contra el buscador
+  público; las pruebas automatizadas usan dobles.
+- **Despliegue:** Heroku y Lovable están desplegados. La cabeza de migraciones es **`0026`** y Heroku
+  se verificó manualmente en **`0026 (head)`** con `alembic current`; repetir la consulta antes de
+  desplegar.
+- **Suite:** última corrida informada de 997 pruebas backend aprobadas y 8 omitidas con
+  `REQUIRE_DB=1`; 238 frontend.
+- **Predual:** verificado manualmente después del despliegue: el faltante histórico muestra
+  «Predual», la búsqueda usa «Predual» y aparecen resultados de Cruz Verde, Salcobrand y Ahumada; la
+  fotografía permaneció visible tras un nuevo despliegue. No se generaliza a todos los productos.
+
+**Fuentes:** `docs/Farmacia_Parque_Lantano_HLD_LLD.md` (sin editar), `docs/ARQUITECTURA.md`,
+`docs/ROADMAP.md`, `docs/COTIZADOR.md`, `docs/PRUEBAS.md`,
+`docs/contracts/cotizador-v0.2.md` (revisión **10-A6**, aprobada el 2026-11-03 solo para A6; C9 y C11
+siguen pendientes; texto de trabajo en `docs/contracts/cotizador-v0.2-rev10-propuesta.md`),
+`docs/decisions/0001-registro-de-decisiones.md` (D-015 a D-149), `CLAUDE.md` y el código y las
+pruebas de `backend/`.
 
 **Decisiones definitivas incorporadas el 2026-11-02:** **C7 → D-138** (preferencias independientes por producto, sin
 propagación), **C9 → D-139** (cerrar una cotización significa «preparada para comprar», no «comprada»), **C11 → D-140**
@@ -22,7 +50,8 @@ con OpenAI) y el **retiro explícito** están implementados. **D-143 (2026-11-03
 primero; estados no aplicados sin efecto ni retiro implícito; auditoría *best effort* en el detalle y obligatoria en
 comparación; traza con modelo, prompt y estado. **D-144** cierra el retiro que D-143 dejó propuesto. **D-145
 (2026-11-03)** implementa la Fase 3A: servicio de interpretación, adaptador de la Responses API, validación estricta de
-la salida y proveedor simulado en la suite; **sin migración, sin endpoints y sin Lovable**. **D-146 (2026-11-05)**
+la salida y proveedor simulado en la suite; **sin migración** y, en esa fase, sin endpoints ni Lovable (los endpoints
+llegaron con la Fase 3B). **D-146 (2026-11-05)**
 aprueba T1 —auxiliares explícitos por cuenta de Telegram—: la cuenta de teléfono compartido mantiene su propia lista de
 auxiliares habilitados, con baja lógica e historial; uno solo se identifica automáticamente, dos o más vuelven al
 selector de esa cuenta y cero no registra reportes. T1 ocupa la migración **`0020`**, por lo que **C5-B pasa a `0021`,
@@ -34,8 +63,9 @@ sin implementar**.
 **Regla de clasificación.** Un acuerdo solo se marca **implementado** si existe código que lo ejecuta y al menos una
 prueba automatizada que lo verifica. **Implementado en código no significa desplegado, aplicado a una base ni verificado
 con servicios reales.** Las migraciones `0016`–`0020` existen en el código y **no están aplicadas** a `farmacia` (0008)
-ni a `farmacia_demo` (0015); solo las bases aisladas de pruebas `farmacia_test` y `farmacia_t1_test` están en head
-(`0020`). El bot real de Telegram sigue sin verificar (H1-B.5).
+ni a `farmacia_demo` (0015); las bases aisladas de pruebas se recrean en head (`0026`). La cabeza del repositorio es
+`0026` y Heroku se verificó manualmente en `0026 (head)`. El bot real está configurado, pero la suite no lo llama y no
+se registra aquí una conversación real de punta a punta.
 
 Estados:
 
@@ -44,9 +74,9 @@ Estados:
 - **C — Pendiente de decisión** (falta una regla o hay una contradicción sin resolver; no se implementa sin orden).
 
 **Ningún acuerdo queda en estado C.** C7, C9, C11 y AC31 fueron **decididos** el 2026-11-02 (D-138 a D-141) y A6 se
-incorporó el 2026-11-03 (D-142). Lo que sigue abierto es su **implementación** (endpoints de O2 y Lovable, además de
-C5-B, C9 y C11) y las limitaciones materiales ya declaradas: conectores reales, credenciales, IA real, migraciones
-`0016`–`0019` no aplicadas y bot real sin verificar.
+incorporó el 2026-11-03 (D-142). Lo que sigue abierto es su **implementación** (Lovable para O2, además de C5-B, C9 y
+C11) y las limitaciones materiales ya declaradas: conector de portal, IA real sin corrida registrada, migraciones
+`0016`–`0026` no aplicadas fuera de pruebas y verificación pendiente del bot con teléfonos reales.
 
 ---
 
@@ -55,12 +85,12 @@ C5-B, C9 y C11) y las limitaciones materiales ya declaradas: conectores reales, 
 | # | Acuerdo | Estado | Evidencia principal |
 |---|---|---|---|
 | A1 | Búsqueda de cualquier producto comercializado, no solo medicamentos | **B** (catálogo A; extremo a extremo B) | `trade_item` neutral al tipo de producto; pruebas con «Cepillo dental»; falta prueba de punta a punta |
-| A2 | Grandes cadenas con búsqueda bajo demanda de publicaciones públicas y precios reales | **B** | E15 responde, pero las tres cadenas están sin conector autorizado; no hay precios reales; sin conexión se muestra el estado, nunca datos ficticios |
-| A3 | Proveedores y cuentas configurables e independientes por organización | **B** (modelo base A; mantenedor y conexiones B) | `supplier` y `source` son por organización; no hay URL, contacto comercial, cuentas, credenciales, estado de conexión ni conectores |
-| A4 | Catálogos con ofertas reales y apoyo de IA cuando corresponda | **B** (importación A; ofertas reales e IA B) | `catalog-load`/`manual_import` funcionan; el catálogo de demo es ficticio y la IA es simulada |
-| A5 | Preferencias comerciales vía «Enseñar a la IA» interpretadas internamente, **solo para el producto específico** | **B** (O1 A; esquema, motor e interpretación A6 A; UI B) | La observación se guarda, el motor determinista ya ordena y el servicio interno interpreta con OpenAI (D-145); no hay llamada real en la suite ni UI conectada (D-142/D-143/D-144/D-145) |
-| A6 | Preferencias **del producto específico** ordenan las ofertas; todas visibles; sin explicaciones ni puntuaciones de IA | **A parcial** | Aprobado por **D-136/D-138**, actualizado por **D-142** y precisado por **D-143**; **retiro explícito implementado por D-144** (migración `0019`). Fases 1, 2 y 3A: modelos, migración `0018`, pruebas, motor determinista e interpretación interna con OpenAI (D-145). Endpoints y Lovable pendientes |
-| A7 | Telegram: reportes independientes, advertencia de coincidencias y confirmación explícita | **A** en código (migraciones `0016` y `0020` no aplicadas; bot real pendiente) | D-135 y **D-146 (T1)**: auxiliares explícitos por cuenta, sucursal en la cuenta con instantánea en cada observación; pruebas de canal y API citadas en §3.7 y `tests/test_telegram_accounts.py` |
+| A2 | Grandes cadenas con búsqueda bajo demanda de publicaciones públicas y precios reales | **A parcial / B** | Conectores E15 implementados y habilitables por variables; Cruz Verde corregida para consultas largas (D-149). La habilitación real depende de autorización y configuración; no se persisten precios ni fichas |
+| A3 | Proveedores y cuentas configurables e independientes por organización | **A parcial** | `supplier` por organización con `portal_url`; credenciales de portal cifradas con Fernet y nunca devueltas. **No** hay contacto comercial ni conector de portal: el estado máximo es `credentials_saved` |
+| A4 | Catálogos con ofertas reales y apoyo de IA cuando corresponda | **A parcial** (importación A; ofertas reales e IA B) | `catalog-load` e importación `.xlsx`/`.xls`/`.csv`; el catálogo de demo es ficticio y la IA usa proveedor simulado en la suite |
+| A5 | Preferencias comerciales vía «Enseñar a la IA» interpretadas internamente, **solo para el producto específico** | **A en backend; B en UI** | Observación guardada, motor determinista y servicio OpenAI (D-145); **endpoints REST implementados** (A6 Fase 3B); sin llamada real en la suite y sin UI conectada |
+| A6 | Preferencias **del producto específico** ordenan las ofertas; todas visibles; sin explicaciones ni puntuaciones de IA | **A parcial** | Aprobado por **D-136/D-138**, actualizado por **D-142** y precisado por **D-143**; **retiro explícito implementado por D-144** (migración `0019`). Fases 1–3B: modelos, motor, interpretación y endpoints. **Lovable pendiente** |
+| A7 | Telegram: reportes independientes, advertencia de coincidencias y confirmación explícita | **A** en código (migraciones `0016` y `0020` no aplicadas en producción; bot real configurado, verificación con teléfonos pendiente) | D-135 y **D-146 (T1)**: auxiliares explícitos por cuenta, sucursal en la cuenta con instantánea en cada observación; pruebas de canal y API citadas en §3.7 y `tests/test_telegram_accounts.py` |
 | A8 | Cantidades sin consolidar, sumar ni modificar automáticamente | **A** | `SET`/`ADD`/`CLEAR` explícitos, idempotencia y cantidad desconocida como `NULL` |
 | A9 | Cotizar no cierra el faltante; **cerrar una cotización la deja preparada para comprar** | **A parcial**: cotizar no cierra (implementado); cobertura de `closed` y compra sin reabrir (**D-139, aprobado, no implementado**) | Hoy la cobertura solo cuenta `draft`; el comportamiento actual debe corregirse cuando se autorice (C9/D-139) |
 | A10 | Solo la compra confirmada y registrada cierra los reportes cubiertos | **B** | C5-B (`0021`) no existe: no hay tablas de compra ni cierre. **D-140:** la compra puede incluir cantidades sin asignación para inventario |
@@ -87,14 +117,14 @@ faltantes.**
 | 1 | **Reporte por Telegram** | Un auxiliar autorizado informa un producto faltante. Se conservan su identidad, el mensaje original y la cantidad declarada; si no la declara, queda `NULL`. | **Implementado en código** (D-135; `0016` no aplicada; probado con simulador) |
 | 2 | **Coincidencias** | Si otro auxiliar ya reportó el mismo producto, Telegram lo advierte y pide confirmación. Cada auxiliar conserva **su** reporte independiente: no hay consolidación ni suma automática. | **Implementado en código** (D-135; simulador) |
 | 3 | **Revisión administrativa** | Pao o la administradora autorizada revisa los reportes individuales y decide qué cantidades se cotizan. **La cantidad informada no se convierte automáticamente en cantidad de compra.** | **Implementado en código** para cantidades (`SET/ADD/CLEAR` con `admin` + `StrongActor`); las asignaciones explícitas dependen de `0017`, **no aplicada**. **La decisión comercial es humana** |
-| 4 | **Búsqueda de proveedores** | Se consultan, por separado, (a) el catálogo propio de la organización, (b) las ofertas de proveedores conectados y (c) la búsqueda pública en Cruz Verde, Salcobrand y Farmacias Ahumada. Solo se muestran datos reales de fuentes autorizadas; si una fuente no está conectada, se muestra su estado y **nunca** datos ficticios. | **Parcial:** búsqueda sobre catálogo local implementada (C2/C4); **no hay conectores de proveedor ni ofertas reales**. E15 de cadenas responde `not_configured` |
-| 5 | **Ordenamiento por preferencias específicas del producto** | Las observaciones comerciales de **ese producto** se interpretan y se usan para **ordenar** sus ofertas. No se aplican a otros productos del mismo laboratorio, marca o proveedor. Todas las ofertas siguen visibles, sin explicaciones ni puntuaciones de IA. | **Fases 1, 2 y 3A implementadas** (esquema y migración `0018`, motor determinista e interpretación interna con OpenAI, D-142/D-145). Endpoints públicos y Lovable **pendientes** |
+| 4 | **Búsqueda de proveedores** | Se consultan, por separado, (a) el catálogo propio de la organización, (b) las ofertas de proveedores conectados y (c) la búsqueda pública en Cruz Verde, Salcobrand y Farmacias Ahumada. Solo se muestran datos reales de fuentes autorizadas; si una fuente no está conectada, se muestra su estado y **nunca** datos ficticios. | **Parcial:** catálogo local, importación y conectores de cadena implementados; **no hay conector de portal de proveedor**. Cada cadena informa `ok`/`failed`/`not_configured` según su configuración |
+| 5 | **Ordenamiento por preferencias específicas del producto** | Las observaciones comerciales de **ese producto** se interpretan y se usan para **ordenar** sus ofertas. No se aplican a otros productos del mismo laboratorio, marca o proveedor. Todas las ofertas siguen visibles, sin explicaciones ni puntuaciones de IA. | **Fases 1–3B implementadas** (esquema `0018`, motor determinista, interpretación con OpenAI y endpoints REST; D-142/D-145). **Lovable pendiente**; la suite usa proveedor simulado |
 | 6 | **Carrito** | Se eligen productos y cantidades. Una línea comercial puede asociarse explícitamente con varios reportes, sin duplicar cantidades. | **Implementado en código** (C5-A + D-135; `0015` aplicada solo a `farmacia_demo`, `0016`–`0017` no aplicadas) |
 | 7 | **Cotización preparada** | `draft` = en preparación. Al cerrar, la cotización queda **preparada para convertirse en compra**: conserva líneas, cantidades, proveedores y asignaciones, y **sigue aportando cobertura provisional**. Cerrar **no** registra una compra ni cierra reportes. Se puede comprar desde `closed` **sin reabrir**. | **`draft`/`closed` implementados; la cobertura desde `closed` y la compra sin reabrir están aprobadas (D-139) y NO implementadas.** Hoy el código solo cuenta `draft` y bloquea la compra con `409 QUOTE_CLOSED` |
 | 8 | **Compra registrada** | La administradora registra la compra de la selección **completa o no la registra**. Las asignaciones explícitas determinan qué cantidad cubre cada reporte; la cantidad comprada **puede superar** lo asignado y el excedente queda como **compra adicional para inventario**, sin asignación automática. | **No implementado** (C5-B, `0021`; D-139 y D-140) |
 | 9 | **Cobertura y cierre de faltantes** | Solo las compras registradas aportan cobertura **comprada**. Los reportes completamente cubiertos pasan a `fulfilled` y se liberan para un nuevo reporte; los parcialmente cubiertos conservan su cantidad pendiente. Cotizado y comprado nunca se suman dos veces. | **No implementado** (C5-B, `0021`). Hoy `fulfilled` no puede ocurrir |
 
-**No presentes este flujo como operativo.** Sin `0016`–`0018` aplicadas, ni siquiera las etapas 1, 2 y 6 corren en
+**No presentes este flujo como operativo.** Sin `0016`–`0017` aplicadas, ni siquiera las etapas 1, 2 y 6 corren en
 `farmacia` o `farmacia_demo` con el esquema nuevo; sin `0021` no hay compra ni cierre; y la semántica de `closed`
 descrita en la etapa 7 **todavía no coincide con el código** (D-139).
 
@@ -167,14 +197,17 @@ disponible.
 **Aprobado:** D-113 (Cruz Verde, Salcobrand y Farmacias Ahumada, en vivo y bajo demanda, para cualquier producto de
 farmacia, sin datos ficticios ni precargados como sustituto). Contrato §11.
 
-**Implementado:** `POST /api/v1/chain-searches` y su sondeo existen (C4), con estado en memoria y sin persistencia. Las
-pruebas exigen que **no se inventen** resultados: hoy las tres cadenas responden `not_configured` con su motivo
-(`requires_javascript`, `search_not_available`, `access_not_authorized`).
+**Implementado:** `POST /api/v1/chain-searches` y su sondeo existen (C4), con estado en memoria y sin persistencia. Los
+conectores de Ahumada, Salcobrand y Cruz Verde existen y se habilitan con `CHAIN_SEARCH_ENABLED` y el interruptor de
+cada cadena. Una cadena sin configuración informa `not_configured` con un motivo real; una caída o un rechazo informa
+`failed`, nunca «sin resultados». Cruz Verde se corrigió para consultas de más de 50 caracteres (D-149): dos variantes
+internas, `ChainUnavailable("query_rejected")` y clasificación de fichas por nombre publicado.
 
-**No implementado:** ningún conector autorizado; no hay precios ni fichas reales de cadena. Cualquier conector exige
-autorización escrita/API del titular o una decisión explícita sobre el acceso (contrato §11.7). Mientras no exista
-conexión, la cadena se muestra con su estado (`not_configured` y motivo) y **nunca** con datos ficticios, precargados
-o simulados presentados como reales.
+**No implementado / limitado:** no hay persistencia de precios ni de fichas; cada búsqueda vive en memoria (TTL 10 min,
+50 búsquedas). La habilitación en producción depende de autorización y configuración por cadena. El límite de Cruz Verde
+se verificó manualmente contra el buscador público; la suite usa dobles. Cualquier conector exige autorización
+escrita/API del titular o una decisión explícita sobre el acceso (contrato §11.7). Mientras una cadena no esté
+conectada, se muestra con su estado y **nunca** con datos ficticios, precargados o simulados presentados como reales.
 
 ### A3 — Proveedores y cuentas configurables e independientes por organización
 
@@ -194,23 +227,30 @@ o simulados presentados como reales.
 6. **Estados claros cuando no haya conexión:** sin configurar, sin credenciales, error de conexión, acceso no
    autorizado o capacidad no soportada. Nunca se simula una respuesta ni se muestran precios inventados.
 
-**Implementado (solo la base de datos):** `supplier` y `source` llevan `organization_id`, claves foráneas compuestas y
-unicidad por organización. `source.mode` distingue `api`, `manual_import`, `fixture` y `none`; `enabled`,
-`last_success_at` y `last_error` describen el estado de la fuente. La carga de catálogo y la importación manual escriben
-ofertas por organización (`tests/test_org_separation.py`).
+**Implementado (parcial, 2026-11-09):**
 
-**No implementado:**
+- `supplier` y `source` llevan `organization_id`, claves foráneas compuestas y unicidad por organización.
+  `source.mode` distingue `api`, `manual_import`, `fixture` y `none`; `enabled`, `last_success_at` y
+  `last_error` describen el estado de la fuente.
+- **URL del portal**: `supplier.portal_url` con validación `https?://`.
+- **Credenciales de portal**: `supplier_credential` guarda usuario y contraseña cifrada en reposo con Fernet
+  (`SUPPLIER_CREDENTIALS_KEY`). La API devuelve `has_portal_credentials` y `portal_status`, nunca el usuario ni la
+  contraseña; los secretos no se registran en logs. Guardar una credencial **no** prueba la conexión: el estado máximo
+  es `credentials_saved`.
+- Carga de catálogo, importación manual (`.xlsx`, `.xls`, `.csv`), perfiles de importación y ofertas por organización
+  (`tests/test_org_separation.py`).
 
-- No hay **URL** ni datos de identificación del proveedor en el modelo (`supplier` solo tiene nombre, código, notas y
-  estado).
-- No existen **cuentas de proveedor ni credenciales**: no hay tabla, cifrado, gestor de secretos ni conector.
-- No hay **consulta real** de catálogo, precios ni disponibilidad. `source` describe una fuente; no se autentica.
-- No existen los estados de conexión enumerados arriba; el único estado implementado es el de E15 para cadenas
-  (`not_configured` y motivos).
-- **Ningún conector real está declarado ni probado.** El catálogo de demo es ficticio y está etiquetado `fixture`.
+**No implementado / limitado:**
 
-**Decisión pendiente de ejecución:** la forma concreta de almacenar secretos (gestor de secretos o cifrado en reposo)
-es una decisión técnica de implementación; **no está aprobada** y no se inventa aquí.
+- **Datos de contacto comercial** (teléfono, correo, persona de contacto) no están en el modelo.
+- **Conector de portal**: no existe. No hay consulta autenticada de catálogo, precios ni disponibilidad contra el
+  portal del proveedor. `source` describe una fuente; no se autentica.
+- Los estados de conexión se reducen a `not_configured`/`credentials_saved` y al estado de la fuente; no hay
+  `connected`, ni prueba de credenciales, ni sincronización.
+- **Ningún conector de portal está probado.** El catálogo de demo es ficticio y está etiquetado `fixture`.
+
+**Decisión de implementación resuelta:** las credenciales se cifran en reposo con Fernet en el backend. No se usa un
+gestor de secretos externo y no se inventa aquí uno.
 
 ### A4 — Catálogos con ofertas reales y apoyo de IA cuando corresponda
 
@@ -221,14 +261,15 @@ la recuperación ni inventa ofertas.
 **Implementado:**
 
 - `catalog-load` con conectores de importación y `manual_import`, perfiles de importación, `needs_review` y estado de
-  revisión de oferta (C2; `0009`–`0011`).
+  revisión de oferta (C2; `0009`–`0011`). Formatos admitidos: `.xlsx`, `.xls` (BIFF) y `.csv`.
 - Búsqueda y comparación sobre ofertas registradas (C4, C3).
 
 **No implementado / limitado:**
 
 - Las ofertas del entorno de demo son **ficticias** (`backend/fixtures/catalog_demo.json`, etiquetado como fixture).
-- La interpretación con IA existe solo como **simulador** (`AIInterpreter`); no hay proveedor real ni visión real, y
-  todo lo simulado debe decir `simulated`.
+- La interpretación con IA está implementada (servicio interno, adaptador de OpenAI y endpoints REST), pero la suite usa
+  un **doble** y no hay una validación general registrada que consuma cuota. La visión de fotos también usa dobles en la
+  suite. Todo lo simulado debe decir `simulated`.
 - «Apoyo de IA cuando corresponda» se concreta en A5/A6 (preferencias que ordenan), no en un chatbot ni en una capa que
   decida precios, stock o compras.
 
@@ -282,22 +323,24 @@ La IA **no** es un chatbot visible: no hay conversación, no hay campo de chat y
   en la misma transacción. El adaptador `app/interpretation/openai_observations.py` usa la Responses API con
   `store=false`, un reintento acotado y códigos internos; **la suite usa un doble y no consume cuota**.
 
+- **Fase 3B:** los endpoints REST sí están implementados: `POST /api/v1/commercial-observations`,
+  `POST /api/v1/commercial-observations/{id}/interpretations`, detalle, historial y
+  `GET /api/v1/articles/{id}/preferences`. Exigen `StrongActor` + `admin`.
+
 **No implementado:**
 
-- **Los endpoints públicos de interpretación** y la conexión con Lovable: el servicio existe, pero no está expuesto en
-  la API ni hay interfaz «Enseñar a la IA».
-- La etiqueta «Enseñar a la IA» no está implementada en la interfaz ni en la API: hoy el botón es «Observación».
+- **La conexión con Lovable:** no hay interfaz «Enseñar a la IA» conectada. El botón existe pero está
+  deshabilitado («Disponible próximamente»); ninguna pantalla llama a estos endpoints.
 - No hay llamada real a OpenAI en la suite ni modelo elegido (`OPENAI_MODEL` no tiene valor por defecto) ni
-  presupuesto/tarifa aprobados.
-- **No hay conexiones reales a proveedores ni IA real verificada.** Cualquier demostración con simulador debe decir
-  `simulated`.
+  presupuesto/tarifa aprobados. Cualquier demostración con simulador debe decir `simulated`.
+- No hay conexiones reales a portales de proveedor ni IA real verificada.
 
 ### A6 — Las preferencias del producto ordenan sus ofertas; la IA no muestra explicaciones, justificaciones ni puntuaciones
 
 **Estado: aprobado (D-136, precisado por D-138, desarrollado por D-142 y corregido por D-143; retiro explícito
-aprobado e implementado por D-144). Fases 1, 2 y 3A implementadas (modelos, migración `0018`, pruebas de esquema, motor
-determinista con traza interna, retiro explícito con migración `0019` e interpretación interna con OpenAI, D-145);
-endpoints públicos y Lovable pendientes.**
+aprobado e implementado por D-144). Fases 1, 2, 3A y 3B implementadas (modelos, migración `0018`, pruebas de esquema,
+motor determinista con traza interna, retiro explícito con migración `0019`, interpretación interna con OpenAI y
+endpoints REST, D-145). **Lovable sigue pendiente**; el botón está deshabilitado.**
 
 Reglas definitivas:
 
@@ -868,13 +911,13 @@ aplicó ninguna migración a una base fuera de `farmacia_test`.
 | **AC31/D-141** | `backend/app/services/preferences.py`, `backend/app/services/observation_ai.py`, `backend/app/interpretation/commercial.py` | Guardar traza interna: observación, interpretación, modelo, versión del prompt, criterios y orden aplicado; **no** exponerla en la API pública. Las fases 1, 2 y 3A ya existen (`0018`/`0019`, D-145) | `0018` | `test_la_traza_interna_registra_interpretacion_y_orden`; `test_la_traza_no_se_expone_en_la_respuesta_de_ofertas`; pruebas de `observation_ai` |
 | **AC31/D-141** | Frontend Lovable | Mostrar solo el orden; sin explicaciones, justificaciones, recomendaciones textuales ni puntuaciones | — | Verificación visual/manual; no hay prueba automatizada de frontend en este repositorio |
 
-**Orden de implementación previsto, si se autoriza:** `0018` (A6: O2–O4 con C7 y AC31) **Fase 1 hecha** → `0019`
+**Orden de implementación previsto, si se autoriza:** `0018` (A6: O2–O4 con C7 y AC31) **hecha** → `0019`
 (retiro explícito de preferencias, **D-144, hecho**) → **A6 Fase 3A** (interpretación interna con OpenAI, **D-145,
-hecha, sin migración**) → **`0020` (T1, D-146, hecha en código y probada solo en `farmacia_t1_test`; sin aplicación a
-`farmacia` ni `farmacia_demo`)** → `0021` (C5-B con C9 y C11, porque la compra y la cobertura
-dependen de la misma semántica) → `0022` (C5-C) → `0023` (C5-D, bloqueado). Las migraciones `0016`–`0020` siguen
-pendientes de aplicación fuera de las bases aisladas de pruebas y `0016`–`0019` son requisito para probar el flujo
-completo.
+hecha, sin migración**) → `0020` (T1, D-146, hecha) → **A6 Fase 3B** (endpoints REST, hecha, sin migración) →
+`0021` (C5-B con C9 y C11, porque la compra y la cobertura dependen de la misma semántica) → `0022` (C5-C) → `0023`
+(C5-D, bloqueado). En paralelo, `0024` (fotos en PostgreSQL, hecha), `0025` y `0026` (D-148, hechas). Las migraciones
+`0016`–`0026` siguen pendientes de aplicación fuera de las bases aisladas de pruebas; `0016`–`0019` son requisito para
+probar el flujo completo.
 
 **Riesgos declarados:**
 
@@ -886,23 +929,24 @@ completo.
    construya para ordenar **incumple D-138**.
 4. **AC31 no autoriza explicaciones visibles.** La traza interna es para auditoría; la interfaz no la muestra como
    justificación.
-5. **Las fases 1, 2 y 3A de A6 y el retiro de D-144 son código hoy** (esquema, modelos, migraciones `0018`/`0019`,
-   pruebas, motor, traza e interpretación interna con proveedor simulado). Nada de C5-B/C9/C11, endpoints públicos de
-   O2 ni despliegues debe declararse implementado, probado con proveedores reales ni desplegado.
+5. **Las fases 1, 2, 3A y 3B de A6 y el retiro de D-144 son código hoy** (esquema, modelos, migraciones `0018`/`0019`,
+   pruebas, motor, traza, interpretación interna y endpoints REST con proveedor simulado). Nada de C5-B/C9/C11 ni
+   despliegues debe declararse implementado, probado con proveedores reales ni desplegado.
 
 ---
 
 ## 9. Lo que este documento no hace
 
-- No implementa A1–A6 salvo las fases 1, 2 y 3A de A6 (esquema, motor determinista, traza, retiro explícito e
-  interpretación interna con OpenAI, D-145), ni A10, ni el mantenedor de proveedores.
+- No implementa A1–A6 salvo las fases 1–3B de A6 (esquema, motor determinista, traza, retiro explícito, interpretación
+  interna con OpenAI y endpoints REST, D-145), ni A10, ni el conector de portal del mantenedor de proveedores.
 - No implementa C9/D-139 ni C11/D-140; el motor de C7/D-138, la traza de AC31/D-141, el retiro de D-144, la
   interpretación interna de O2 y **T1/D-146** **sí** están implementados en código (esquema `0018`–`0020`, D-145).
-- No aplica `0016`–`0020`: solo `farmacia_test` y la base aislada `farmacia_t1_test` están en head.
+- No aplica `0016`–`0026`: solo las bases aisladas de pruebas se recrean en head (`0026`).
 - No modifica el HLD. D-131 y D-124 quedaron anotadas en el registro de decisiones; el contrato está en **revisión
   10-A6**, aprobada el 2026-11-03 solo para A6 (O3, O4, §8.4, §8.6 y AC31), precisada por D-143 y D-144. C9 y C11
   siguen sin incorporar. D-124 sigue pendiente.
-- No expone endpoints públicos de interpretación ni inicia la UI de interpretación, **la pantalla de Configuración de
-  Telegram de Lovable (T3/T4)**, C5-B (`0021`), C5-C (`0022`) ni C5-D (`0023`).
-- No declara probado con Telegram real ni con proveedores reales lo que solo se probó con simuladores.
+- No inicia la UI de interpretación, la **configuración fina de auxiliares de Telegram (T3/T4)**, C5-B (`0021`),
+  C5-C (`0022`) ni C5-D (`0023`). Los endpoints REST de interpretación sí existen; la pantalla `/telegram` de Lovable
+  existe para solicitudes y aprobación de accesos.
+- No declara probado con Telegram real ni con OpenAI real lo que solo se probó con simuladores.
 - No se declara aprobado como documento de referencia hasta que lo apruebes expresamente.
