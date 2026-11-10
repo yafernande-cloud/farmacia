@@ -40,6 +40,7 @@ from app.services.imports import (
     FILE_FORMATS,
     MAX_BYTES,
     MAX_ROWS,
+    REQUIRED_ROLES,
     ROLES,
     UNITS,
     UNKNOWN_UNIT,
@@ -48,6 +49,7 @@ from app.services.imports import (
     _load_profile,
     _normalize_header,
     _text,
+    columns_compatible,
     detect_file_format,
     read_raw_rows,
     run_import,
@@ -121,6 +123,7 @@ HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
         "precio de compra",
         "precio lista",
         "precio de lista",
+        "precio final",
         "valor",
         "price",
         "precio costo",
@@ -261,8 +264,13 @@ async def _source(session: AsyncSession, actor: Actor, source_id: uuid.UUID) -> 
     return row
 
 
-def _clean_columns(columns: dict[str, Any], *, default_sale_unit: str | None) -> dict[str, Any]:
-    if not isinstance(columns, dict) or not columns:
+def _clean_columns(
+    columns: dict[str, Any],
+    *,
+    default_sale_unit: str | None,
+    allow_missing: bool = False,
+) -> dict[str, Any]:
+    if not isinstance(columns, dict) or (not columns and not allow_missing):
         raise DomainError(
             "IMPORT_FORMAT_INVALID", "El perfil no declara ninguna columna.", status_code=422
         )
@@ -275,7 +283,7 @@ def _clean_columns(columns: dict[str, Any], *, default_sale_unit: str | None) ->
         )
     required = ("sku", "price") if default_sale_unit else ("sku", "price", "sale_unit")
     missing = [role for role in required if role not in columns]
-    if missing:
+    if missing and not allow_missing:
         raise DomainError(
             "IMPORT_FORMAT_INVALID",
             f"El perfil no mapea columnas obligatorias: {', '.join(missing)}.",
@@ -806,6 +814,16 @@ def _profile_values(
     )
 
 
+def _missing_required_roles(
+    columns: dict[str, Any], options: dict[str, Any]
+) -> list[str]:
+    """Roles que el mapeo no cubre y que el flujo automático debe resolver antes de importar."""
+    missing = [role for role in ("sku", "price") if not columns.get(role)]
+    if not columns.get("sale_unit") and not options.get("default_sale_unit"):
+        missing.append("sale_unit")
+    return missing
+
+
 async def check_import(
     session: AsyncSession,
     actor: Actor,
@@ -816,12 +834,19 @@ async def check_import(
     sheet: str | None = None,
     header_row: int | None = None,
     payload: dict[str, Any] | None = None,
+    auto: bool = False,
 ) -> dict[str, Any]:
     """Revisa la planilla con el mapeo indicado y devuelve el resultado por fila.
 
     **No escribe nada**: ni ofertas, ni artículos, ni perfil, ni `import_run`. Reutiliza el motor de
     E8 con `dry_run`, así que lo que muestra es exactamente lo que la importación haría. El mapeo
     puede venir en la petición (todavía sin guardar) o tomarse del perfil guardado de la fuente.
+
+    `auto=True` es el flujo de un botón: si el perfil guardado calza **por nombre** con el archivo
+    se reutiliza; si no, se propone un mapeo a partir de los encabezados reconocidos. Nunca se
+    completan moneda, base ni unidad por defecto. La respuesta incluye `profile`, el mapeo efectivo
+    que el cliente debe guardar tal cual antes de importar, y `missing_columns` cuando faltan roles
+    obligatorios que no se pueden inventar.
     """
     source = await _source(session, actor, source_id)
     if len(content) > MAX_BYTES:
@@ -830,10 +855,29 @@ async def check_import(
         )
     file_format = detect_file_format(file_name, content)
     sheets = _sheet_names(content, file_format)
+    saved = (
+        await session.execute(
+            select(ImportProfile).where(
+                ImportProfile.organization_id == actor.organization_id,
+                ImportProfile.source_id == source.id,
+            )
+        )
+    ).scalar_one_or_none()
+    # En modo automático se prefiere la hoja y la cabecera del perfil guardado: la revisión debe
+    # leer exactamente las mismas celdas que leerá la importación.
+    reusable = (
+        auto
+        and payload is None
+        and saved is not None
+        and saved.file_format == file_format
+    )
     if file_format == "csv":
         sheet = None
     elif sheet is None:
-        sheet = _suggest_sheet(content, file_format, sheets)
+        if reusable and saved is not None and saved.sheet in sheets:
+            sheet = saved.sheet
+        else:
+            sheet = _suggest_sheet(content, file_format, sheets)
     rows = read_raw_rows(content, file_format, sheet)
     if len(rows) > MAX_ROWS + _HEADER_SCAN:
         raise DomainError(
@@ -843,29 +887,99 @@ async def check_import(
         )
     if not rows:
         raise DomainError("IMPORT_FORMAT_INVALID", "El archivo no tiene filas.", status_code=422)
+    numbers = {number for number, _values in rows}
     if header_row is None:
-        header_row = _guess_header_row(rows)
-    elif header_row not in {number for number, _values in rows}:
+        if reusable and saved is not None and saved.header_row in numbers:
+            header_row = saved.header_row
+        else:
+            header_row = _guess_header_row(rows)
+    elif header_row not in numbers:
         raise DomainError(
             "IMPORT_FORMAT_INVALID",
             f"La fila {header_row} no existe en la hoja seleccionada.",
             status_code=422,
         )
     header = next((values for number, values in rows if number == header_row), ())
-    saved = (
-        await session.execute(
-            select(ImportProfile).where(
-                ImportProfile.organization_id == actor.organization_id,
-                ImportProfile.source_id == source.id,
+    if payload is not None:
+        columns = payload.get("columns") or {}
+        units = payload.get("units") or {}
+        options = payload.get("options") or {}
+        profile_source, profile_version = "request", 0
+    elif reusable and columns_compatible(
+        saved.columns if saved is not None else None,
+        header,
+        required_roles=("sku", "price")
+        if saved is not None and (saved.options or {}).get("default_sale_unit")
+        else REQUIRED_ROLES,
+    ):
+        assert saved is not None
+        columns = dict(saved.columns or {})
+        units = dict(saved.units or {})
+        options = dict(saved.options or {})
+        profile_source, profile_version = "saved", saved.version
+    elif auto:
+        # Solo se propone lo que está en el archivo: columnas reconocidas y separador decimal.
+        # Moneda, base de precio y unidad por defecto no se infieren nunca.
+        detected = _suggested_columns(header)
+        price_position = detected.get("price", {}).get("position")
+        data_rows = [(number, values) for number, values in rows if number > header_row]
+        columns = detected
+        units = {}
+        options = {
+            "decimal_separator": _suggested_decimal_separator(
+                data_rows,
+                price_position - 1 if isinstance(price_position, int) else None,
             )
-        )
-    ).scalar_one_or_none()
-    columns, units, options, profile_source, profile_version = _profile_values(saved, payload)
+        }
+        profile_source, profile_version = "detected", 0
+    else:
+        columns, units, options, profile_source, profile_version = _profile_values(saved, None)
     clean_columns = _clean_columns(
-        columns, default_sale_unit=options.get("default_sale_unit")
+        columns,
+        default_sale_unit=options.get("default_sale_unit"),
+        # En modo automático, lo que el archivo no trae se informa en `missing_columns`; no se
+        # rechaza con un error técnico antes de que la pantalla pueda preguntar.
+        allow_missing=auto,
     )
     clean_units = _clean_units(units)
     clean_options = _clean_options(options)
+    # El mapeo que se devuelve es exactamente el que hay que guardar antes de importar: así la
+    # revisión y la importación leen la misma hoja, cabecera y configuración.
+    profile_payload = {
+        "file_format": file_format,
+        "sheet": sheet,
+        "header_row": header_row,
+        "columns": clean_columns,
+        "units": clean_units,
+        "options": clean_options,
+    }
+    base = {
+        "file_format": file_format,
+        "sheets": sheets,
+        "sheet": sheet,
+        "header_row": header_row,
+        "headers": [_text(value) for value in header],
+        "profile_source": profile_source,
+        "profile_version": profile_version,
+        "profile": profile_payload,
+        "file_hash": hashlib.sha256(content).hexdigest(),
+    }
+    missing_columns = _missing_required_roles(clean_columns, clean_options) if auto else []
+    if missing_columns:
+        # Se informa qué falta en vez de fallar con un mensaje técnico: la pantalla pregunta por
+        # esos datos (o abre los detalles) y vuelve a revisar.
+        return {
+            **base,
+            "rows_total": 0,
+            "rows_accepted": 0,
+            "rows_rejected": 0,
+            "rows_needs_review": 0,
+            "rows": [],
+            "rows_truncated": False,
+            "problems": [],
+            "unrecognised_units": [],
+            "missing_columns": missing_columns,
+        }
     probe = ImportProfile(
         id=uuid.uuid4(),
         organization_id=actor.organization_id,
@@ -892,11 +1006,7 @@ async def check_import(
         reuse_previous=False,
     )
     return {
-        "file_format": file_format,
-        "sheets": sheets,
-        "sheet": sheet,
-        "header_row": header_row,
-        "headers": [_text(value) for value in header],
+        **base,
         "rows_total": outcome.rows_total,
         "rows_accepted": outcome.rows_accepted,
         "rows_rejected": outcome.rows_rejected,
@@ -905,9 +1015,7 @@ async def check_import(
         "rows_truncated": len(outcome.rows) > _CHECK_ROWS,
         "problems": _aggregate_problems(outcome.rows),
         "unrecognised_units": _unrecognised_units(outcome.rows),
-        "profile_source": profile_source,
-        "profile_version": profile_version,
-        "file_hash": hashlib.sha256(content).hexdigest(),
+        "missing_columns": [],
     }
 
 

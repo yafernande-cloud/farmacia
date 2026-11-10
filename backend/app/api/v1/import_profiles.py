@@ -137,8 +137,12 @@ class ImportCheckOut(BaseModel):
     rows_truncated: bool
     problems: list[ImportCheckProblemOut]
     unrecognised_units: list[ImportCheckUnitOut]
-    profile_source: Literal["saved", "request"]
+    profile_source: Literal["saved", "request", "detected"]
     profile_version: int
+    # Mapeo efectivo: es el que hay que guardar antes de importar para leer las mismas celdas.
+    profile: dict[str, Any] | None = None
+    # Roles obligatorios que el mapeo no cubre (solo en modo automático). Nunca se inventan.
+    missing_columns: list[str] = Field(default_factory=list)
     file_hash: str
 
 
@@ -285,6 +289,13 @@ async def check_import(
             "Si falta, se usa el perfil guardado de la fuente."
         ),
     ] = None,
+    auto: Annotated[
+        bool,
+        Form(
+            description="Flujo de un botón: reutiliza el perfil guardado si calza por nombre o "
+            "propone un mapeo desde los encabezados, sin inventar moneda, base ni unidad."
+        ),
+    ] = False,
 ):
     body = None
     if profile is not None:
@@ -307,6 +318,7 @@ async def check_import(
             sheet=sheet,
             header_row=header_row,
             payload=body,
+            auto=auto,
         )
 
 

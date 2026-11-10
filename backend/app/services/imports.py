@@ -519,6 +519,29 @@ def _resolve_columns(
     return positions
 
 
+def columns_compatible(
+    columns: Any,
+    header: tuple[Any, ...],
+    *,
+    required_roles: tuple[str, ...] = REQUIRED_ROLES,
+) -> bool:
+    """¿El mapeo guardado calza con esta cabecera **por nombre**?
+
+    En el flujo automático solo se reutiliza un perfil si **todas** sus columnas declaran nombre y
+    ese nombre existe en el archivo. Un perfil solo-posición no se da por compatible: aplicar
+    posiciones viejas a un archivo nuevo puede leer la columna equivocada.
+    """
+    if not isinstance(columns, dict) or not columns:
+        return False
+    if any(not (isinstance(spec, dict) and spec.get("header")) for spec in columns.values()):
+        return False
+    try:
+        _resolve_columns(columns, header, required_roles=required_roles)
+    except DomainError:
+        return False
+    return True
+
+
 def _parse_date_format(raw: Any) -> str:
     text = str(raw or "").strip()
     for sep in (" ", "T"):

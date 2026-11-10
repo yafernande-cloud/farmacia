@@ -360,3 +360,182 @@ async def test_revision_no_expone_la_fila_completa(api):
     }
     assert rechazada["problem"]["values"] == {"sku": "SIN-MAPEO"}
     assert len(r.json()["file_hash"]) == 64
+
+
+# ---------- modo automático (un solo botón) ----------
+
+
+async def test_auto_detecta_el_mapeo_sin_perfil_y_no_escribe(api, sessions):
+    r = await revisar(api, xlsx([fila()]), source=api.farm["source_2"], profile=None, auto="true")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["profile_source"] == "detected"
+    assert body["profile_version"] == 0
+    assert body["missing_columns"] == []
+    assert body["rows_total"] == 1
+    columnas = body["profile"]["columns"]
+    assert columnas["sku"] == {"header": "Código", "position": 1}
+    assert columnas["price"] == {"header": "Precio", "position": 3}
+    # Moneda y base no se inventan: la revisión las reporta como problema de cada fila.
+    assert "currency" in columnas and "basis" in columnas
+    assert body["profile"]["options"] == {"decimal_separator": "."}
+    assert await count(sessions, ImportRun) == 0
+    assert await count(sessions, ImportProfile) == 1  # solo el perfil de la fixture
+
+
+async def test_auto_reutiliza_el_perfil_guardado_compatible(api):
+    r = await revisar(api, xlsx([fila()]), profile=None, auto="true")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["profile_source"] == "saved"
+    assert body["profile_version"] == 1
+    assert body["profile"]["columns"] == COLUMNS
+    assert body["rows_accepted"] == 1
+
+
+async def test_auto_no_reutiliza_un_perfil_por_posicion(api, sessions):
+    posiciones = {
+        rol: {"position": indice}
+        for indice, rol in enumerate(
+            ["sku", "name", "price", "currency", "basis", "sale_unit"], start=1
+        )
+    }
+    guardado = await api.put(
+        f"/api/v1/sources/{api.farm['source_2']}/import-profile",
+        json={
+            "file_format": "xlsx",
+            "sheet": None,
+            "header_row": 1,
+            "columns": posiciones,
+            "units": {},
+            "options": {},
+        },
+        headers={**H(api), "If-Match": '"0"'},
+    )
+    assert guardado.status_code == 200, guardado.text
+
+    r = await revisar(api, xlsx([fila()]), source=api.farm["source_2"], profile=None, auto="true")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # Un mapeo solo-posición no se da por compatible: se detecta por nombre.
+    assert body["profile_source"] == "detected"
+    assert all("header" in spec for spec in body["profile"]["columns"].values())
+
+    async with sessions() as s:
+        version = (
+            await s.execute(
+                select(ImportProfile.version).where(
+                    ImportProfile.source_id == api.farm["source_2"]
+                )
+            )
+        ).scalar_one()
+    assert version == 1  # la revisión no tocó el perfil guardado
+
+
+async def test_auto_cae_a_deteccion_si_el_archivo_cambio(api, sessions):
+    header = ["Código", "Descripción", "Precio final", "Moneda", "Base", "Unidad"]
+    content = xlsx([["SKU-001", "LOSARTAN", "12345.60", "CLP", "x", "CAJA"]], header=header)
+    r = await revisar(api, content, profile=None, auto="true")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["profile_source"] == "detected"
+    assert body["profile"]["columns"]["price"]["header"] == "Precio final"
+    # Sin `auto` el mismo archivo sigue fallando: el cambio es aditivo.
+    sin_auto = await revisar(api, content, profile=None)
+    assert sin_auto.status_code == 422
+    assert await count(sessions, ImportRun) == 0
+
+
+async def test_auto_informa_columnas_faltantes_en_vez_de_fallar(api, sessions):
+    sin_codigo = await revisar(
+        api,
+        xlsx([["LOSARTAN", "12345.60", "CLP", "per_commercial_unit", "CAJA"]],
+             header=["Descripción", "Precio", "Moneda", "Base", "Unidad"]),
+        source=api.farm["source_2"],
+        profile=None,
+        auto="true",
+    )
+    assert sin_codigo.status_code == 200, sin_codigo.text
+    assert sin_codigo.json()["missing_columns"] == ["sku"]
+    assert sin_codigo.json()["rows_total"] == 0
+
+    sin_unidad = await revisar(
+        api,
+        xlsx([["SKU-001", "LOSARTAN", "12345.60", "CLP", "per_commercial_unit"]],
+             header=["Código", "Descripción", "Precio", "Moneda", "Base"]),
+        source=api.farm["source_2"],
+        profile=None,
+        auto="true",
+    )
+    assert sin_unidad.status_code == 200, sin_unidad.text
+    cuerpo = sin_unidad.json()
+    assert cuerpo["missing_columns"] == ["sale_unit"]
+
+    # La pantalla pregunta la unidad por defecto y reintenta con el mapeo devuelto.
+    perfil = cuerpo["profile"]
+    perfil["options"] = {**perfil["options"], "default_sale_unit": "box"}
+    con_unidad = await revisar(
+        api, xlsx([fila()]), source=api.farm["source_2"], profile=perfil, auto="true"
+    )
+    assert con_unidad.status_code == 200, con_unidad.text
+    assert con_unidad.json()["missing_columns"] == []
+    assert con_unidad.json()["rows_total"] == 1
+    assert await count(sessions, ImportRun) == 0
+
+
+async def test_auto_revision_y_importacion_leen_la_misma_hoja(api, sessions):
+    """El perfil devuelto por la revisión, guardado tal cual, hace que E8 lea la misma hoja."""
+    async with sessions() as s, s.begin():
+        item_id = (
+            await s.execute(
+                select(TradeItem.id).where(TradeItem.organization_id == api.farm["org"])
+            )
+        ).scalar_one()
+        s.add(
+            SupplierProductMapping(
+                organization_id=api.farm["org"],
+                source_id=api.farm["source_2"],
+                supplier_id=api.farm["supplier"],
+                trade_item_id=item_id,
+                external_id="SKU-001",
+                origin="explicit",
+                data_origin="simulated",
+            )
+        )
+
+    content = xlsx_hojas({"Portada": [["LISTA DE PRECIOS"]], "Precios": [HEADER, fila()]})
+    revision = await revisar(api, content, source=api.farm["source_2"], profile=None, auto="true")
+    assert revision.status_code == 200, revision.text
+    body = revision.json()
+    assert body["sheet"] == "Precios"
+    assert body["profile"]["sheet"] == body["sheet"]
+    assert body["profile"]["header_row"] == body["header_row"]
+    # La detección no inventa traducciones de unidad: es la pantalla la que pregunta y guarda
+    # «CAJA = caja». Se simula esa respuesta para que la fila sea válida al importar.
+    body["profile"]["units"] = {"CAJA": "box"}
+
+    guardado = await api.put(
+        f"/api/v1/sources/{api.farm['source_2']}/import-profile",
+        json=body["profile"],
+        headers={**H(api), "If-Match": '"0"'},
+    )
+    assert guardado.status_code == 200, guardado.text
+
+    importacion = await api.post(
+        "/api/v1/imports",
+        files={
+            "file": (
+                "lista.xlsx",
+                content,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+        data={
+            "supplier_id": str(api.farm["supplier"]),
+            "source_id": str(api.farm["source_2"]),
+        },
+        headers=H(api, key="auto-misma-hoja-01"),
+    )
+    assert importacion.status_code == 200, importacion.text
+    salida = importacion.json()
+    assert (salida["status"], salida["rows_accepted"]) == ("completed", 1)
