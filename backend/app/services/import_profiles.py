@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.errors import DomainError, not_found
 from app.core.permissions import require_admin
+from app.domain.identity import identity_from_offer
 from app.models import (
     ImportProfile,
     OfferSnapshot,
@@ -262,6 +263,28 @@ HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
         "ultima actualizacion",
         "última actualización",
     ),
+    # Laboratorio y marca como columnas propias de la planilla. Solo sinónimos inequívocos:
+    # «fabricante», «titular» y «comercializador» son entidades distintas (D-025 a D-036) y no se
+    # mapean aquí; una cabecera así queda sin papel y se lee como parte de la descripción.
+    "laboratory": (
+        "laboratory",
+        "lab",
+        "laboratorio",
+        "laboratorios",
+        "laboratorio fabricante",
+        "nombre laboratorio",
+        "descripcion laboratorio",
+    ),
+    "brand": (
+        "brand",
+        "brand name",
+        "marca",
+        "marcas",
+        "marca comercial",
+        "nombre marca",
+        "descripcion marca",
+        "descripción marca",
+    ),
     "conditions": (
         "conditions",
         "commercial conditions",
@@ -298,6 +321,8 @@ for _role, _names in {
     "multiple": ("multiple", "multiplo", "múltiplo"),
     "stock": ("stock",),
     "observed_at": ("observed at", "fecha"),
+    "laboratory": ("laboratory", "laboratorio", "lab"),
+    "brand": ("brand", "marca"),
     "conditions": ("conditions", "condiciones"),
 }.items():
     for _name in _names:
@@ -613,7 +638,8 @@ async def save_profile(
         )
     if file_format == "csv" and sheet is not None:
         raise DomainError(
-            "IMPORT_FORMAT_INVALID", "Un archivo .csv no tiene hojas: quita la hoja del perfil.",
+            "IMPORT_FORMAT_INVALID",
+            "Un archivo .csv no tiene hojas: quita la hoja del perfil.",
             status_code=422,
         )
     clean_sheet = sheet.strip() if isinstance(sheet, str) and sheet.strip() else None
@@ -825,7 +851,9 @@ def _suggested_units(
     return units
 
 
-def _suggested_decimal_separator(rows: list[tuple[int, tuple[Any, ...]]], price_index: int | None) -> str:
+def _suggested_decimal_separator(
+    rows: list[tuple[int, tuple[Any, ...]]], price_index: int | None
+) -> str:
     if price_index is None:
         return "."
     values = [
@@ -898,7 +926,10 @@ async def preview_import(
             "values": [_preview_value(value) for value in values[:40]],
         }
         for number, values in data_rows[:_SAMPLE_ROWS]
-        if any(not (value is None or (isinstance(value, str) and not value.strip())) for value in values)
+        if any(
+            not (value is None or (isinstance(value, str) and not value.strip()))
+            for value in values
+        )
     ]
     return {
         "file_format": file_format,
@@ -1015,9 +1046,7 @@ def _profile_values(
     )
 
 
-def _missing_required_roles(
-    columns: dict[str, Any], options: dict[str, Any]
-) -> list[str]:
+def _missing_required_roles(columns: dict[str, Any], options: dict[str, Any]) -> list[str]:
     """Roles que el mapeo no cubre y que el flujo automático debe resolver antes de importar."""
     missing = [role for role in ("sku", "price") if not columns.get(role)]
     if not columns.get("sale_unit") and not options.get("default_sale_unit"):
@@ -1066,12 +1095,7 @@ async def check_import(
     ).scalar_one_or_none()
     # En modo automático se prefiere la hoja y la cabecera del perfil guardado: la revisión debe
     # leer exactamente las mismas celdas que leerá la importación.
-    reusable = (
-        auto
-        and payload is None
-        and saved is not None
-        and saved.file_format == file_format
-    )
+    reusable = auto and payload is None and saved is not None and saved.file_format == file_format
     if file_format == "csv":
         sheet = None
     elif sheet is None:
@@ -1291,8 +1315,7 @@ async def latest_offers(
             .join(latest, latest.c.offer_id == OfferSnapshot.id)
             .join(
                 TradeItem,
-                (TradeItem.id == OfferSnapshot.trade_item_id)
-                & (TradeItem.organization_id == org),
+                (TradeItem.id == OfferSnapshot.trade_item_id) & (TradeItem.organization_id == org),
             )
             .join(
                 Source,
@@ -1312,6 +1335,12 @@ async def latest_offers(
             (offer.valid_from is not None and offer.valid_from > now)
             or (offer.valid_to is not None and offer.valid_to < now)
         )
+        # Procedencia y estado de la identidad, derivados de `evidence.identity` (D-150). Una
+        # oferta extraída de la descripción o sin identificar sigue visible, pero la pantalla puede
+        # decir que está pendiente: no se presenta como completa.
+        identity_state, laboratory_source, brand_source = identity_from_offer(
+            offer.laboratory_as_published, offer.brand_as_published, offer.evidence
+        )
         out.append(
             {
                 "offer_id": offer.id,
@@ -1320,6 +1349,11 @@ async def latest_offers(
                 "source_mode": source_mode,
                 "external_id": offer.external_id,
                 "external_name": offer.external_name,
+                "laboratory_as_published": offer.laboratory_as_published,
+                "brand_as_published": offer.brand_as_published,
+                "identity_status": identity_state,
+                "laboratory_source": laboratory_source,
+                "brand_source": brand_source,
                 "trade_item_id": offer.trade_item_id,
                 "trade_item_name": item_name,
                 "price_amount": str(offer.price_amount),

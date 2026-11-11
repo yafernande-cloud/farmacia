@@ -121,6 +121,14 @@ class ImportCheckRow(BaseModel):
     status: Literal["ready", "review", "rejected"]
     sku: str | None
     name: str | None
+    # Laboratorio y marca: columna publicada o reconocidos en la descripción (D-150); None = no
+    # informado ni reconocible.
+    laboratory: str | None = None
+    brand: str | None = None
+    # `published` (columna), `extracted` (descripción) o `unconfirmed` (sin identidad).
+    identity_status: str | None = None
+    laboratory_source: str | None = None
+    brand_source: str | None = None
     price: str | None
     currency: str | None
     price_basis: str | None
@@ -174,6 +182,14 @@ class OfferOut(BaseModel):
     source_mode: str
     external_id: str
     external_name: str | None
+    # Columna publicada o reconocidos en la descripción; NULL = no informado. La procedencia y el
+    # estado viajan aparte para no presentar como completa una oferta sin identidad (D-150).
+    laboratory_as_published: str | None
+    brand_as_published: str | None
+    # `published` (columna), `extracted` (descripción, pendiente de confirmación) o `unconfirmed`.
+    identity_status: str
+    laboratory_source: str | None
+    brand_source: str | None
     trade_item_id: uuid.UUID
     trade_item_name: str
     price_amount: str
@@ -276,9 +292,7 @@ async def preview_import(
     session: Session,
     actor: StrongActor,
     file: Annotated[UploadFile, File(description="Archivo .xlsx, .xls o .csv del proveedor")],
-    sheet: Annotated[
-        str | None, Form(description="Hoja a leer; por defecto la primera")
-    ] = None,
+    sheet: Annotated[str | None, Form(description="Hoja a leer; por defecto la primera")] = None,
     header_row: Annotated[
         int | None, Form(ge=1, le=1000, description="Fila de encabezado; por defecto se detecta")
     ] = None,

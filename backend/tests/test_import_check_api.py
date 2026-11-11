@@ -347,6 +347,13 @@ async def test_revision_no_expone_la_fila_completa(api):
         "status",
         "sku",
         "name",
+        # Identidad: columna publicada o descripción reconocida; en una fila rechazada viajan
+        # como None y sin estado (D-150).
+        "laboratory",
+        "brand",
+        "identity_status",
+        "laboratory_source",
+        "brand_source",
         "price",
         "currency",
         "price_basis",
@@ -424,9 +431,7 @@ async def test_auto_no_reutiliza_un_perfil_por_posicion(api, sessions):
     async with sessions() as s:
         version = (
             await s.execute(
-                select(ImportProfile.version).where(
-                    ImportProfile.source_id == api.farm["source_2"]
-                )
+                select(ImportProfile.version).where(ImportProfile.source_id == api.farm["source_2"])
             )
         ).scalar_one()
     assert version == 1  # la revisión no tocó el perfil guardado
@@ -449,8 +454,10 @@ async def test_auto_cae_a_deteccion_si_el_archivo_cambio(api, sessions):
 async def test_auto_informa_columnas_faltantes_en_vez_de_fallar(api, sessions):
     sin_codigo = await revisar(
         api,
-        xlsx([["LOSARTAN", "12345.60", "CLP", "per_commercial_unit", "CAJA"]],
-             header=["Descripción", "Precio", "Moneda", "Base", "Unidad"]),
+        xlsx(
+            [["LOSARTAN", "12345.60", "CLP", "per_commercial_unit", "CAJA"]],
+            header=["Descripción", "Precio", "Moneda", "Base", "Unidad"],
+        ),
         source=api.farm["source_2"],
         profile=None,
         auto="true",
@@ -461,8 +468,10 @@ async def test_auto_informa_columnas_faltantes_en_vez_de_fallar(api, sessions):
 
     sin_unidad = await revisar(
         api,
-        xlsx([["SKU-001", "LOSARTAN", "12345.60", "CLP", "per_commercial_unit"]],
-             header=["Código", "Descripción", "Precio", "Moneda", "Base"]),
+        xlsx(
+            [["SKU-001", "LOSARTAN", "12345.60", "CLP", "per_commercial_unit"]],
+            header=["Código", "Descripción", "Precio", "Moneda", "Base"],
+        ),
         source=api.farm["source_2"],
         profile=None,
         auto="true",
@@ -681,16 +690,12 @@ async def test_auto_base_ambigua_se_confirma_por_proveedor_y_no_se_generaliza(ap
         header=header,
     )
 
-    inicial = await revisar(
-        api, contenido, source=api.farm["source_2"], profile=None, auto="true"
-    )
+    inicial = await revisar(api, contenido, source=api.farm["source_2"], profile=None, auto="true")
     assert inicial.status_code == 200, inicial.text
     cuerpo = inicial.json()
     # «unit» a secas no se interpreta solo: se pregunta como aclaración comercial.
     assert cuerpo["rows_rejected"] == 2
-    assert cuerpo["unrecognised_bases"] == [
-        {"text": "unit", "count": 2, "sample_rows": [2, 3]}
-    ]
+    assert cuerpo["unrecognised_bases"] == [{"text": "unit", "count": 2, "sample_rows": [2, 3]}]
 
     perfil = cuerpo["profile"]
     perfil["options"] = {

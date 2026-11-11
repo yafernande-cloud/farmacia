@@ -15,6 +15,10 @@ Qué NO hace, por diseño:
   observaciones nuevas y las anteriores conservan su fecha y su significado.
 * **No inventa dinero ni cantidades.** Moneda y base de precio se declaran (D-105); un dato que la
   planilla no trae queda `NULL` (= desconocido), nunca `0` ni `1` (D-081).
+* **No adivina la identidad.** Laboratorio y marca salen de una columna publicada por la fuente o,
+  si la columna falta o viene vacía, de una marca explícita en la descripción («LAB.», «MARCA»)
+  seguida de un nombre del vocabulario controlado. La procedencia y el estado de identificación se
+  guardan en `offer_snapshot.evidence.identity` (D-150).
 * **No llama a la IA.** Todo es determinista.
 
 Validación en dos fases (D-103):
@@ -48,11 +52,22 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import xlrd
 from openpyxl import load_workbook
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import DomainError, not_found
 from app.core.permissions import Role
+from app.domain.identity import (
+    EMPTY_VOCABULARY,
+    SOURCE_COLUMN,
+    SOURCE_DESCRIPTION,
+    IdentityVocabulary,
+    build_vocabulary,
+    extract_identity,
+    identity_evidence,
+    identity_from_offer,
+    identity_status,
+)
 from app.models import (
     ImportProfile,
     ImportRequest,
@@ -86,6 +101,12 @@ OPTIONAL_ROLES = (
     "stock",
     "observed_at",
     "conditions",
+    # Laboratorio y marca: primero la columna propia de la fuente; si la planilla no la trae (o la
+    # celda viene vacía) y la descripción trae una marca explícita con un nombre del vocabulario
+    # controlado, se reconoce de ahí, guardando la procedencia (D-150). Nunca se sobrescribe una
+    # columna publicada.
+    "laboratory",
+    "brand",
 )
 ROLES = REQUIRED_ROLES + OPTIONAL_ROLES
 
@@ -171,6 +192,17 @@ class AcceptedRow:
     stock: Decimal | None
     observed_at: datetime
     notes: str | None
+    # Laboratorio y marca de la oferta. `laboratory_source`/`brand_source` dicen de dónde salieron:
+    # `column` (la planilla los publica en una columna propia) o `description` (se reconocieron en
+    # la descripción con una marca explícita y un nombre del vocabulario controlado, D-150). Una
+    # columna publicada nunca se sobrescribe; `matched_text` conserva el texto que respalda una
+    # extracción. NULL = no informado ni reconocible.
+    laboratory: str | None = None
+    brand: str | None = None
+    laboratory_source: str | None = None
+    brand_source: str | None = None
+    laboratory_text: str | None = None
+    brand_text: str | None = None
     needs_item: bool = False
 
 
@@ -342,7 +374,9 @@ def _xlsx_rows(content: bytes, sheet_name: str | None) -> list[tuple[int, tuple[
         else:
             ws = wb.active
         if ws is None:
-            raise DomainError("IMPORT_FORMAT_INVALID", "La planilla no tiene hojas.", status_code=422)
+            raise DomainError(
+                "IMPORT_FORMAT_INVALID", "La planilla no tiene hojas.", status_code=422
+            )
         return [
             (index, tuple(values))
             for index, values in enumerate(ws.iter_rows(values_only=True), start=1)
@@ -393,7 +427,10 @@ def _xls_rows(content: bytes, sheet_name: str | None) -> list[tuple[int, tuple[A
                 )
             ws = wb.sheet_by_index(0)
         return [
-            (index, tuple(_xls_value(ws.cell(index - 1, col), wb.datemode) for col in range(ws.ncols)))
+            (
+                index,
+                tuple(_xls_value(ws.cell(index - 1, col), wb.datemode) for col in range(ws.ncols)),
+            )
             for index in range(1, ws.nrows + 1)
         ]
     finally:
@@ -407,7 +444,9 @@ def _decode_csv(content: bytes) -> str:
         except UnicodeDecodeError:
             continue
     raise DomainError(
-        "IMPORT_FORMAT_INVALID", "El archivo .csv no se puede decodificar como texto.", status_code=422
+        "IMPORT_FORMAT_INVALID",
+        "El archivo .csv no se puede decodificar como texto.",
+        status_code=422,
     )
 
 
@@ -576,8 +615,8 @@ def _parse_date_format(raw: Any) -> str:
         return DATE_FORMATS[text]
     raise DomainError(
         "IMPORT_FORMAT_INVALID",
-        f'El perfil declara un formato de fecha no soportado: «{text}». '
-        f"Usa {', '.join(DATE_FORMATS)} (opcionalmente con \" HH:MM\").",
+        f"El perfil declara un formato de fecha no soportado: «{text}». "
+        f'Usa {", ".join(DATE_FORMATS)} (opcionalmente con " HH:MM").',
         status_code=422,
     )
 
@@ -640,11 +679,7 @@ def _load_profile(profile: ImportProfile) -> _Profile:
             status_code=422,
         )
     bad_basis_values = sorted(
-        {
-            str(value)
-            for value in raw_basis_values.values()
-            if str(value) not in PRICE_BASES
-        }
+        {str(value) for value in raw_basis_values.values() if str(value) not in PRICE_BASES}
     )
     if bad_basis_values:
         raise DomainError(
@@ -653,14 +688,14 @@ def _load_profile(profile: ImportProfile) -> _Profile:
             f"{', '.join(bad_basis_values)}. Válidas: {', '.join(PRICE_BASES)}.",
             status_code=422,
         )
-    basis_values = {
-        _normalize_header(key): str(value) for key, value in raw_basis_values.items()
-    }
+    basis_values = {_normalize_header(key): str(value) for key, value in raw_basis_values.items()}
     decimal_sep = options.get("decimal_separator", ".")
     thousands_sep = options.get("thousands_separator")
     if decimal_sep not in (".", ",", None):
         raise DomainError(
-            "IMPORT_FORMAT_INVALID", "El separador decimal del perfil debe ser «.» o «,».", status_code=422
+            "IMPORT_FORMAT_INVALID",
+            "El separador decimal del perfil debe ser «.» o «,».",
+            status_code=422,
         )
     if thousands_sep is not None and thousands_sep not in (".", ",", " "):
         raise DomainError(
@@ -721,7 +756,9 @@ def _load_profile(profile: ImportProfile) -> _Profile:
         basis_values=basis_values,
         decimal_sep=decimal_sep or ".",
         thousands_sep=thousands_sep,
-        date_format=_parse_date_format(options["date_format"]) if options.get("date_format") else None,
+        date_format=_parse_date_format(options["date_format"])
+        if options.get("date_format")
+        else None,
         tax_included=tax_included,
         discount_included=discount_included,
         pack_base_unit=pack_base_unit,
@@ -803,6 +840,7 @@ def _classify_row(
     items: dict[str, uuid.UUID],
     tz: ZoneInfo,
     now: datetime,
+    vocabulary: IdentityVocabulary = EMPTY_VOCABULARY,
 ) -> tuple[AcceptedRow | None, str | None]:
     """Devuelve (fila aceptada, aviso no bloqueante) o lanza `RowProblem`."""
 
@@ -937,6 +975,27 @@ def _classify_row(
         message="El stock no es válido.",
     )
 
+    # Laboratorio y marca: primero la columna propia del proveedor, si la planilla la trae. Una
+    # celda vacía no se rellena con el nombre del producto: solo se revisa la descripción cuando la
+    # columna falta o viene vacía, y únicamente se reconoce una marca explícita («LAB.», «MARCA»)
+    # seguida de un nombre del vocabulario controlado (D-150). Nunca se sobrescribe lo publicado.
+    laboratory = _text(cell("laboratory")) if "laboratory" in prof.columns else None
+    brand = _text(cell("brand")) if "brand" in prof.columns else None
+    laboratory_source = SOURCE_COLUMN if laboratory else None
+    brand_source = SOURCE_COLUMN if brand else None
+    laboratory_text: str | None = None
+    brand_text: str | None = None
+    if (laboratory is None or brand is None) and name_text and not vocabulary.is_empty:
+        recognized = extract_identity(name_text, vocabulary)
+        if laboratory is None and recognized.laboratory:
+            laboratory = recognized.laboratory
+            laboratory_source = SOURCE_DESCRIPTION
+            laboratory_text = recognized.laboratory_text
+        if brand is None and recognized.brand:
+            brand = recognized.brand
+            brand_source = SOURCE_DESCRIPTION
+            brand_text = recognized.brand_text
+
     conditions = _text(cell("conditions")) if "conditions" in prof.columns else None
     notes = conditions[:2000] if conditions else None
     warning = (
@@ -963,6 +1022,12 @@ def _classify_row(
                 cell("observed_at") if "observed_at" in prof.columns else None, prof, tz, now
             ),
             notes=notes,
+            laboratory=laboratory[:200] if laboratory else None,
+            brand=brand[:200] if brand else None,
+            laboratory_source=laboratory_source,
+            brand_source=brand_source,
+            laboratory_text=laboratory_text[:200] if laboratory_text else None,
+            brand_text=brand_text[:200] if brand_text else None,
             needs_item=needs_item,
         ),
         warning,
@@ -997,6 +1062,64 @@ async def _mappings(
     return {external: item for external, item in rows.all()}
 
 
+async def _identity_vocabulary(
+    session: AsyncSession,
+    org_id: uuid.UUID,
+    prof: _Profile,
+    rows: list[tuple[int, tuple[Any, ...]]],
+) -> IdentityVocabulary:
+    """Vocabulario controlado para reconocer identidad en la descripción (D-150).
+
+    Solo nombres **ya confirmados**: las columnas de laboratorio/marca de este mismo archivo, el
+    catálogo propio (`trade_item.laboratory`/`brand`) y ofertas anteriores cuyo dato vino de una
+    columna publicada. Las ofertas con identidad extraída no realimentan el vocabulario, para que
+    una deducción nunca se convierta en fuente de otra. No hay nombres escritos en el código.
+    """
+    laboratories: list[str | None] = []
+    brands: list[str | None] = []
+    for role, target in (("laboratory", laboratories), ("brand", brands)):
+        index = prof.columns.get(role)
+        if index is None:
+            continue
+        target.extend(_text(values[index]) if index < len(values) else None for _, values in rows)
+
+    catalog = (
+        await session.execute(
+            select(TradeItem.laboratory, TradeItem.brand).where(
+                TradeItem.organization_id == org_id,
+                or_(TradeItem.laboratory.is_not(None), TradeItem.brand.is_not(None)),
+            )
+        )
+    ).all()
+    for laboratory, brand in catalog:
+        laboratories.append(laboratory)
+        brands.append(brand)
+
+    published = (
+        await session.execute(
+            select(
+                OfferSnapshot.laboratory_as_published,
+                OfferSnapshot.brand_as_published,
+                OfferSnapshot.evidence,
+            ).where(
+                OfferSnapshot.organization_id == org_id,
+                or_(
+                    OfferSnapshot.laboratory_as_published.is_not(None),
+                    OfferSnapshot.brand_as_published.is_not(None),
+                ),
+            )
+        )
+    ).all()
+    for laboratory, brand, evidence in published:
+        _status, laboratory_source, brand_source = identity_from_offer(laboratory, brand, evidence)
+        if laboratory_source == SOURCE_COLUMN:
+            laboratories.append(laboratory)
+        if brand_source == SOURCE_COLUMN:
+            brands.append(brand)
+
+    return build_vocabulary(laboratories, brands)
+
+
 def _json_value(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
@@ -1006,7 +1129,11 @@ def _json_value(value: Any) -> Any:
 
 
 def _rejected_row(
-    row_number: int, values: tuple[Any, ...], prof: _Profile, source_id, file_hash: str,
+    row_number: int,
+    values: tuple[Any, ...],
+    prof: _Profile,
+    source_id,
+    file_hash: str,
     problem: RowProblem,
 ) -> dict[str, Any]:
     """Fila rechazada con lo mínimo para localizarla y entenderla (D-104, D-110).
@@ -1043,6 +1170,13 @@ def _check_accepted_row(row: AcceptedRow, warning: str | None) -> dict[str, Any]
         "status": "review" if warning is not None else "ready",
         "sku": row.external_id,
         "name": row.external_name,
+        "laboratory": row.laboratory,
+        "brand": row.brand,
+        "identity_status": identity_status(
+            row.laboratory, row.brand, row.laboratory_source, row.brand_source
+        ),
+        "laboratory_source": row.laboratory_source,
+        "brand_source": row.brand_source,
         "price": str(row.price),
         "currency": row.currency,
         "price_basis": row.price_basis,
@@ -1056,9 +1190,7 @@ def _check_accepted_row(row: AcceptedRow, warning: str | None) -> dict[str, Any]
     }
 
 
-def _check_rejected_row(
-    rejected: dict[str, Any], problem: RowProblem
-) -> dict[str, Any]:
+def _check_rejected_row(rejected: dict[str, Any], problem: RowProblem) -> dict[str, Any]:
     """Fila rechazada para la revisión previa: motivo, campos culpables y nada más.
 
     Reutiliza lo que ya guarda `_rejected_row` (SKU, nombre y las celdas del propio `RowProblem`);
@@ -1069,6 +1201,11 @@ def _check_rejected_row(
         "status": "rejected",
         "sku": rejected.get("sku"),
         "name": rejected.get("name"),
+        "laboratory": None,
+        "brand": None,
+        "identity_status": identity_status(None, None, None, None),
+        "laboratory_source": None,
+        "brand_source": None,
         "price": None,
         "currency": None,
         "price_basis": None,
@@ -1251,13 +1388,13 @@ async def run_import(
         )
     if profile.status != "active":
         raise DomainError(
-            "IMPORT_FORMAT_INVALID", "El perfil de importación de la fuente está inactivo.", status_code=422
+            "IMPORT_FORMAT_INVALID",
+            "El perfil de importación de la fuente está inactivo.",
+            status_code=422,
         )
     prof = _load_profile(profile)
 
-    header, rows = _read_sheet(
-        content, profile.sheet, profile.header_row, profile.file_format
-    )
+    header, rows = _read_sheet(content, profile.sheet, profile.header_row, profile.file_format)
     required_roles = ("sku", "price") if prof.default_sale_unit else REQUIRED_ROLES
     prof.columns = _resolve_columns(prof.column_specs, header, required_roles=required_roles)
     if "pack" in prof.columns and prof.pack_base_unit is None:
@@ -1271,6 +1408,9 @@ async def run_import(
     kind, tz = await _organization(session, org)
     origin = origin_for(kind)
     items = await _mappings(session, org, source.id)
+    # Una sola vez por importación, nunca por fila: el vocabulario se arma antes de clasificar y
+    # no cambia mientras se leen las filas.
+    vocabulary = await _identity_vocabulary(session, org, prof, rows)
     now = datetime.now(UTC)
 
     accepted: list[tuple[AcceptedRow, str | None]] = []
@@ -1279,7 +1419,9 @@ async def run_import(
     detail: list[dict[str, Any]] = []
     seen: set[str] = set()
     for row_number, values in rows:
-        external_id = _text(values[prof.columns["sku"]] if prof.columns["sku"] < len(values) else None)
+        external_id = _text(
+            values[prof.columns["sku"]] if prof.columns["sku"] < len(values) else None
+        )
         if external_id is not None and external_id in seen:
             problem = RowProblem(
                 DUPLICATE_ROW,
@@ -1299,7 +1441,7 @@ async def run_import(
         if external_id is not None:
             seen.add(external_id)
         try:
-            row, warning = _classify_row(row_number, values, prof, items, tz, now)
+            row, warning = _classify_row(row_number, values, prof, items, tz, now, vocabulary)
         except RowProblem as problem:
             rejected.append(_rejected_row(row_number, values, prof, source.id, file_hash, problem))
             errors.append({"row": row_number, "code": problem.code, "message": problem.message})
@@ -1379,6 +1521,8 @@ async def run_import(
                 trade_item_id=row.trade_item_id,
                 external_id=row.external_id,
                 external_name=row.external_name,
+                laboratory_as_published=row.laboratory,
+                brand_as_published=row.brand,
                 price_amount=row.price,
                 currency=row.currency,
                 price_basis=row.price_basis,
@@ -1408,6 +1552,17 @@ async def run_import(
                     "row": row.row,
                     "import_run_id": str(run.id),
                     "profile_version": prof.version,
+                    # Procedencia de la identidad: una columna publicada y una extracción de la
+                    # descripción nunca se confunden (D-150). `status` es de identidad, no de
+                    # revisión comercial: `review_status` conserva su significado (D-110).
+                    "identity": identity_evidence(
+                        row.laboratory,
+                        row.brand,
+                        row.laboratory_source,
+                        row.brand_source,
+                        row.laboratory_text,
+                        row.brand_text,
+                    ),
                 },
                 data_origin=origin,
             )
