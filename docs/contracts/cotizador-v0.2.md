@@ -486,6 +486,19 @@ Nunca se deducen del nombre del producto, de `trade_item.laboratory` ni de `trad
 conceptual de un producto con varias ofertas y laboratorios: cada oferta conserva lo que su fuente publicó, y el
 producto conserva sus atributos propios. Si la fuente no lo informa, queda NULL y el motor no inventa una coincidencia.
 
+**Excepción autorizada (D-150, revisión 2026-11-10).** En las listas de precios importadas, cuando la fuente no trae
+columna de laboratorio o marca, o la celda viene vacía, el importador puede reconocer el dato en la **descripción
+publicada** solo si hay una marca explícita («LAB.», «LABORATORIO(S)», «MARCA») seguida de un nombre ya confirmado en
+el **vocabulario controlado** de la organización (columnas del mismo archivo, catálogo propio o listas anteriores con
+procedencia de columna). El valor guardado es ese nombre confirmado; el texto exacto que lo respalda y la procedencia
+(`column`/`description`) quedan en `offer_snapshot.evidence` (clave `identity`), y el estado de identificación
+(`published`/`extracted`/`unconfirmed`) se expone de forma **aditiva** en los endpoints de ofertas importadas. La
+columna publicada siempre tiene prioridad y nunca se sobrescribe. **No hay columnas nuevas, ni migración, ni cambios en
+el sobre congelado de E8**: los campos nuevos de A3 (`GET /api/v1/suppliers/{id}/offers`) y de la revisión previa
+(`import-check`) son **opcionales y aditivos**, y ningún consumidor anterior deja de funcionar. El principio de esta
+sección —no inventar identidad por parecido ni desde el nombre del producto— sigue vigente. El detalle completo está en
+D-150.
+
 ### 2.8 `observation_interpretation` — interpretación de una observación
 
 Una fila por **llamada o intento** de interpretación. Varias filas por observación son válidas (otro modelo, otra

@@ -2501,3 +2501,74 @@ frontend **219 aprobadas en 25 archivos**, `tsc --noEmit` y `ruff check` sin err
 backend con `REQUIRE_DB=1` **quedó pendiente** por no haber PostgreSQL disponible; no hay migración que
 aplicar, no se usó ninguna base real ni `farmacia_demo`, y no hubo commit, push, despliegue ni publicación en
 Lovable.
+
+### D-150 — Laboratorio y marca en las listas: columna propia y reconocimiento verificable en la descripción (2026-11-10, revisada el 2026-11-10)
+
+**Decisión (revisión autorizada).** El perfil de importación puede mapear dos papeles **opcionales**,
+`laboratory` y `brand`. **Primero siempre la columna propia**: lo publicado en esas columnas se guarda tal cual en
+`offer_snapshot.laboratory_as_published` y `brand_as_published` (columnas que ya existían desde la `0018`) y
+**nunca se sobrescribe**. Si la columna falta o la celda viene vacía, se revisa la **descripción original** y se
+reconoce laboratorio o marca **solo** cuando hay una marca explícita («LAB.», «LABORATORIO(S)», «MARCA») seguida de
+un nombre que ya existe en el **vocabulario controlado** de la organización. La descripción original se conserva
+intacta. La procedencia y el estado de identificación se guardan en el `evidence` JSONB que ya existe; **no hay
+migración (la `0028` sigue sin autorizar) ni cambio en ningún contrato congelado**. Extiende de forma aditiva la
+lista cerrada de papeles de D-109. Esta revisión sustituye el criterio anterior («nunca se deduce nada de la
+descripción»), **autorizada explícitamente** porque los proveedores entregan Excel con estructuras distintas y no se
+puede exigir una columna independiente. El texto del contrato §2.7 bis se actualizó **solo como documentación**
+(nota de excepción autorizada del 2026-11-10, con remisión a D-150), **sin** tocar los contratos de API, el sobre de
+E8 ni el esquema; no se abre una revisión formal del contrato ni se añaden requisitos nuevos.
+
+1. **Detección de columnas.** Se reconocen cabeceras inequívocas normalizadas: `laboratory`, `lab`, `laboratorio`,
+   `laboratorios`, `laboratorio fabricante`, `nombre laboratorio`, `descripcion laboratorio`; `brand`,
+   `brand name`, `marca`, `marcas`, `marca comercial`, `nombre marca`, `descripcion marca`, `descripción marca`.
+   «Fabricante», «titular» y «comercializador» siguen siendo entidades distintas (D-025 a D-036) y **no** se mapean.
+   La revisión previa (`import-check`) los propone en modo automático como cualquier otro papel reconocido.
+2. **Prioridad y no sobrescritura.** La columna publicada manda siempre. La descripción solo completa el campo que
+   falta (columna ausente o celda vacía) y **nunca** reemplaza un valor explícito, aunque mencione otro nombre
+   confirmado. Una fila sin identidad se importa igual: no se rechaza.
+3. **Extracción determinista y verificable, no una suposición.** Se exige la conjunción de dos evidencias:
+   (a) una **marca explícita** en la descripción, como palabra completa (`LAB.`, `LAB`, `LABORATORIO(S)`, `MARCA`) y
+   (b) un **nombre confirmado en el vocabulario controlado**, por coincidencia exacta o como palabra inicial
+   (la coincidencia más larga gana). El vocabulario se arma, una vez por importación, con: las columnas de
+   laboratorio/marca del **mismo archivo**, el **catálogo propio** (`trade_item.laboratory`/`brand`) y las **ofertas
+   anteriores cuya procedencia sea `column`** — las extraídas no realimentan el vocabulario. Las abreviaturas se
+   expanden (`Lab.` → `laboratorio`) para comparar formas, no se corrigen nombres. No se usan parecidos, posiciones,
+   frecuencias ni **IA generativa**: no hay modelo de lenguaje en esta ruta.
+4. **Lo ambiguo no se interpreta.** «ANDES», «LINEA CORDILLERA», «S/M» o «LAB/MARCA SUR» no identifican nada sin
+   marca explícita y sin coincidencia con el vocabulario. El valor extraído es el **nombre canónico del vocabulario**
+   (una salida documentada del «tal como lo publica», porque el publicado es la descripción completa) y el texto exacto
+   que lo respalda se conserva en `matched_text`.
+5. **Procedencia y estado sin tocar el esquema.** `offer_snapshot.evidence["identity"]` guarda
+   `{"status": "published"|"extracted"|"unconfirmed", "laboratory": {"source": "column"|"description",
+   "matched_text": …} | null, "brand": …}`. `identity_status` es de **identidad**, no de revisión comercial:
+   `review_status`/`needs_review` conservan su significado (D-110) y ninguna fila cambia de estado por extraer o no
+   identidad. Una oferta anterior a esta revisión (con valor y sin `evidence.identity`) se lee como `published` en
+   columna. `GET /api/v1/suppliers/{id}/offers` e `import-check` exponen **aditivamente** `identity_status`,
+   `laboratory_source` y `brand_source`; el sobre congelado de E8 no cambia.
+6. **Las ofertas sin identidad confirmada siguen visibles, pero no completas.** El motor de preferencias
+   (`preferences.offer_view`) lee `laboratory_as_published`/`brand_as_published` igual para datos publicados y
+   extraídos: las ofertas ordenan con ellos y `NULL` nunca coincide. La pantalla muestra `extracted` como
+   «Identidad extraída de la descripción» y `unconfirmed` como «Pendiente de identificación», sin ocultar la oferta ni
+   presentarla como verificada.
+7. **Excel de demostración.** `docs/ejemplos/lista_distribuidora_andes.xlsx`: 30 productos **ficticios** de
+   «Distribuidora Andes» con laboratorio en columna (1–8), marca en columna (9–14), ambas (15–20), identidad solo
+   dentro de la descripción (21–26) y cuatro casos ambiguos (27–30); dos filas traen condiciones comerciales para
+   mostrar la revisión que ya existe. Todos los nombres que la descripción menciona en 21–26 aparecen también en una
+   columna del mismo archivo, así que el vocabulario del archivo basta y no se inventa ninguno. No existía en el
+   repositorio el Excel de demostración de 30 productos mencionado en la solicitud; se creó uno nuevo y el archivo
+   original (si aparece) no se modifica. El archivo no se importó en ninguna base real ni de demostración.
+8. **Alcance.** Sin migración, sin rol nuevo en la base y sin cambios en los contratos de API de E1/E2/E3/E5/E8 ni en
+   el esquema; en §2.7 bis solo se añadió una nota documental de la excepción. Sin commit, push, despliegue,
+   importación real ni Lovable Publish (al momento de implementarla).
+
+**Estado.** Implementada en código y probada el 2026-11-10: `app/domain/identity.py` (vocabulario, marcas explícitas,
+procedencia y estado), `app/services/imports.py` (columna primero, extracción solo del campo faltante, evidencia),
+`app/services/import_profiles.py` (estado y procedencia en `latest_offers`), `app/api/v1/import_profiles.py`
+(`OfferOut` e `ImportCheckRow` aditivos), frontend (`OfertaImportada`, tarjeta de precios de lista con etiqueta
+«extraída»/«pendiente» y aviso de identidad en «Enseñar a la IA»),
+`tests/test_identity_extraction.py` (**11 pruebas sin base de datos** de las reglas de extracción) y
+`tests/test_import_identity.py` (**16 pruebas con base de datos**, incluidas AND-021 a AND-026 del Excel de
+demostración, AND-027 a AND-030 sin identificar, la no sobrescritura de columnas y la aplicación de una preferencia
+construida con un laboratorio **extraído de la descripción**). Verificación completa: backend **1.109 aprobadas / 8
+omitidas** con `REQUIRE_DB=1`, `ruff check` limpio; frontend **328 aprobadas en 34 archivos**, `tsc --noEmit`,
+`eslint` y `npm run build` sin errores.
