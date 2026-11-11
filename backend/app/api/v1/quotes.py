@@ -121,6 +121,8 @@ class ObservationIn(BaseModel):
     supplier_id: uuid.UUID | None = None
     offer_snapshot_id: uuid.UUID | None = None
     quote_id: uuid.UUID | None = None
+    # Aclaración de una observación anterior: la original no se modifica ni se sobrescribe.
+    previous_observation_id: uuid.UUID | None = None
 
 
 class LineObservationIn(BaseModel):
@@ -636,6 +638,7 @@ async def create_commercial_observation(
             supplier_id=body.supplier_id,
             offer_snapshot_id=body.offer_snapshot_id,
             quote_id=body.quote_id,
+            previous_observation_id=body.previous_observation_id,
             idempotency_key=idempotency_key,
         )
         # Un reintento idempotente devuelve la observación con el estado ya interpretado, no

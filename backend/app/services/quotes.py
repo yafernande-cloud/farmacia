@@ -2050,12 +2050,16 @@ async def create_observation(
     quote_id: uuid.UUID | None = None,
     line: QuoteLine | None = None,
     idempotency_key: str | None = None,
+    previous_observation_id: uuid.UUID | None = None,
 ) -> CommercialObservation:
     """Guarda la observación siempre, sin categorías ni pasos extra (D-132).
 
     `Idempotency-Key` es opcional. Si se repite con el mismo texto y artículo devuelve la
     observación original; con otro contenido responde `409 IDEMPOTENCY_KEY_REUSED`. No hay
     columna nueva: la clave vive en el evento de auditoría de la creación.
+
+    `previous_observation_id` deja trazable la aclaración: la observación anterior se conserva
+    intacta (texto, interpretaciones y preferencias) y la nueva la referencia en su contexto.
     """
     require_admin(actor.roles)
     org = actor.organization_id
@@ -2097,6 +2101,25 @@ async def create_observation(
     ).scalar_one_or_none()
     if item is None:
         raise not_found("El artículo")
+
+    previous: CommercialObservation | None = None
+    if previous_observation_id is not None:
+        previous = (
+            await session.execute(
+                select(CommercialObservation).where(
+                    CommercialObservation.id == previous_observation_id,
+                    CommercialObservation.organization_id == org,
+                )
+            )
+        ).scalar_one_or_none()
+        if previous is None:
+            raise not_found("La observación anterior")
+        if previous.trade_item_id != item.id:
+            raise DomainError(
+                "OBSERVATION_INVALID",
+                "La aclaración debe referirse al mismo artículo que la observación anterior.",
+                status_code=422,
+            )
 
     quote: Quote | None = None
     if line is not None:
@@ -2161,6 +2184,12 @@ async def create_observation(
             supplier_id = offer.supplier_id
 
     now = _now()
+    context = await _observation_context(
+        session, item=item, supplier=supplier, offer=offer, quote=quote, line=line
+    )
+    if previous is not None:
+        # Vínculo trazable hacia la observación aclarada; no se copia ni se altera su contenido.
+        context["previous_observation_id"] = str(previous.id)
     row = CommercialObservation(
         id=uuid.uuid4(),
         organization_id=org,
@@ -2172,9 +2201,7 @@ async def create_observation(
         trade_item_id=item.id,
         offer_snapshot_id=offer_snapshot_id,
         supplier_id=supplier_id,
-        context=await _observation_context(
-            session, item=item, supplier=supplier, offer=offer, quote=quote, line=line
-        ),
+        context=context,
         data_origin="captured",
     )
     session.add(row)
@@ -2182,6 +2209,7 @@ async def create_observation(
     audit_after = {
         "trade_item_id": str(item.id),
         "quote_id": str(quote_id) if quote_id else None,
+        "previous_observation_id": str(previous.id) if previous is not None else None,
     }
     if idempotency_key:
         audit_after.update({"idempotency_key": idempotency_key, "request_hash": request_hash})
@@ -2199,6 +2227,7 @@ async def create_observation(
             "trade_item_id": str(item.id),
             "quote_id": str(quote_id) if quote_id else None,
             "quote_line_id": str(line.id) if line else None,
+            "previous_observation_id": str(previous.id) if previous is not None else None,
         },
         after=audit_after,
     )

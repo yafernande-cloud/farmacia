@@ -111,12 +111,26 @@ class ClarificationCandidateOut(BaseModel):
     display_name: str
 
 
-class ClarificationOut(BaseModel):
-    """Pregunta breve para resolver una referencia ambigua. No aplica nada por sí sola."""
+ClarificationKind = Literal[
+    "ambiguous_article",
+    "unknown_article",
+    "unknown_laboratory",
+    "unknown_brand",
+    "unknown_supplier",
+    "unclear_referent",
+    "missing_detail",
+    "conflicting",
+    "not_commercial",
+    "low_confidence",
+]
 
-    kind: Literal["ambiguous_article"]
+
+class ClarificationOut(BaseModel):
+    """Pregunta breve para resolver una duda. No aplica nada por sí sola."""
+
+    kind: ClarificationKind
     question: str
-    reference: str
+    reference: str | None = None
     candidates: list[ClarificationCandidateOut] = []
 
 

@@ -109,6 +109,16 @@ async def a6(sessions):
                 attributes=_attrs("losartán", "20"),
                 data_origin="simulated",
             ),
+            # Caso real: la persona escribe «Andes» y el catálogo publica el nombre completo.
+            "c": TradeItem(
+                organization_id=org.id,
+                display_name="Losartán 50 mg x 30 comprimidos",
+                identity_key="fixture-a6-api-losartan-50-30-andes",
+                ingredient="losartán",
+                laboratory="Laboratorios Andes Ficticios",
+                attributes=_attrs("losartán", "30"),
+                data_origin="simulated",
+            ),
         }
         s.add_all(items.values())
         await s.flush()
@@ -162,6 +172,24 @@ async def a6(sessions):
                     items["a"],
                     "A-S",
                     "2250.00",
+                    "Laboratorio Andino",
+                    "Marca Beta",
+                ),
+                _offer(
+                    suppliers["Norte"],
+                    sources["Norte"],
+                    items["c"],
+                    "C-N",
+                    "2000.00",
+                    "Laboratorios Andes Ficticios",
+                    "Marca Alfa",
+                ),
+                _offer(
+                    suppliers["Sur"],
+                    sources["Sur"],
+                    items["c"],
+                    "C-S",
+                    "1800.00",
                     "Laboratorio Andino",
                     "Marca Beta",
                 ),
@@ -250,13 +278,23 @@ def _op(
     }
 
 
-async def _create(api, text: str, item="a", who="admin", key: str | None = None):
+async def _create(
+    api,
+    text: str,
+    item="a",
+    who="admin",
+    key: str | None = None,
+    previous: str | None = None,
+):
     headers = H(api, who)
     if key:
         headers["Idempotency-Key"] = key
+    body = {"text": text, "trade_item_id": str(api.ids["items"][item])}
+    if previous is not None:
+        body["previous_observation_id"] = previous
     return await api.post(
         "/api/v1/commercial-observations",
-        json={"text": text, "trade_item_id": str(api.ids["items"][item])},
+        json=body,
         headers=headers,
     )
 
@@ -468,6 +506,11 @@ async def test_ambiguedad_no_modifica_preferencias(api):
     assert observation["interpretation_status"] == "needs_review"
     assert observation["interpretation"]["error_code"] == "ambiguous"
     assert observation["interpretation"]["preferences"] == []
+    clarification = observation["interpretation"]["clarification"]
+    assert clarification["kind"] == "unclear_referent"
+    assert clarification["question"]
+    # Nunca se expone la nota técnica del modelo.
+    assert "No se identifica el laboratorio." not in clarification["question"]
     assert api.model.calls == 2
 
     r = await api.get(f"/api/v1/articles/{api.ids['items']['a']}/preferences", headers=H(api))
@@ -598,3 +641,140 @@ async def test_interpretacion_sin_proveedor_configurado(api):
     assert r.status_code == 503
     assert r.json()["error"]["code"] == "OBSERVATION_AI_DISABLED"
     assert (await _observations(api))[0]["interpretation_status"] == "sin_interpretacion"
+
+
+# --------------------------------------------------------------------------- aclaraciones
+
+
+async def test_andes_se_aclara_en_lenguaje_natural_y_aplica_el_nombre_verificado(api):
+    """Caso real: «Andes» no es el nombre literal, pero coincide con el valor publicado."""
+    created = await _create(api, "Prefiero el laboratorio Andes.", item="c")
+    observation_id = created.json()["observation_id"]
+    api.model.responses = [_response([_op(label="Andes")])]
+
+    r = await _interpret(api, observation_id)
+    assert r.status_code == 200, r.text
+    observation = r.json()["observation"]
+    assert observation["interpretation_status"] == "suggested"
+    interpretation = observation["interpretation"]
+    assert interpretation["clarification"] is None
+    assert [p["subject_label"] for p in interpretation["preferences"]] == [
+        "Laboratorios Andes Ficticios"
+    ]
+
+    r = await api.get(f"/api/v1/articles/{api.ids['items']['c']}/preferences", headers=H(api))
+    assert [p["subject_label"] for p in r.json()["preferences"]] == [
+        "Laboratorios Andes Ficticios"
+    ]
+
+
+async def test_un_laboratorio_ambiguo_pregunta_con_los_nombres_verificados(api):
+    created = await _create(api, "Prefiero el laboratorio Andes.", item="a")
+    observation_id = created.json()["observation_id"]
+    # El modelo inventa un nombre que no está verificado para este producto.
+    api.model.responses = [_response([_op(label="Laboratorio Austral")])]
+
+    r = await _interpret(api, observation_id)
+    assert r.status_code == 200, r.text
+    observation = r.json()["observation"]
+    assert observation["interpretation_status"] == "needs_review"
+    assert observation["interpretation"]["preferences"] == []
+    clarification = observation["interpretation"]["clarification"]
+    assert clarification["kind"] == "unknown_laboratory"
+    assert clarification["reference"] == "Laboratorio Austral"
+    assert "«Laboratorios Andes Ficticios»" in clarification["question"]
+    # Mientras sea ambiguo, ninguna preferencia cambia.
+    r = await api.get(f"/api/v1/articles/{api.ids['items']['a']}/preferences", headers=H(api))
+    assert r.json()["preferences"] == []
+
+
+async def test_la_aclaracion_queda_enlazada_sin_modificar_la_observacion_original(api):
+    first = await _create(api, "Prefiero ese laboratorio que te dije.")
+    first_id = first.json()["observation_id"]
+    api.model.responses = [
+        _response(ambiguity={"code": "unclear_referent", "note": "No se identifica."})
+    ]
+    pending = await _interpret(api, first_id)
+    assert pending.json()["observation"]["interpretation_status"] == "needs_review"
+    assert api.model.calls == 1
+
+    second = await _create(
+        api,
+        "Prefiero Laboratorio Chile.",
+        previous=first_id,
+        key="obs-aclaracion-0001",
+    )
+    assert second.status_code == 201, second.text
+    second_id = second.json()["observation_id"]
+    assert second_id != first_id
+    assert second.json()["context"]["previous_observation_id"] == first_id
+    # La observación original se conserva intacta, con su intento pendiente.
+    r = await api.get(f"/api/v1/commercial-observations/{first_id}", headers=H(api))
+    original = r.json()
+    assert original["text"] == "Prefiero ese laboratorio que te dije."
+    assert original["interpretation_status"] == "needs_review"
+    assert len(original["interpretations"]) == 1
+    assert "previous_observation_id" not in original["context"]
+
+    # La aclaración se interpreta de verdad, en su propia observación.
+    api.model.responses = [_response([_op()])]
+    r = await _interpret(api, second_id)
+    assert r.status_code == 200
+    assert r.json()["replayed"] is False
+    assert r.json()["observation"]["interpretation_status"] == "suggested"
+    assert api.model.calls == 2
+    r = await api.get(f"/api/v1/articles/{api.ids['items']['a']}/preferences", headers=H(api))
+    assert [p["subject_label"] for p in r.json()["preferences"]] == ["Laboratorio Chile"]
+
+
+async def test_la_aclaracion_debe_ser_del_mismo_articulo(api):
+    first = await _create(api, "Prefiero Laboratorio Chile.", item="a")
+
+    r = await _create(
+        api,
+        "Prefiero Laboratorio Chile.",
+        item="b",
+        previous=first.json()["observation_id"],
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "OBSERVATION_INVALID"
+
+    r = await _create(api, "Prefiero Laboratorio Chile.", previous=str(uuid.uuid4()))
+    assert r.status_code == 404
+
+
+async def test_reintentar_un_fallo_si_vuelve_a_llamar_al_modelo(api):
+    created = await _create(api, "Prefiero Laboratorio Chile.")
+    observation_id = created.json()["observation_id"]
+    api.model.responses = [ModelError("timeout")]
+    first = await _interpret(api, observation_id)
+    assert first.json()["observation"]["interpretation_status"] == "failed"
+    assert api.model.calls == 1
+
+    # «Intentar nuevamente» ejecuta de verdad la interpretación del mismo comentario.
+    api.model.responses = [_response([_op()])]
+    second = await _interpret(api, observation_id)
+    assert second.json()["replayed"] is False
+    assert second.json()["observation"]["interpretation_status"] == "suggested"
+    assert api.model.calls == 2
+    assert len(second.json()["observation"]["interpretations"]) == 2
+    assert len(await _observations(api)) == 1
+
+
+async def test_un_needs_review_no_se_reinterpreta_ni_cambia(api):
+    created = await _create(api, "Prefiero ese laboratorio que te dije.")
+    observation_id = created.json()["observation_id"]
+    api.model.responses = [
+        _response(ambiguity={"code": "insufficient_context", "note": "Falta el nombre."})
+    ]
+    first = await _interpret(api, observation_id)
+    clarification = first.json()["observation"]["interpretation"]["clarification"]
+    assert clarification["kind"] == "missing_detail"
+
+    # Repetir la interpretación devuelve el intento guardado: no consume cuota ni cambia nada.
+    api.model.responses = [_response([_op()])]
+    second = await _interpret(api, observation_id)
+    assert second.json()["replayed"] is True
+    assert api.model.calls == 1
+    assert second.json()["observation"]["interpretation"]["clarification"] == clarification
+    assert second.json()["observation"]["interpretation_status"] == "needs_review"

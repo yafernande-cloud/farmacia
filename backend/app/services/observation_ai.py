@@ -49,6 +49,7 @@ from app.interpretation.commercial import (
     ProposalRejected,
     ValidatedInterpretation,
     build_prompt,
+    default_clarification,
     output_json_schema,
     validate_proposal,
 )
@@ -247,6 +248,8 @@ async def interpret_observation(
             resolve_article=resolve_article,
         )
     except ProposalRejected as exc:
+        # Todo rechazo queda con una pregunta: si el motivo no tiene una específica, se guarda
+        # una genérica. Nunca se deja una interpretación pendiente sin explicar qué falta.
         return await _persist_attempt(
             session,
             actor,
@@ -260,7 +263,7 @@ async def interpret_observation(
             latency_ms=completion.latency_ms,
             error_code=exc.code,
             validated=None,
-            clarification=exc.clarification,
+            clarification=exc.clarification or default_clarification(),
         )
 
     status = "suggested" if validated.has_effects else "no_preference"

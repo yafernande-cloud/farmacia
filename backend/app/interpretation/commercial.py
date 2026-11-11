@@ -213,6 +213,16 @@ class CommercialContext:
         known = self.known_laboratories if kind == "laboratory" else self.known_brands
         return next((v for v in known if normalize_name(v) == key), None)
 
+    def verified_values(self, kind: str) -> tuple[str, ...]:
+        """Todos los valores verificados de esa clase, sin duplicados por nombre normalizado.
+
+        Solo nombres: ni ofertas, ni precios, ni stock de otros artículos. Es la lista que se le
+        puede mostrar a la persona para que aclare, no una lista de sugerencias.
+        """
+        source = self.laboratories if kind == "laboratory" else self.brands
+        known = self.known_laboratories if kind == "laboratory" else self.known_brands
+        return _unique_values((*source, *known))
+
 
 @dataclass(frozen=True)
 class ContextArticle:
@@ -379,8 +389,184 @@ def grounded_numbers(text: str) -> set[Decimal]:
     return values
 
 
-def _reject(code: str, reason: str) -> None:
-    raise ProposalRejected(code, reason)
+def _reject(code: str, reason: str, clarification: dict | None = None) -> None:
+    raise ProposalRejected(code, reason, clarification)
+
+
+# --------------------------------------------------------------------------- aclaraciones
+
+# Preguntas fijas por código de ambigüedad del modelo. Nunca se muestra la `note` del modelo:
+# se escribe aquí, en español simple, y no expone razonamiento ni vocabulario técnico.
+_AMBIGUITY_CLARIFICATIONS: dict[str, tuple[str, str]] = {
+    "unclear_referent": (
+        "unclear_referent",
+        "No pude identificar a qué o a quién te refieres. ¿Puedes nombrarlo exactamente "
+        "(producto, laboratorio, marca, proveedor o precio)?",
+    ),
+    "insufficient_context": (
+        "missing_detail",
+        "Para aplicarlo me falta un dato. ¿Puedes indicar el producto, laboratorio, marca, "
+        "proveedor o precio exacto al que te refieres?",
+    ),
+    "conflicting": (
+        "conflicting",
+        "Tu comentario contiene dos indicaciones que se contradicen. ¿Cuál quieres que aprenda?",
+    ),
+    "not_commercial": (
+        "not_commercial",
+        "No encontré una preferencia comercial en el comentario. Si querías enseñarme algo, "
+        "escríbelo como «prefiero…», «no me gusta…» o «no pago más de…».",
+    ),
+}
+
+_GENERIC_CLARIFICATION = (
+    "missing_detail",
+    "No pude aplicar el comentario tal como está. ¿Puedes escribirlo de otra forma, indicando "
+    "el laboratorio, la marca, el proveedor, la disponibilidad o el precio que prefieres?",
+)
+
+_SUBJECT_NAMES = {
+    "laboratory": ("laboratorio", "laboratorios"),
+    "brand": ("marca", "marcas"),
+    "supplier": ("proveedor", "proveedores"),
+}
+
+
+def _clarification(
+    kind: str,
+    question: str,
+    reference: str | None = None,
+    candidates: list[dict] | None = None,
+) -> dict:
+    """Pregunta de aclaración con la misma forma que ya consume el frontend."""
+    return {
+        "kind": kind,
+        "question": question,
+        "reference": reference,
+        "candidates": list(candidates or []),
+    }
+
+
+def _unique_values(values) -> tuple[str, ...]:
+    """Nombres no vacíos, sin duplicados por nombre normalizado, en orden de aparición."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        clean = value.strip()
+        key = normalize_name(clean)
+        if clean and key and key not in seen:
+            seen.add(key)
+            out.append(clean)
+    return tuple(out)
+
+
+def _tokens(text: str) -> list[str]:
+    return [token for token in normalize_name(text).split() if token]
+
+
+def _contains_token_sequence(label: str, value: str) -> bool:
+    """`label` aparece como palabras completas y contiguas dentro de `value`.
+
+    No compara parecidos ni distancias: «Andes» coincide con «Laboratorios Andes Ficticios»
+    porque es una palabra completa; «lab» no coincide con «laboratorios» y «ficticio» no
+    coincide con «ficticios». La coincidencia solo sirve para *señalar* un valor ya verificado;
+    nunca crea uno nuevo ni relaciona artículos.
+    """
+    label_tokens = _tokens(label)
+    value_tokens = _tokens(value)
+    if not label_tokens or len(label_tokens) > len(value_tokens):
+        return False
+    size = len(label_tokens)
+    return any(
+        value_tokens[i : i + size] == label_tokens
+        for i in range(len(value_tokens) - size + 1)
+    )
+
+
+@dataclass(frozen=True)
+class SubjectResolution:
+    """Resultado de resolver un nombre de laboratorio, marca o proveedor.
+
+    `value` solo se llena cuando la coincidencia es única; `matches` trae las coincidencias
+    parciales y `available` todos los valores verificados, para preguntar sin inventar.
+    """
+
+    value: str | None
+    matches: tuple[str, ...] = ()
+    available: tuple[str, ...] = ()
+
+
+def _resolve_subject_value(kind: str, label: str, context: CommercialContext) -> SubjectResolution:
+    exact = context.published_value(kind, label)
+    if exact is not None:
+        return SubjectResolution(exact)
+    available = context.verified_values(kind)
+    matches = tuple(v for v in available if _contains_token_sequence(label, v))
+    if len(matches) == 1:
+        return SubjectResolution(matches[0], matches, available)
+    return SubjectResolution(None, matches, available)
+
+
+def _resolve_supplier(label: str, context: CommercialContext) -> SubjectResolution:
+    exact = context.supplier_by_label(label)
+    if exact is not None:
+        return SubjectResolution(exact.name)
+    available = _unique_values(s.name for s in context.suppliers)
+    matches = tuple(v for v in available if _contains_token_sequence(label, v))
+    if len(matches) == 1:
+        return SubjectResolution(matches[0], matches, available)
+    return SubjectResolution(None, matches, available)
+
+
+def _format_values(values: tuple[str, ...], limit: int = 5) -> str:
+    shown = values[:limit]
+    text = " · ".join(f"«{value}»" for value in shown)
+    rest = len(values) - len(shown)
+    return f"{text} y {rest} más" if rest > 0 else text
+
+
+def _subject_clarification(
+    kind: str, label: str, resolution: SubjectResolution
+) -> dict:
+    """Pregunta concreta: qué no se encontró y qué nombres verificados sí existen."""
+    singular, plural = _SUBJECT_NAMES.get(kind, ("dato", "datos"))
+    if len(resolution.matches) > 1:
+        question = (
+            f"«{label}» puede corresponder a más de un {singular}: "
+            f"{_format_values(resolution.matches)}. ¿A cuál te refieres?"
+        )
+        return _clarification(f"unknown_{kind}", question, label)
+    if resolution.available:
+        question = (
+            f"No encontré «{label}» entre los {plural} verificados disponibles. "
+            f"Los que aparecen son: {_format_values(resolution.available)}. "
+            "Si te refieres a uno de ellos, puedes responder con su nombre o con la palabra "
+            "que lo distingue."
+        )
+        return _clarification(f"unknown_{kind}", question, label)
+    question = (
+        f"No puedo verificar «{label}»: este producto no tiene {plural} informados en sus "
+        "ofertas. ¿Puedes indicarlo tal como aparece, o preferir otro dato (proveedor, "
+        "disponibilidad o precio)?"
+    )
+    return _clarification(f"unknown_{kind}", question, label)
+
+
+def _low_confidence_clarification(label: str | None = None) -> dict:
+    return _clarification(
+        "low_confidence",
+        "No entendí con suficiente seguridad qué preferencia aplicar. ¿Puedes decirlo de otra "
+        "forma o con más detalle?",
+        (label or "").strip() or None,
+    )
+
+
+def default_clarification() -> dict:
+    """Pregunta de último recurso. Se guarda cuando un rechazo no trae una más específica."""
+    return _clarification(*_GENERIC_CLARIFICATION)
+
 
 
 def _decimal_field(raw: str | None, what: str) -> Decimal:
@@ -552,6 +738,12 @@ def _resolve_article_label(
     raise ProposalRejected(
         "validation_error",
         "El artículo nombrado no existe en el catálogo verificado; no se inventa un vínculo.",
+        clarification=_clarification(
+            "unknown_article",
+            f"No encontré «{label}» en el catálogo con ese nombre. ¿Cómo se llama el producto "
+            "tal como aparece en el catálogo?",
+            label,
+        ),
     )
 
 
@@ -567,7 +759,11 @@ def _validate_article_operations(
             _reject("validation_error", "La confianza de la operación está fuera de rango.")
         confidence = Decimal(str(operation.confidence)).quantize(Decimal("0.01"))
         if confidence < MIN_APPLIED_CONFIDENCE:
-            _reject("low_confidence", "La interpretación no tiene confianza suficiente.")
+            raise ProposalRejected(
+                "low_confidence",
+                "La interpretación no tiene confianza suficiente.",
+                clarification=_low_confidence_clarification(operation.article_label),
+            )
         label = operation.article_label.strip()
         if not label or len(label) > 300:
             _reject("validation_error", "La operación no nombra un artículo válido.")
@@ -637,8 +833,13 @@ def validate_proposal(
 
     if proposal.ambiguity is not None:
         # La ambigüedad nunca se resuelve inventando: no se aplica nada, aunque el modelo también
-        # haya propuesto operaciones.
-        _reject("ambiguous", "La observación no tiene una interpretación comercial inequívoca.")
+        # haya propuesto operaciones. La pregunta se escribe aquí, no se copia la nota del modelo.
+        kind, question = _AMBIGUITY_CLARIFICATIONS[proposal.ambiguity.code]
+        raise ProposalRejected(
+            "ambiguous",
+            "La observación no tiene una interpretación comercial inequívoca.",
+            clarification=_clarification(kind, question),
+        )
 
     article_preferences = _validate_article_operations(
         proposal, context, resolve_article or _current_article_resolver(context)
@@ -658,7 +859,11 @@ def validate_proposal(
             _reject("validation_error", "La confianza de la operación está fuera de rango.")
         confidence = Decimal(str(operation.confidence)).quantize(Decimal("0.01"))
         if confidence < MIN_APPLIED_CONFIDENCE:
-            _reject("low_confidence", "La interpretación no tiene confianza suficiente.")
+            raise ProposalRejected(
+                "low_confidence",
+                "La interpretación no tiene confianza suficiente.",
+                clarification=_low_confidence_clarification(label),
+            )
 
         if operation.subject_kind == "price":
             pref = _validate_price(operation, grounded, allowed_currencies, confidence)
@@ -693,11 +898,13 @@ def validate_proposal(
                     confidence=confidence,
                 )
             elif operation.subject_kind == "supplier":
-                supplier = context.supplier_by_label(label)
-                if supplier is None:
-                    _reject(
+                resolution = _resolve_supplier(label, context)
+                supplier = context.supplier_by_label(resolution.value or "")
+                if supplier is None or resolution.value is None:
+                    raise ProposalRejected(
                         "validation_error",
                         "El proveedor no existe o no está activo en la organización.",
+                        clarification=_subject_clarification("supplier", label, resolution),
                     )
                 pref = ValidatedPreference(
                     subject_kind="supplier",
@@ -719,32 +926,36 @@ def validate_proposal(
                     confidence=confidence,
                 )
             else:
-                published = context.published_value(operation.subject_kind, label)
+                resolution = _resolve_subject_value(operation.subject_kind, label, context)
+                published = resolution.value
                 if published is None:
-                    _reject(
+                    raise ProposalRejected(
                         "validation_error",
                         "El laboratorio o la marca no está verificado en las ofertas del "
                         "artículo ni en el catálogo de la organización.",
+                        clarification=_subject_clarification(
+                            operation.subject_kind, label, resolution
+                        ),
                     )
                 pref = ValidatedPreference(
-                subject_kind=operation.subject_kind,
-                subject_key=normalize_name(published),
-                subject_label=published,
-                subject_supplier_id=None,
-                effect=operation.effect,
-                tolerance_kind=tolerance[0],
-                tolerance_percent=tolerance[1],
-                tolerance_amount=tolerance[2],
-                tolerance_currency=tolerance[3],
-                tolerance_origin=tolerance[4],
-                price_reference_kind="none",
-                price_reference_amount=None,
-                price_reference_currency=None,
-                price_reference_basis=None,
-                price_reference_quantity=None,
-                price_reference_quantity_unit=None,
-                confidence=confidence,
-            )
+                    subject_kind=operation.subject_kind,
+                    subject_key=normalize_name(published),
+                    subject_label=published,
+                    subject_supplier_id=None,
+                    effect=operation.effect,
+                    tolerance_kind=tolerance[0],
+                    tolerance_percent=tolerance[1],
+                    tolerance_amount=tolerance[2],
+                    tolerance_currency=tolerance[3],
+                    tolerance_origin=tolerance[4],
+                    price_reference_kind="none",
+                    price_reference_amount=None,
+                    price_reference_currency=None,
+                    price_reference_basis=None,
+                    price_reference_quantity=None,
+                    price_reference_quantity_unit=None,
+                    confidence=confidence,
+                )
         cls = _class_of(pref.subject_kind, pref.price_reference_kind
                         if pref.subject_kind == "price" else None)
         if cls in seen_classes:

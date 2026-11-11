@@ -114,6 +114,17 @@ async def ai_farm(sessions):
                 attributes=_attrs("losartán", "20"),
                 data_origin="simulated",
             ),
+            # Caso real: la lista publica «Laboratorios Andes Ficticios» y la persona escribe
+            # «Andes». Es una palabra completa del nombre verificado, no un parecido.
+            "c": TradeItem(
+                organization_id=org.id,
+                display_name="Losartán 50 mg x 30 comprimidos",
+                identity_key="fixture-ai-losartan-50-30-andes",
+                ingredient="losartán",
+                laboratory="Laboratorios Andes Ficticios",
+                attributes=_attrs("losartán", "30"),
+                data_origin="simulated",
+            ),
         }
         s.add_all(items.values())
         await s.flush()
@@ -186,6 +197,24 @@ async def ai_farm(sessions):
                 "3000.00",
                 laboratory_as_published="Laboratorio Chile",
                 brand_as_published="Marca Alfa",
+            ),
+            _offer(
+                suppliers["Norte"],
+                sources["Norte"],
+                items["c"],
+                "C-N",
+                "2000.00",
+                laboratory_as_published="Laboratorios Andes Ficticios",
+                brand_as_published="Marca Alfa",
+            ),
+            _offer(
+                suppliers["Sur"],
+                sources["Sur"],
+                items["c"],
+                "C-S",
+                "1800.00",
+                laboratory_as_published="Laboratorio Andino",
+                brand_as_published="Marca Beta",
             ),
         ]
         s.add_all(offers)
@@ -633,9 +662,15 @@ async def test_no_inventa_laboratorio_y_no_aplica_nada(sessions, ai_farm):
     )
     assert outcome.status == "needs_review"
     assert outcome.error_code == "validation_error"
+    # La persona recibe una pregunta concreta con los nombres que sí están verificados.
+    assert outcome.clarification is not None
+    assert outcome.clarification["kind"] == "unknown_laboratory"
+    assert outcome.clarification["reference"] == "Laboratorio Inventado"
+    assert "«Laboratorios Andes Ficticios»" in outcome.clarification["question"]
     interps, prefs, _ = await _rows(sessions, ai_farm)
     assert len(interps) == 1 and interps[0].status == "needs_review"
     assert interps[0].raw_output is not None
+    assert interps[0].clarification == outcome.clarification
     assert prefs == []
 
 
@@ -725,8 +760,35 @@ async def test_ambiguedad_no_se_aplica(sessions, ai_farm):
     )
     assert outcome.status == "needs_review"
     assert outcome.error_code == "ambiguous"
+    # Se guarda una pregunta propia; la `note` del modelo no se muestra ni se copia.
+    assert outcome.clarification is not None
+    assert outcome.clarification["kind"] == "unclear_referent"
+    assert outcome.clarification["question"]
+    assert "No se identifica el laboratorio." not in outcome.clarification["question"]
     _, prefs, _ = await _rows(sessions, ai_farm)
     assert prefs == []
+
+
+async def test_andes_se_resuelve_con_el_nombre_publicado_completo(sessions, ai_farm):
+    """Caso real: «Andes» coincide con «Laboratorios Andes Ficticios» sin escribir el nombre exacto."""
+    obs = await _observation(sessions, ai_farm, "Prefiero el laboratorio Andes.", item="c")
+    fake = FakeModel(_response([_op(label="Andes")]))
+    outcome = await _run(sessions, ai_farm, obs, fake)
+
+    assert outcome.status == "suggested"
+    assert outcome.clarification is None
+    prefs = await _prefs(sessions, ai_farm, item="c")
+    assert [p.subject_kind for p in prefs.applicable] == ["laboratory"]
+    pref = prefs.applicable[0]
+    # Se guarda el valor verificado, nunca el texto abreviado.
+    assert pref.subject_label == "Laboratorios Andes Ficticios"
+    assert pref.subject_key == "laboratorios andes ficticios"
+
+    # El orden prefiere la oferta de ese laboratorio y mantiene visibles las demás.
+    ranks = await _ranks(sessions, ai_farm, item="c")
+    assert set(ranks) == {"C-N", "C-S"}
+    assert ranks["C-N"][3] == 0
+    assert ranks["C-S"][3] == 1
 
 
 async def test_sin_preferencia_comercial(sessions, ai_farm):
@@ -872,6 +934,37 @@ async def test_no_duplica_si_ya_hay_interpretacion_aplicable(sessions, ai_farm):
     interps, prefs, _ = await _rows(sessions, ai_farm)
     assert len(interps) == 1
     assert len(prefs) == 1
+
+
+async def test_una_revision_pendiente_se_devuelve_sin_llamar_al_modelo(sessions, ai_farm):
+    """Un reintento sobre `needs_review` no re-ejecuta nada: devuelve la misma pregunta."""
+    obs = await _observation(sessions, ai_farm, "Me gusta el laboratorio ese que te dije.")
+    first = await _run(
+        sessions,
+        ai_farm,
+        obs,
+        FakeModel(
+            _response(
+                ambiguity={"code": "unclear_referent", "note": "No se identifica el laboratorio."}
+            )
+        ),
+    )
+    assert first.status == "needs_review"
+    assert first.clarification is not None
+
+    repeated = FakeModel()
+    second = await _run(sessions, ai_farm, obs, repeated)
+
+    assert second.status == "needs_review"
+    assert second.replayed is True
+    assert second.interpretation_id == first.interpretation_id
+    assert second.clarification == first.clarification
+    # No se llama al intérprete ni se crea otra interpretación.
+    assert repeated.calls == []
+    interps, prefs, observations = await _rows(sessions, ai_farm)
+    assert len(interps) == 1
+    assert prefs == []
+    assert len(observations) == 1
 
 
 # --------------------------------------------------------------------------- configuración
