@@ -1224,7 +1224,13 @@ async def run_import(
         ).scalar_one_or_none()
         if previous is not None:
             # Mismo archivo (mismo hash) para la misma fuente: resultado original, sin escribir de
-            # nuevo.
+            # nuevo. Una repetición también repara la marca de última carga de las importaciones
+            # hechas antes de que se guardara, sin crear ofertas ni corridas.
+            if previous.rows_accepted > 0 and (
+                source.last_success_at is None or source.last_success_at < previous.imported_at
+            ):
+                source.last_success_at = previous.imported_at
+                source.last_error = None
             return _outcome_of(previous, dry_run=dry_run)
 
     if profile_override is not None:
@@ -1409,6 +1415,11 @@ async def run_import(
     await session.flush()
     # La respuesta y una repetición posterior deben coincidir: se informa la marca guardada.
     await session.refresh(run, ["imported_at"])
+    if accepted:
+        # Una importación con filas aceptadas es una lectura exitosa de la fuente. E4 deriva el
+        # estado de esta marca; sin ella, la pantalla seguiría diciendo «sin archivo cargado».
+        source.last_success_at = run.imported_at
+        source.last_error = None
     emit(
         session,
         org_id=org,

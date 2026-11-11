@@ -9,13 +9,13 @@ en oferta comprable. El estado (E4) se deriva; no se guarda. Los secretos no exi
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.errors import DomainError, not_found
 from app.core.permissions import require_admin
-from app.models import Source, Supplier
+from app.models import ImportRun, Source, Supplier
 from app.services.actors import Actor
 from app.services.events import advisory_lock, emit
 from app.services.provenance import OrgKind, org_kind, origin_for
@@ -297,19 +297,64 @@ async def list_sources(
     return list((await session.execute(q.order_by(Source.name))).scalars().all())
 
 
-def source_status(source: Source, *, now: datetime, stale_after_hours: int) -> str:
+def _effective_last_success(
+    source: Source, imported_success_at: datetime | None
+) -> datetime | None:
+    """Marca de última lectura: la de la fuente o, si faltaba, la de su última importación.
+
+    La importación manual guarda `last_success_at`; esta lectura cubre además las importaciones
+    realizadas antes de que existiera esa escritura, sin volver a importar ni duplicar ofertas.
+    """
+    if imported_success_at is None:
+        return source.last_success_at
+    if source.last_success_at is None:
+        return imported_success_at
+    return max(source.last_success_at, imported_success_at)
+
+
+async def import_success_by_source(
+    session: AsyncSession, actor: Actor, source_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, datetime]:
+    """Última importación con filas aceptadas por fuente (solo las fuentes pedidas)."""
+    if not source_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(ImportRun.source_id, func.max(ImportRun.imported_at))
+            .where(
+                ImportRun.organization_id == actor.organization_id,
+                ImportRun.source_id.in_(source_ids),
+                ImportRun.rows_accepted > 0,
+            )
+            .group_by(ImportRun.source_id)
+        )
+    ).all()
+    return {source_id: imported_at for source_id, imported_at in rows if imported_at is not None}
+
+
+def source_status(
+    source: Source,
+    *,
+    now: datetime,
+    stale_after_hours: int,
+    imported_success_at: datetime | None = None,
+) -> str:
     """Estado derivado de E4; nunca se guarda. Un error es `failed` hasta una nueva observación."""
     if source.last_error:
         return "failed"
-    if source.last_success_at is None:
+    last_success_at = _effective_last_success(source, imported_success_at)
+    if last_success_at is None:
         return "not_configured"
-    if now - source.last_success_at > timedelta(hours=stale_after_hours):
+    if now - last_success_at > timedelta(hours=stale_after_hours):
         return "stale"
     return "ok"
 
 
-def source_payload(source: Source, *, now: datetime | None = None) -> dict:
+def source_payload(
+    source: Source, *, now: datetime | None = None, imported_success_at: datetime | None = None
+) -> dict:
     now = now or datetime.now(UTC)
+    last_success_at = _effective_last_success(source, imported_success_at)
     return {
         "source_id": source.id,
         "name": source.name,
@@ -319,11 +364,14 @@ def source_payload(source: Source, *, now: datetime | None = None) -> dict:
         "capabilities": list(source.capabilities or []),
         "enabled": source.enabled,
         "status": source_status(
-            source, now=now, stale_after_hours=get_settings().source_stale_after_hours
+            source,
+            now=now,
+            stale_after_hours=get_settings().source_stale_after_hours,
+            imported_success_at=imported_success_at,
         ),
         # No existe almacén de credenciales todavía: se informa la verdad, no un adorno.
         "has_secret": False,
-        "last_success_at": source.last_success_at,
+        "last_success_at": last_success_at,
         "last_error": source.last_error,
         "version": source.version,
         "created_at": source.created_at,

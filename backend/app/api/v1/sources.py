@@ -70,7 +70,12 @@ async def list_sources(
     enabled: bool | None = None,
 ):
     rows = await svc.list_sources(session, actor, kind=kind, enabled=enabled)
-    return {"sources": [svc.source_payload(r) for r in rows]}
+    importadas = await svc.import_success_by_source(session, actor, [r.id for r in rows])
+    return {
+        "sources": [
+            svc.source_payload(r, imported_success_at=importadas.get(r.id)) for r in rows
+        ]
+    }
 
 
 @router.get(
@@ -81,7 +86,8 @@ async def list_sources(
 )
 async def get_source(source_id: uuid.UUID, session: Session, actor: StrongActor):
     row = await svc.get_source(session, actor, source_id)
-    return svc.source_payload(row)
+    importadas = await svc.import_success_by_source(session, actor, [row.id])
+    return svc.source_payload(row, imported_success_at=importadas.get(row.id))
 
 
 @router.post(

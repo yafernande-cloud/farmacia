@@ -16,7 +16,8 @@ perfil lo pide explícitamente (`options.create_missing_items`).
 import hashlib
 import re
 import uuid
-from datetime import UTC, datetime
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from typing import Any
 
@@ -25,6 +26,7 @@ from openpyxl import load_workbook
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.errors import DomainError, not_found
 from app.core.permissions import require_admin
 from app.models import (
@@ -1246,9 +1248,19 @@ async def check_import(
 
 
 async def latest_offers(
-    session: AsyncSession, actor: Actor, supplier_id: uuid.UUID, *, limit: int = 200
+    session: AsyncSession,
+    actor: Actor,
+    supplier_id: uuid.UUID,
+    *,
+    limit: int = 200,
+    trade_item_ids: Sequence[uuid.UUID] | None = None,
 ) -> list[dict[str, Any]]:
-    """Última observación de cada SKU de cada fuente del proveedor, con precio y fecha."""
+    """Última observación de cada SKU de cada fuente del proveedor, con precio y fecha.
+
+    `trade_item_ids` acota la lectura a los artículos que la pantalla puede mostrar; sin él se
+    devuelven las últimas observaciones del proveedor hasta `limit`. La fila sigue siendo la última
+    de su SKU: filtrar por artículo no cambia qué precio es el vigente de cada fuente.
+    """
     require_admin(actor.roles)
     org = actor.organization_id
     supplier = (
@@ -1266,17 +1278,16 @@ async def latest_offers(
         )
         .label("rank")
     )
-    latest = (
-        select(OfferSnapshot.id.label("offer_id"), rank)
-        .where(
-            OfferSnapshot.organization_id == org,
-            OfferSnapshot.supplier_id == supplier_id,
-        )
-        .subquery()
+    latest_query = select(OfferSnapshot.id.label("offer_id"), rank).where(
+        OfferSnapshot.organization_id == org,
+        OfferSnapshot.supplier_id == supplier_id,
     )
+    if trade_item_ids:
+        latest_query = latest_query.where(OfferSnapshot.trade_item_id.in_(list(trade_item_ids)))
+    latest = latest_query.subquery()
     rows = (
         await session.execute(
-            select(OfferSnapshot, TradeItem.display_name, Source.name)
+            select(OfferSnapshot, TradeItem.display_name, Source.name, Source.mode)
             .join(latest, latest.c.offer_id == OfferSnapshot.id)
             .join(
                 TradeItem,
@@ -1292,33 +1303,50 @@ async def latest_offers(
             .limit(limit)
         )
     ).all()
-    return [
-        {
-            "offer_id": offer.id,
-            "source_id": offer.source_id,
-            "source_name": source_name,
-            "external_id": offer.external_id,
-            "external_name": offer.external_name,
-            "trade_item_id": offer.trade_item_id,
-            "trade_item_name": item_name,
-            "price_amount": str(offer.price_amount),
-            "currency": offer.currency,
-            "price_basis": offer.price_basis,
-            "sale_unit": offer.sale_unit,
-            "sale_unit_text": offer.sale_unit_text,
-            "pack_units_per_commercial_unit": (
-                str(offer.pack_units_per_commercial_unit)
-                if offer.pack_units_per_commercial_unit is not None
-                else None
-            ),
-            "pack_base_unit": offer.pack_base_unit,
-            "stock_status": offer.stock_status,
-            "stock_quantity": (
-                str(offer.stock_quantity) if offer.stock_quantity is not None else None
-            ),
-            "review_status": offer.review_status,
-            "observed_at": offer.observed_at,
-            "imported_at": offer.created_at,
-        }
-        for offer, item_name, source_name in rows
-    ]
+    now = datetime.now(UTC)
+    fresh_hours = get_settings().source_stale_after_hours
+    out: list[dict[str, Any]] = []
+    for offer, item_name, source_name, source_mode in rows:
+        fresh_until = offer.observed_at + timedelta(hours=fresh_hours)
+        is_current = not (
+            (offer.valid_from is not None and offer.valid_from > now)
+            or (offer.valid_to is not None and offer.valid_to < now)
+        )
+        out.append(
+            {
+                "offer_id": offer.id,
+                "source_id": offer.source_id,
+                "source_name": source_name,
+                "source_mode": source_mode,
+                "external_id": offer.external_id,
+                "external_name": offer.external_name,
+                "trade_item_id": offer.trade_item_id,
+                "trade_item_name": item_name,
+                "price_amount": str(offer.price_amount),
+                "currency": offer.currency,
+                "price_basis": offer.price_basis,
+                "sale_unit": offer.sale_unit,
+                "sale_unit_text": offer.sale_unit_text,
+                "pack_units_per_commercial_unit": (
+                    str(offer.pack_units_per_commercial_unit)
+                    if offer.pack_units_per_commercial_unit is not None
+                    else None
+                ),
+                "pack_base_unit": offer.pack_base_unit,
+                "stock_status": offer.stock_status,
+                "stock_quantity": (
+                    str(offer.stock_quantity) if offer.stock_quantity is not None else None
+                ),
+                "stock_unit": offer.stock_unit,
+                "review_status": offer.review_status,
+                "notes": offer.notes,
+                "valid_from": offer.valid_from,
+                "valid_to": offer.valid_to,
+                "is_current": is_current,
+                "fresh_until": fresh_until,
+                "is_stale": now > fresh_until,
+                "observed_at": offer.observed_at,
+                "imported_at": offer.created_at,
+            }
+        )
+    return out

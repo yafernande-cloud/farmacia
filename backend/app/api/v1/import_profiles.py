@@ -170,6 +170,8 @@ class OfferOut(BaseModel):
     offer_id: uuid.UUID
     source_id: uuid.UUID
     source_name: str
+    # `api`/`fixture`/`manual_import`: la pantalla separa los precios de archivos de los en vivo.
+    source_mode: str
     external_id: str
     external_name: str | None
     trade_item_id: uuid.UUID
@@ -183,7 +185,15 @@ class OfferOut(BaseModel):
     pack_base_unit: str | None
     stock_status: str
     stock_quantity: str | None
+    stock_unit: str | None
     review_status: str
+    # Condiciones comerciales tal como las escribió el proveedor; explican una revisión pendiente.
+    notes: str | None
+    valid_from: datetime | None
+    valid_to: datetime | None
+    is_current: bool
+    fresh_until: datetime
+    is_stale: bool
     observed_at: datetime
     imported_at: datetime
 
@@ -353,5 +363,12 @@ async def list_supplier_offers(
     session: Session,
     actor: StrongActor,
     limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+    # Repetible: `?trade_item_ids=<uuid>&trade_item_ids=<uuid>`. Acota la lectura a los artículos
+    # que la búsqueda ya mostró, sin cambiar cuál es la última observación de cada SKU.
+    trade_item_ids: Annotated[list[uuid.UUID] | None, Query()] = None,
 ):
-    return {"offers": await svc.latest_offers(session, actor, supplier_id, limit=limit)}
+    return {
+        "offers": await svc.latest_offers(
+            session, actor, supplier_id, limit=limit, trade_item_ids=trade_item_ids
+        )
+    }

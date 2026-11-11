@@ -5,6 +5,7 @@ pequeño generado una vez con una herramienta de escritura, no un formato comerc
 Ninguna prueba usa servicios externos, credenciales reales ni bases reales.
 """
 
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -568,3 +569,102 @@ async def test_las_piezas_nuevas_son_solo_admin(api):
         f"/api/v1/suppliers/{api.farm['supplier']}/offers", headers=H(api, "outsider")
     )
     assert ajeno.status_code == 404
+
+
+# ---------- última carga, estado de la fuente y vigencia de los precios importados ----------
+
+
+async def test_importar_marca_la_ultima_carga_y_el_estado_de_la_fuente(api):
+    assert (await put_profile(api)).status_code == 200
+    r = await post_import(api, csv_bytes(), "lista.csv", key="marca-clave-01")
+    assert r.status_code == 200, r.text
+    assert r.json()["rows_accepted"] == 2
+
+    lista = await api.get("/api/v1/sources?kind=supplier&enabled=true", headers=H(api))
+    assert lista.status_code == 200, lista.text
+    fuente = next(
+        s for s in lista.json()["sources"] if s["source_id"] == str(api.farm["source"])
+    )
+    assert fuente["last_success_at"] is not None
+    assert fuente["status"] == "ok"
+
+    detalle = await api.get(f"/api/v1/sources/{api.farm['source']}", headers=H(api))
+    assert detalle.status_code == 200, detalle.text
+    assert detalle.json()["last_success_at"] == fuente["last_success_at"]
+
+
+async def test_una_importacion_previa_sin_marca_se_refleja_sin_duplicar(api, sessions):
+    """Las importaciones ya realizadas no se repiten: su corrida alimenta el estado de la fuente."""
+    importada = datetime.now(UTC) - timedelta(hours=1)
+    async with sessions() as s, s.begin():
+        s.add(
+            ImportRun(
+                organization_id=api.farm["org"],
+                source_id=api.farm["source"],
+                file_name="lista-andes.xlsx",
+                file_hash="b" * 64,
+                status="completed",
+                rows_total=30,
+                rows_accepted=30,
+                imported_at=importada,
+                data_origin="captured",
+            )
+        )
+
+    lista = await api.get("/api/v1/sources?kind=supplier&enabled=true", headers=H(api))
+    assert lista.status_code == 200, lista.text
+    fuente = next(
+        s for s in lista.json()["sources"] if s["source_id"] == str(api.farm["source"])
+    )
+    assert fuente["last_success_at"] is not None
+    assert fuente["last_success_at"].startswith(importada.strftime("%Y-%m-%dT%H:%M"))
+    assert fuente["status"] == "ok"
+    # La lectura del estado no crea ofertas ni corridas nuevas.
+    assert await count(sessions, ImportRun) == 1
+    assert await count(sessions, OfferSnapshot) == 0
+
+
+async def test_las_ofertas_importadas_filtran_por_articulo_y_explican_su_vigencia(api, sessions):
+    header = f"{CSV_HEADER};Condiciones"
+    filas = [
+        ["CSV-001", "GUANTES NITRILO M CAJA 100", "45990", "CAJA", "Entrega en 48 horas"],
+        ["CSV-002", "ALCOHOL 70% 1 L", "2990", "UNIDAD", ""],
+    ]
+    saved = await put_profile(
+        api,
+        columns={**CSV_COLUMNS, "conditions": {"header": "Condiciones"}},
+    )
+    assert saved.status_code == 200, saved.text
+    r = await post_import(api, csv_bytes(filas, header), "lista.csv", key="vigencia-clave-1")
+    assert r.status_code == 200, r.text
+    assert r.json()["rows_accepted"] == 2
+
+    async with sessions() as s:
+        guantes = (
+            await s.execute(
+                select(TradeItem).where(TradeItem.identity_key == "guantes-nitrilo-m")
+            )
+        ).scalar_one()
+
+    filtradas = await api.get(
+        f"/api/v1/suppliers/{api.farm['supplier']}/offers",
+        params={"trade_item_ids": str(guantes.id)},
+        headers=H(api),
+    )
+    assert filtradas.status_code == 200, filtradas.text
+    ofertas = filtradas.json()["offers"]
+    assert [o["external_id"] for o in ofertas] == ["CSV-001"]
+    oferta = ofertas[0]
+    assert oferta["review_status"] == "needs_review"
+    assert oferta["notes"] == "Entrega en 48 horas"
+    assert oferta["source_mode"] == "manual_import"
+    assert oferta["valid_from"] is None and oferta["valid_to"] is None
+    assert oferta["is_current"] is True
+    assert oferta["is_stale"] is False
+    assert oferta["fresh_until"]
+
+    todas = await api.get(
+        f"/api/v1/suppliers/{api.farm['supplier']}/offers", headers=H(api)
+    )
+    assert {o["external_id"] for o in todas.json()["offers"]} == {"CSV-001", "CSV-002"}
+
