@@ -14,7 +14,6 @@ perfil lo pide explícitamente (`options.create_missing_items`).
 """
 
 import hashlib
-import re
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
@@ -39,6 +38,7 @@ from app.models import (
 )
 from app.services.actors import Actor
 from app.services.events import advisory_lock, emit
+from app.services.import_freshness import current_list_filter, latest_valid_run_ids
 from app.services.imports import (
     FILE_FORMATS,
     INVALID_BASIS,
@@ -52,7 +52,10 @@ from app.services.imports import (
     _json_value,
     _load_profile,
     _normalize_header,
+    _Profile,
+    _resolve_columns,
     _text,
+    assess_price_format,
     columns_compatible,
     detect_file_format,
     read_raw_rows,
@@ -66,6 +69,7 @@ OPTION_KEYS = {
     "basis_values",
     "decimal_separator",
     "thousands_separator",
+    "price_format_confirmed",
     "date_format",
     "tax_included",
     "discount_included",
@@ -851,19 +855,33 @@ def _suggested_units(
     return units
 
 
-def _suggested_decimal_separator(
-    rows: list[tuple[int, tuple[Any, ...]]], price_index: int | None
-) -> str:
-    if price_index is None:
-        return "."
-    values = [
-        _text(values[price_index])
-        for _number, values in rows
-        if price_index < len(values) and _text(values[price_index])
-    ]
-    if any(re.fullmatch(r"\d+,\d{1,4}", v or "") for v in values):
-        return ","
-    return "."
+def _price_column_index(columns: dict[str, Any], header: tuple[Any, ...]) -> int | None:
+    """Índice de la columna de precio según el mapeo, sin exigir el resto de los roles."""
+    spec = columns.get("price")
+    if not isinstance(spec, dict):
+        return None
+    try:
+        return _resolve_columns({"price": spec}, header, required_roles=())["price"]
+    except DomainError:
+        # Una cabecera que no está en el archivo se informa como rechazo en la revisión; aquí no
+        # se puede interpretar el formato de una columna que no existe.
+        return None
+
+
+def _price_format(
+    rows: list[tuple[int, tuple[Any, ...]]],
+    columns: dict[str, Any],
+    header: tuple[Any, ...],
+    prof: _Profile,
+) -> dict[str, Any]:
+    """Formato propuesto/confirmado para la columna de precio de esta revisión."""
+    return assess_price_format(
+        rows,
+        _price_column_index(columns, header),
+        decimal_sep=prof.decimal_sep,
+        thousands_sep=prof.thousands_sep,
+        confirmed=prof.price_format_confirmed,
+    )
 
 
 def _preview_value(value: Any) -> Any:
@@ -917,9 +935,9 @@ async def preview_import(
         )
     header = next((values for number, values in rows if number == header_row), ())
     suggested = _suggested_columns(header)
-    price_index = suggested.get("price", {}).get("position")
-    price_index = price_index - 1 if isinstance(price_index, int) else None
+    price_index = _price_column_index(suggested, header)
     data_rows = [(number, values) for number, values in rows if number > header_row]
+    price_format = assess_price_format(data_rows, price_index)
     sample = [
         {
             "row": number,
@@ -952,11 +970,16 @@ async def preview_import(
         # Solo se propone lo que se puede ver en el archivo. Moneda, base de precio y unidad por
         # defecto quedan nulas: inventarlas sería falsear la oferta.
         "suggested_options": {
-            "decimal_separator": _suggested_decimal_separator(data_rows, price_index),
+            "decimal_separator": price_format["decimal_separator"],
+            "thousands_separator": price_format["thousands_separator"],
+            "price_format_confirmed": not price_format["requires_confirmation"],
             "currency": None,
             "price_basis": None,
             "default_sale_unit": None,
         },
+        # Diagnóstico de los separadores: si es ambiguo, la pantalla pide confirmación antes de
+        # importar; no se elige una lectura en silencio.
+        "price_format": price_format,
     }
 
 
@@ -1125,6 +1148,7 @@ async def check_import(
             status_code=422,
         )
     header = next((values for number, values in rows if number == header_row), ())
+    data_rows = [(number, values) for number, values in rows if number > header_row]
     ignored_columns: list[dict[str, Any]] = []
     if payload is not None:
         columns = payload.get("columns") or {}
@@ -1150,7 +1174,6 @@ async def check_import(
         detected = _suggested_columns(header)
         price_position = detected.get("price", {}).get("position")
         sale_position = detected.get("sale_unit", {}).get("position")
-        data_rows = [(number, values) for number, values in rows if number > header_row]
         # El contenido por envase es opcional y su unidad base no viene en el archivo. Sin esa
         # unidad no se puede guardar: se omite y queda explicado en los detalles técnicos.
         pack = detected.pop("pack", None)
@@ -1169,11 +1192,16 @@ async def check_import(
         units = _suggested_units(
             data_rows, sale_position - 1 if isinstance(sale_position, int) else None
         )
+        detected_format = assess_price_format(
+            data_rows,
+            price_position - 1 if isinstance(price_position, int) else None,
+        )
         options = {
-            "decimal_separator": _suggested_decimal_separator(
-                data_rows,
-                price_position - 1 if isinstance(price_position, int) else None,
-            )
+            "decimal_separator": detected_format["decimal_separator"],
+            "thousands_separator": detected_format["thousands_separator"],
+            # Un formato inequívoco queda confirmado por la evidencia del archivo; uno ambiguo
+            # espera la elección explícita de la persona en la revisión previa.
+            "price_format_confirmed": not detected_format["requires_confirmation"],
         }
         profile_source, profile_version = "detected", 0
     else:
@@ -1211,6 +1239,22 @@ async def check_import(
         "ignored_columns": ignored_columns,
         "file_hash": hashlib.sha256(content).hexdigest(),
     }
+    probe = ImportProfile(
+        id=uuid.uuid4(),
+        organization_id=actor.organization_id,
+        source_id=source.id,
+        file_format=file_format,
+        sheet=sheet,
+        header_row=header_row,
+        columns=clean_columns,
+        units=clean_units,
+        options=clean_options,
+        status="active",
+        version=profile_version,
+    )
+    # Misma validación que usará la importación real; un perfil inválido falla aquí y no al final.
+    prof = _load_profile(probe)
+    base["price_format"] = _price_format(data_rows, clean_columns, header, prof)
     missing_columns = _missing_required_roles(clean_columns, clean_options) if auto else []
     if missing_columns:
         # Se informa qué falta en vez de fallar con un mensaje técnico: la pantalla pregunta por
@@ -1228,21 +1272,6 @@ async def check_import(
             "unrecognised_bases": [],
             "missing_columns": missing_columns,
         }
-    probe = ImportProfile(
-        id=uuid.uuid4(),
-        organization_id=actor.organization_id,
-        source_id=source.id,
-        file_format=file_format,
-        sheet=sheet,
-        header_row=header_row,
-        columns=clean_columns,
-        units=clean_units,
-        options=clean_options,
-        status="active",
-        version=profile_version,
-    )
-    # Misma validación que usará la importación real; un perfil inválido falla aquí y no al final.
-    _load_profile(probe)
     outcome = await run_import(
         session,
         actor,
@@ -1265,6 +1294,8 @@ async def check_import(
         "unrecognised_units": _unrecognised_units(outcome.rows),
         "unrecognised_bases": _unrecognised_bases(outcome.rows),
         "missing_columns": [],
+        # El motor en seco es la fuente de verdad del formato que la importación real aplicará.
+        "price_format": outcome.price_format or base["price_format"],
     }
 
 
@@ -1279,11 +1310,13 @@ async def latest_offers(
     limit: int = 200,
     trade_item_ids: Sequence[uuid.UUID] | None = None,
 ) -> list[dict[str, Any]]:
-    """Última observación de cada SKU de cada fuente del proveedor, con precio y fecha.
+    """Última observación de cada SKU de la lista vigente de cada fuente del proveedor.
 
-    `trade_item_ids` acota la lectura a los artículos que la pantalla puede mostrar; sin él se
-    devuelven las últimas observaciones del proveedor hasta `limit`. La fila sigue siendo la última
-    de su SKU: filtrar por artículo no cambia qué precio es el vigente de cada fuente.
+    La lista vigente es la de la última importación con filas aceptadas; una corrida fallida no
+    reemplaza la última válida y las filas ausentes de la lista nueva no se presentan como precio
+    actual, aunque su snapshot histórico siga existiendo (D-151). `trade_item_ids` acota la lectura
+    a los artículos que la pantalla puede mostrar; sin él se devuelven las últimas observaciones
+    del proveedor hasta `limit`.
     """
     require_admin(actor.roles)
     org = actor.organization_id
@@ -1306,6 +1339,25 @@ async def latest_offers(
         OfferSnapshot.organization_id == org,
         OfferSnapshot.supplier_id == supplier_id,
     )
+    # Solo compiten las ofertas de la última corrida con filas aceptadas de cada fuente. Una fila
+    # que la lista nueva no trae deja de ser precio actual, sin borrar su historial (D-151).
+    source_ids = list(
+        (
+            await session.execute(
+                select(Source.id).where(
+                    Source.organization_id == org,
+                    Source.supplier_id == supplier_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    run_filter = current_list_filter(
+        await latest_valid_run_ids(session, org, source_ids=source_ids)
+    )
+    if run_filter is not None:
+        latest_query = latest_query.where(run_filter)
     if trade_item_ids:
         latest_query = latest_query.where(OfferSnapshot.trade_item_id.in_(list(trade_item_ids)))
     latest = latest_query.subquery()

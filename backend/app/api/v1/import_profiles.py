@@ -66,6 +66,49 @@ class PreviewRow(BaseModel):
     values: list[Any]
 
 
+class PriceFormatExampleOut(BaseModel):
+    """Un precio cuya lectura cambia según el formato, con las lecturas posibles."""
+
+    row: int
+    raw: str
+    amounts: list[str]
+
+
+class PriceFormatAmountOut(BaseModel):
+    """Lectura concreta de un ejemplo dentro de una interpretación."""
+
+    row: int
+    raw: str
+    amount: str
+
+
+class PriceFormatInterpretationOut(BaseModel):
+    """Una lectura posible de la columna de precios: decimal o con separador de miles."""
+
+    key: str
+    decimal_separator: str
+    thousands_separator: str | None
+    label: str
+    description: str
+    examples: list[PriceFormatAmountOut]
+
+
+class PriceFormatOut(BaseModel):
+    """Diagnóstico de separadores. Si es ambiguo, la importación real exige confirmación."""
+
+    status: Literal["ok", "ambiguous", "none"]
+    requires_confirmation: bool
+    confirmed: bool
+    declared_valid: bool
+    decimal_separator: str
+    thousands_separator: str | None
+    values_checked: int
+    unrecognized_values: int
+    examples: list[PriceFormatExampleOut]
+    interpretations: list[PriceFormatInterpretationOut]
+    message: str | None
+
+
 class PreviewOut(BaseModel):
     file_format: str
     sheets: list[str]
@@ -78,6 +121,7 @@ class PreviewOut(BaseModel):
     row_count: int
     suggested_columns: dict[str, dict[str, Any]]
     suggested_options: dict[str, Any]
+    price_format: PriceFormatOut | None = None
 
 
 class ImportCheckProblemOut(BaseModel):
@@ -171,6 +215,8 @@ class ImportCheckOut(BaseModel):
     missing_columns: list[str] = Field(default_factory=list)
     # Columnas opcionales omitidas a propósito (por ejemplo `pack` sin unidad base).
     ignored_columns: list[ImportIgnoredColumnOut] = Field(default_factory=list)
+    # Separadores de precio: si son ambiguos, hay que confirmar antes de importar.
+    price_format: PriceFormatOut | None = None
     file_hash: str
 
 

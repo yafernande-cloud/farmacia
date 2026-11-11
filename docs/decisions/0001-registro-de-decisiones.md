@@ -2572,3 +2572,54 @@ demostración, AND-027 a AND-030 sin identificar, la no sobrescritura de columna
 construida con un laboratorio **extraído de la descripción**). Verificación completa: backend **1.109 aprobadas / 8
 omitidas** con `REQUIRE_DB=1`, `ruff check` limpio; frontend **328 aprobadas en 34 archivos**, `tsc --noEmit`,
 `eslint` y `npm run build` sin errores.
+
+### D-151 — Precios de listas importadas: formato sin adivinar, lista vigente, cantidades y condiciones comerciales (2026-11-11)
+
+**Contexto.** La lista de Distribuidora Andes mostró un precio de **$2** para AND-001 porque «2.490» se leyó como
+`2.49`: el perfil no declaraba separador de miles y la pantalla formatea CLP sin decimales. La misma importación dejó
+vigente una oferta anterior (PAR500-20, $1.012) de la lista precedente, mostró cantidades como «120.000 caja» y usó
+etiquetas comerciales alarmantes («Pendiente de revisión», «Sin condiciones pendientes»). El diagnóstico se aprobó con
+alcance explícito; esta decisión registra las reglas implementadas. **No** corrige datos existentes, **no** reimporta
+archivos, **no** fusiona artículos y **no** modifica `supplier_product_mapping`.
+
+1. **Interpretación de precios: evidencia, nunca adivinanza.** Se prueban los formatos candidatos `(decimal, miles)`:
+   `.` sin miles, `,` sin miles, `.,` (decimal coma, miles punto), `,.` (decimal punto, miles coma) y las variantes con
+   espacio como miles. Un separador de miles declarado debe formar grupos de tres dígitos; «2.49» con miles punto se
+   rechaza en vez de convertirse en 24900. El espacio nunca se acepta como decimal. Las celdas **numéricas** de Excel
+   (`int`/`float`/`Decimal`) no se reinterpretan: su valor ya es el número.
+2. **Ambigüedad = confirmación obligatoria.** Si dos lecturas producen valores distintos (p. ej. «2.490» → 2,49 o
+   2490), `import-check` responde `price_format.status = "ambiguous"` con las interpretaciones y sus ejemplos, y la
+   revisión previa pide elegir una. La importación real **se bloquea con `422 IMPORT_FORMAT_INVALID`** mientras el
+   perfil no declare `price_format_confirmed: true` con separadores que lean todas las celdas. Declarar un separador
+   de miles en el perfil es evidencia explícita y cuenta como confirmación; los valores inequívocos se confirman solos.
+   Sustituye la sugerencia automática de separador decimal de **D-109** en lo relativo a precios: sigue proponiéndose
+   un separador, pero ya no se elige una lectura en silencio cuando hay más de una.
+3. **Lista vigente por fuente, sin borrar historial.** `OfferSnapshot` sigue siendo inmutable y no se actualiza ni se
+   elimina. La lectura (E1/E2/E3/E5, `latest_offers` de proveedores y precios de listas) filtra por la **última
+   `ImportRun` con `rows_accepted > 0`** de cada fuente: solo las ofertas cuyo `evidence.import_run_id` corresponde a
+   esa corrida se presentan como actuales. Las filas ausentes o rechazadas de la lista nueva dejan de mostrarse; sus
+   snapshots permanecen consultables en el historial. Una corrida fallida o sin filas aceptadas **no reemplaza** la
+   última lista válida. Las fuentes `api` sin `ImportRun` conservan su lectura actual: el criterio no afecta ofertas en
+   vivo.
+4. **Cantidades solo en presentación.** `stock_quantity` se muestra con `Intl.NumberFormat("es-CL")` y la unidad
+   plural («120 cajas»), sin alterar el valor almacenado (`Numeric(12,3)`). «120.000» es el decimal que serializa el
+   backend, no 120 mil cajas.
+5. **Condiciones comerciales sin alarma.** Las etiquetas visibles pasan a «Condiciones del proveedor» (con el texto
+   original de `notes`) y «Sin condiciones informadas». `review_status` y `notes` **no cambian en backend**; una oferta
+   con condiciones sigue sin presentarse como verificada. La identidad de laboratorio/marca se mantiene diferenciada y
+   sin badges destructivos.
+6. **Integridad.** No se fusionan artículos por nombre ni se modifica `supplier_product_mapping`. Crear artículos
+   internos para SKU nuevos (`create_missing_items`) puede producir un `TradeItem` por código aunque el producto ya
+   exista con otro SKU; el tratamiento propuesto es revisión y vinculación manual explícita, no automática, y no se
+   ejecutó sobre datos existentes.
+7. **Alcance.** Sin migración y sin cambios de esquema; E8 conserva su sobre congelado y los endpoints exponen
+   `price_format` de forma aditiva. Sin commit, push, despliegue, importación real, corrección de datos ni Lovable
+   Publish al implementarse.
+
+**Estado.** Implementada en código y probada el 2026-11-11: `services/imports.py` (`parse_decimal_text`,
+`assess_price_format`, bloqueo 422), `services/import_freshness.py` (última corrida válida y filtro de lectura),
+`services/search.py`, `services/import_profiles.py`, `api/v1/import_profiles.py`; frontend (`FormatoPrecio`,
+pregunta de confirmación en la revisión previa, `formatearCantidad`, tarjetas con condiciones y cantidades). Pruebas:
+`tests/test_price_format.py` (28 sin base de datos), `tests/test_import_current_list.py` (6 con base de datos),
+`tests/test_import_check_api.py` y suite completa de backend con `REQUIRE_DB=1`; frontend: pruebas de precios, stock,
+etiquetas y del flujo de confirmación, además de `tsc --noEmit`, `eslint` y `npm run build`.

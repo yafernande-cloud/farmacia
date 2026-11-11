@@ -385,7 +385,14 @@ async def test_auto_detecta_el_mapeo_sin_perfil_y_no_escribe(api, sessions):
     assert columnas["price"] == {"header": "Precio", "position": 3}
     # Moneda y base no se inventan: la revisión las reporta como problema de cada fila.
     assert "currency" in columnas and "basis" in columnas
-    assert body["profile"]["options"] == {"decimal_separator": "."}
+    # El precio «12345.60» es inequívoco: la detección lo deja confirmado y sin miles.
+    assert body["profile"]["options"] == {
+        "decimal_separator": ".",
+        "thousands_separator": None,
+        "price_format_confirmed": True,
+    }
+    assert body["price_format"]["status"] == "ok"
+    assert body["price_format"]["requires_confirmation"] is False
     assert await count(sessions, ImportRun) == 0
     assert await count(sessions, ImportProfile) == 1  # solo el perfil de la fixture
 

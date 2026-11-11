@@ -162,6 +162,9 @@ class ImportOutcome:
     repeated: bool = False
     dry_run: bool = False
     rows: list[dict[str, Any]] = field(default_factory=list)
+    # Diagnóstico de la revisión previa sobre los separadores de precio. No forma parte del sobre
+    # congelado de E8 y `as_response()` nunca lo expone.
+    price_format: dict[str, Any] | None = None
 
     def as_response(self) -> dict[str, Any]:
         return {
@@ -632,6 +635,7 @@ class _Profile:
     basis_values: dict[str, str]
     decimal_sep: str
     thousands_sep: str | None
+    price_format_confirmed: bool
     date_format: str | None
     tax_included: bool | None
     discount_included: bool | None
@@ -709,6 +713,13 @@ def _load_profile(profile: ImportProfile) -> _Profile:
             "El separador de miles y el decimal del perfil no pueden ser el mismo carácter.",
             status_code=422,
         )
+    price_format_confirmed = options.get("price_format_confirmed", False)
+    if not isinstance(price_format_confirmed, bool):
+        raise DomainError(
+            "IMPORT_FORMAT_INVALID",
+            "«price_format_confirmed» del perfil debe ser true o false.",
+            status_code=422,
+        )
     pack_base_unit = options.get("pack_base_unit")
     if pack_base_unit is not None and pack_base_unit not in UNITS:
         raise DomainError(
@@ -756,6 +767,10 @@ def _load_profile(profile: ImportProfile) -> _Profile:
         basis_values=basis_values,
         decimal_sep=decimal_sep or ".",
         thousands_sep=thousands_sep,
+        # Declarar un separador de miles es evidencia explícita del perfil: no es el valor por
+        # defecto y desambigua «2.490» sin necesidad de una confirmación adicional. Si el perfil
+        # no lo declara, la confirmación queda pendiente cuando el archivo es ambiguo.
+        price_format_confirmed=price_format_confirmed or thousands_sep is not None,
         date_format=_parse_date_format(options["date_format"])
         if options.get("date_format")
         else None,
@@ -781,21 +796,280 @@ def _load_profile(profile: ImportProfile) -> _Profile:
 # ---------- validación por fila ----------
 
 
-def _decimal(raw: Any, prof: _Profile, *, role: str, code: str, message: str) -> Decimal:
-    text = _text(raw)
-    if text is None:
-        raise RowProblem(code, message, fields=(role,))
-    cleaned = text.replace(" ", "")
-    if prof.thousands_sep:
-        cleaned = cleaned.replace(prof.thousands_sep, "")
-    if prof.decimal_sep != ".":
-        cleaned = cleaned.replace(prof.decimal_sep, ".")
-    if not re.fullmatch(r"-?\d+(?:\.\d+)?", cleaned):
-        raise RowProblem(code, message, fields=(role,))
+# Formatos que se prueban sobre los precios de texto, en orden de preferencia cuando empatan.
+# Los dos primeros tratan el único separador como decimal (comportamiento histórico); los dos
+# últimos declaran además un separador de miles. No se altera ningún valor por parecido.
+SEPARATOR_CANDIDATES: tuple[tuple[str, str | None], ...] = (
+    (".", None),
+    (",", None),
+    (".", ","),
+    (",", "."),
+    # El espacio nunca es un separador decimal: solo puede agrupar miles. Por eso no genera una
+    # lectura alternativa y no exige confirmación.
+    (",", " "),
+    (".", " "),
+)
+
+
+def _numeric_cell(raw: Any) -> Decimal | None:
+    """Valor de una celda numérica de Excel, sin reinterpretar su representación textual.
+
+    Una celda numérica ya guarda el número: `12.345` no es una cadena con separador de miles.
+    Volver a aplicarle separadores alteraría el valor que la planilla declaró.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, Decimal)):
+        return None
+    try:
+        value = raw if isinstance(raw, Decimal) else Decimal(str(raw))
+    except InvalidOperation:
+        return None
+    return value if value.is_finite() else None
+
+
+def parse_decimal_text(
+    text: str, decimal_sep: str, thousands_sep: str | None
+) -> Decimal | None:
+    """Interpreta un precio de texto con un formato declarado; `None` si no calza.
+
+    No adivina: si se declara separador de miles, este debe formar grupos de tres dígitos (el
+    primero, de uno a tres). Así «2.490» con miles es 2490, mientras que «2.49» no es un precio
+    con separador de miles y se rechaza en vez de convertirse en 24900.
+    """
+    s = text.strip()
+    if not s:
+        return None
+    # El espacio solo se acepta como separador de miles declarado; en otro formato sería una
+    # alteración silenciosa del texto publicado.
+    if thousands_sep == " ":
+        s = s.replace(" ", "").replace(" ", "")
+    if not s:
+        return None
+    sign = ""
+    if s[0] in "+-":
+        sign, s = s[0], s[1:]
+        if not s:
+            return None
+    if thousands_sep is not None and thousands_sep != " " and (" " in s or " " in s):
+        return None
+    if s.count(decimal_sep) > 1:
+        return None
+    if decimal_sep in s:
+        int_part, frac = s.split(decimal_sep, 1)
+        if not int_part or not frac.isdigit():
+            return None
+    else:
+        int_part, frac = s, None
+    other = "," if decimal_sep == "." else "."
+    if thousands_sep is None:
+        if other in int_part or (frac is not None and other in frac):
+            return None
+        groups = [int_part]
+    elif thousands_sep == " ":
+        if not int_part.isdigit():
+            return None
+        groups = [int_part]
+    else:
+        if other in int_part and other != thousands_sep:
+            return None
+        if frac is not None and (other in frac or thousands_sep in frac):
+            return None
+        groups = int_part.split(thousands_sep)
+        if not all(group.isdigit() for group in groups):
+            return None
+        if len(groups) > 1 and (
+            not 1 <= len(groups[0]) <= 3 or any(len(group) != 3 for group in groups[1:])
+        ):
+            return None
+    if not all(group.isdigit() for group in groups):
+        return None
+    cleaned = sign + "".join(groups) + (f".{frac}" if frac is not None else "")
+    if not re.fullmatch(r"[+-]?\d+(?:\.\d+)?", cleaned):
+        return None
     try:
         return Decimal(cleaned)
     except InvalidOperation:  # pragma: no cover — la expresión regular ya lo impide
-        raise RowProblem(code, message, fields=(role,)) from None
+        return None
+
+
+def _decimal_text(value: Decimal) -> str:
+    """Número para mostrar en la confirmación, sin ceros decimales que no aportan."""
+    text = format(value, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
+
+
+def assess_price_format(
+    rows: list[tuple[int, tuple[Any, ...]]],
+    price_index: int | None,
+    *,
+    decimal_sep: str = ".",
+    thousands_sep: str | None = None,
+    confirmed: bool = False,
+) -> dict[str, Any]:
+    """Clasifica el formato de la columna de precios sin escribir ni corregir nada.
+
+    Una celda numérica de Excel no participa: su valor ya es un número. Para los textos se prueban
+    los formatos posibles; si más de uno produce resultados distintos, el formato es ambiguo y la
+    importación real exige una confirmación explícita (`price_format_confirmed`). Las celdas que
+    ningún formato puede leer se cuentan aparte: son rechazos de fila, no una decisión de formato.
+    """
+    string_values: list[tuple[int, str]] = []
+    numeric_count = 0
+    if price_index is not None and price_index >= 0:
+        for number, values in rows:
+            if price_index >= len(values):
+                continue
+            raw = values[price_index]
+            if _blank(raw):
+                continue
+            if _numeric_cell(raw) is not None:
+                numeric_count += 1
+                continue
+            text = _text(raw)
+            if text is not None:
+                string_values.append((number, text))
+
+    base: dict[str, Any] = {
+        "status": "none",
+        "requires_confirmation": False,
+        "confirmed": confirmed,
+        "declared_valid": False,
+        "decimal_separator": decimal_sep,
+        "thousands_separator": thousands_sep,
+        "values_checked": len(string_values) + numeric_count,
+        "unrecognized_values": 0,
+        "examples": [],
+        "interpretations": [],
+        "message": None,
+    }
+    if price_index is None or not string_values:
+        # Solo números de Excel (o ninguna columna): no hay separadores que interpretar.
+        base["status"] = "ok" if numeric_count else "none"
+        base["declared_valid"] = True
+        return base
+
+    parseable: set[int] = set()
+    for dec, thou in SEPARATOR_CANDIDATES:
+        for index, (_number, text) in enumerate(string_values):
+            if parse_decimal_text(text, dec, thou) is not None:
+                parseable.add(index)
+    considered = [
+        (number, text) for index, (number, text) in enumerate(string_values) if index in parseable
+    ]
+    base["unrecognized_values"] = len(string_values) - len(considered)
+    if not considered:
+        base["status"] = "ok" if numeric_count else "none"
+        base["declared_valid"] = True
+        return base
+
+    # Interpretaciones distintas: se comparan por los valores que producen, no por la etiqueta
+    # del separador. `2.490` como decimal y como «decimal con miles coma» es la misma lectura.
+    interpretations: list[dict[str, Any]] = []
+    seen: set[tuple[str, ...]] = set()
+    for dec, thou in SEPARATOR_CANDIDATES:
+        values = [parse_decimal_text(text, dec, thou) for _number, text in considered]
+        if any(value is None for value in values):
+            continue
+        parsed = [value for value in values if value is not None]
+        signature = tuple(str(value) for value in parsed)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        kind = "thousands" if thou else "decimal"
+        separator = thou or dec
+        interpretations.append(
+            {
+                "key": kind,
+                "decimal_separator": dec,
+                "thousands_separator": thou,
+                "label": (
+                    f"«{separator}» separa miles"
+                    if kind == "thousands"
+                    else f"«{separator}» separa decimales"
+                ),
+                "description": (
+                    f"El separador «{separator}» agrupa miles; los decimales usan «{dec}»."
+                    if kind == "thousands"
+                    else f"El separador «{separator}» marca los decimales."
+                ),
+                "values": parsed,
+            }
+        )
+
+    # Muestra los valores donde las lecturas discrepan. Es evidencia, no una elección.
+    examples: list[dict[str, Any]] = []
+    example_indexes: list[int] = []
+    for index, (number, text) in enumerate(considered):
+        readings = {str(item["values"][index]) for item in interpretations}
+        if len(readings) <= 1:
+            continue
+        examples.append(
+            {
+                "row": number,
+                "raw": text,
+                "amounts": [_decimal_text(item["values"][index]) for item in interpretations],
+            }
+        )
+        example_indexes.append(index)
+        if len(examples) >= 3:
+            break
+    for item in interpretations:
+        item["examples"] = [
+            {
+                "row": considered[index][0],
+                "raw": considered[index][1],
+                "amount": _decimal_text(item["values"][index]),
+            }
+            for index in example_indexes
+        ]
+        del item["values"]
+
+    ambiguous = len(interpretations) > 1
+    # Una confirmación solo vale si el formato declarado puede leer TODOS los valores que algún
+    # formato puede leer. Confirmar sin declarar separadores coherentes no desbloquea nada.
+    declared_values = [parse_decimal_text(text, decimal_sep, thousands_sep) for _n, text in considered]
+    declared_valid = all(value is not None for value in declared_values)
+    base["declared_valid"] = declared_valid
+    if ambiguous:
+        suggested = next(
+            (
+                item
+                for item in interpretations
+                if item["decimal_separator"] == decimal_sep
+                and item["thousands_separator"] == thousands_sep
+            ),
+            interpretations[0],
+        )
+    else:
+        suggested = interpretations[0]
+    base["decimal_separator"] = suggested["decimal_separator"]
+    base["thousands_separator"] = suggested["thousands_separator"]
+    base["interpretations"] = interpretations
+    base["examples"] = examples
+    base["status"] = "ambiguous" if ambiguous else "ok"
+    base["requires_confirmation"] = ambiguous and not (confirmed and declared_valid)
+    if base["requires_confirmation"]:
+        sample = examples[0]
+        readings = " o ".join(f"«{amount}»" for amount in sample["amounts"])
+        base["message"] = (
+            f"El formato del precio «{sample['raw']}» es ambiguo: puede leerse como {readings}. "
+            "Confirma si el separador indica miles o decimales antes de importar."
+        )
+    return base
+
+
+def _decimal(raw: Any, prof: _Profile, *, role: str, code: str, message: str) -> Decimal:
+    numeric = _numeric_cell(raw)
+    if numeric is not None:
+        return numeric
+    text = _text(raw)
+    if text is None:
+        raise RowProblem(code, message, fields=(role,))
+    value = parse_decimal_text(text, prof.decimal_sep, prof.thousands_sep)
+    if value is None:
+        raise RowProblem(code, message, fields=(role,))
+    return value
 
 
 def _quantity(
@@ -1405,6 +1679,24 @@ async def run_import(
             status_code=422,
         )
 
+    # Los separadores de la columna de precio se revisan antes de escribir nada. Si el archivo es
+    # ambiguo («2.490» puede ser 2490 o 2,49 y no hay confirmación), la importación real no
+    # adivina: se detiene y pide confirmar en la revisión previa. Una revisión en seco sí devuelve
+    # las dos lecturas para que la persona elija.
+    price_format = assess_price_format(
+        rows,
+        prof.columns.get("price"),
+        decimal_sep=prof.decimal_sep,
+        thousands_sep=prof.thousands_sep,
+        confirmed=prof.price_format_confirmed,
+    )
+    if not dry_run and price_format["requires_confirmation"]:
+        raise DomainError(
+            "IMPORT_FORMAT_INVALID",
+            price_format["message"] or "El formato de los precios es ambiguo.",
+            status_code=422,
+        )
+
     kind, tz = await _organization(session, org)
     origin = origin_for(kind)
     items = await _mappings(session, org, source.id)
@@ -1484,6 +1776,7 @@ async def run_import(
             observed_at=now,
             dry_run=True,
             rows=detail,
+            price_format=price_format,
         )
 
     # Artículos nuevos: solo para las filas que ya pasaron toda la validación. Una fila rechazada
@@ -1609,6 +1902,7 @@ async def run_import(
         errors=errors,
         observed_at=run.imported_at,
         dry_run=False,
+        price_format=price_format,
     )
 
 

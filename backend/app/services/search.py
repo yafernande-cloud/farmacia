@@ -52,6 +52,7 @@ from app.models import (
 from app.services import preferences as preferences_svc
 from app.services import sources as sources_svc
 from app.services.actors import Actor
+from app.services.import_freshness import current_list_filter, latest_valid_run_ids
 from app.services.provenance import org_kind, origin_for
 
 FILTER_KEYS = ("ingredient", "brand", "laboratory", "form", "gtin")
@@ -140,29 +141,32 @@ def _current(offer: OfferSnapshot, now: datetime) -> bool:
 async def _latest_offers(
     session: AsyncSession, org: uuid.UUID, item_ids: list[uuid.UUID], *, now: datetime
 ) -> dict[uuid.UUID, list[OfferSnapshot]]:
-    """Última observación por (artículo, fuente). Una oferta reemplaza a la anterior de su fuente."""
+    """Última observación por (artículo, fuente) de la lista vigente de cada fuente.
+
+    Para las fuentes de archivo solo compiten las ofertas de la última importación con filas
+    aceptadas: una fila ausente o rechazada en la lista nueva no se presenta como precio actual
+    (D-151). Las fuentes en vivo, sin `import_run`, conservan la lectura anterior.
+    """
     if not item_ids:
         return {}
-    rows = (
-        (
-            await session.execute(
-                select(OfferSnapshot)
-                .where(
-                    OfferSnapshot.organization_id == org,
-                    OfferSnapshot.trade_item_id.in_(item_ids),
-                )
-                .ext(distinct_on(OfferSnapshot.trade_item_id, OfferSnapshot.source_id))
-                .order_by(
-                    OfferSnapshot.trade_item_id,
-                    OfferSnapshot.source_id,
-                    OfferSnapshot.observed_at.desc(),
-                    OfferSnapshot.created_at.desc(),
-                )
-            )
+    statement = (
+        select(OfferSnapshot)
+        .where(
+            OfferSnapshot.organization_id == org,
+            OfferSnapshot.trade_item_id.in_(item_ids),
         )
-        .scalars()
-        .all()
+        .ext(distinct_on(OfferSnapshot.trade_item_id, OfferSnapshot.source_id))
+        .order_by(
+            OfferSnapshot.trade_item_id,
+            OfferSnapshot.source_id,
+            OfferSnapshot.observed_at.desc(),
+            OfferSnapshot.created_at.desc(),
+        )
     )
+    run_filter = current_list_filter(await latest_valid_run_ids(session, org))
+    if run_filter is not None:
+        statement = statement.where(run_filter)
+    rows = (await session.execute(statement)).scalars().all()
     grouped: dict[uuid.UUID, list[OfferSnapshot]] = {}
     for o in rows:
         grouped.setdefault(o.trade_item_id, []).append(o)
