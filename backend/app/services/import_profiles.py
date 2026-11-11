@@ -61,6 +61,12 @@ from app.services.imports import (
     read_raw_rows,
     run_import,
 )
+from app.services.preferences import (
+    load_article_preferences,
+    load_item_preferences,
+    offer_view,
+    rank_provider_offers,
+)
 from app.services.provenance import org_kind, origin_for
 
 OPTION_KEYS = {
@@ -1435,4 +1441,15 @@ async def latest_offers(
                 "imported_at": offer.created_at,
             }
         )
+    # El orden de las preferencias viaja como clave, no como reordenamiento de la consulta: la
+    # pantalla ordena de forma estable y nunca vuelve a ordenar por nombre ni por fuente. La baja
+    # entre artículos solo actúa dentro de este proveedor; los proveedores no se ordenan entre sí.
+    item_ids = {row[0].trade_item_id for row in rows}
+    item_prefs = await load_item_preferences(session, org, item_ids)
+    article_prefs = await load_article_preferences(session, org, item_ids)
+    ranked = rank_provider_offers(
+        article_prefs, item_prefs, [offer_view(row[0]) for row in rows]
+    )
+    for entry, row in zip(out, rows, strict=True):
+        entry["order_key"] = list(ranked[row[0].id])
     return out

@@ -50,6 +50,7 @@ from app.models.events import AuditEvent, OutboxEvent
 from app.models.photo import TempPhoto
 from app.models.quote import (
     RETIRED_SUBJECT_KINDS,
+    CommercialArticlePreference,
     CommercialObservation,
     CommercialPreference,
     ObservationInterpretation,
@@ -64,7 +65,7 @@ from app.models.search import SearchResult, SearchRun, SearchSourceResult
 __all__ = [
     "ActorSession", "AppUser", "Attachment", "AuditEvent", "AuxiliaryProfile", "ChainProduct",
     "ChannelBinding", "ChannelMessage", "CommercialCriterion", "CommercialObservation",
-    "CommercialPreference", "CommercialReference", "ComparisonCandidate", "ComparisonLine",
+    "CommercialArticlePreference", "CommercialPreference", "CommercialReference", "ComparisonCandidate", "ComparisonLine",
     "ComparisonRun", "ComparisonSupplierTotal", "DemandItem", "DemandObservation",
     "ObservationInterpretation", "PreferenceOrderTrace", "Quote", "QuoteCart",
     "QuoteLine", "QuoteLineAllocation", "RETIRED_SUBJECT_KINDS",

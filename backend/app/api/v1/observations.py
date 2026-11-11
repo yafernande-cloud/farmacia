@@ -37,7 +37,11 @@ from app.models import CommercialObservation
 from app.services import observation_ai
 from app.services import preferences as preferences_svc
 from app.services import quotes as quote_svc
-from app.services.observation_views import observation_view, preference_view
+from app.services.observation_views import (
+    article_preference_view,
+    observation_view,
+    preference_view,
+)
 
 router = APIRouter(tags=["observaciones comerciales"])
 
@@ -91,6 +95,31 @@ class PreferenceOut(BaseModel):
     price_reference: PriceReferenceOut | None = None
 
 
+class ArticlePreferenceOut(BaseModel):
+    """Efecto comercial entre dos artículos distintos; nunca una equivalencia."""
+
+    article_preference_id: uuid.UUID
+    article_id: uuid.UUID
+    article_label: str
+    relative_to_article_id: uuid.UUID | None
+    relative_to_article_label: str | None
+    effect: Literal["prefer", "deprioritize", "retire"]
+
+
+class ClarificationCandidateOut(BaseModel):
+    article_id: uuid.UUID
+    display_name: str
+
+
+class ClarificationOut(BaseModel):
+    """Pregunta breve para resolver una referencia ambigua. No aplica nada por sí sola."""
+
+    kind: Literal["ambiguous_article"]
+    question: str
+    reference: str
+    candidates: list[ClarificationCandidateOut] = []
+
+
 class InterpretationOut(BaseModel):
     interpretation_id: uuid.UUID
     status: InterpretationStatus
@@ -99,6 +128,8 @@ class InterpretationOut(BaseModel):
     retired_subject_kinds: list[str]
     created_at: datetime
     preferences: list[PreferenceOut] = []
+    article_preferences: list[ArticlePreferenceOut] = []
+    clarification: ClarificationOut | None = None
 
 
 class ObservationDetailOut(BaseModel):
@@ -149,6 +180,8 @@ class ArticlePreferencesOut(BaseModel):
     preferences: list[PreferenceOut] = Field(
         description="Vigentes, ya resueltas por precedencia temporal."
     )
+    # Efectos entre artículos vigentes que tocan este artículo (como principal o alternativa).
+    article_preferences: list[ArticlePreferenceOut] = []
     retired_subject_kinds: list[str] = []
     history: list[PreferenceHistoryOut] = []
     retirements: list[RetirementOut] = []
@@ -167,8 +200,13 @@ async def _detail(
     prefs = await observation_ai.load_preferences(
         session, row.organization_id, [attempt.id for attempt in interpretations]
     )
+    article_prefs = await observation_ai.load_article_preferences(
+        session, row.organization_id, [attempt.id for attempt in interpretations]
+    )
     latest = interpretations[0] if interpretations else None
-    payload = observation_view(row, latest, prefs, history=interpretations)
+    payload = observation_view(
+        row, latest, prefs, history=interpretations, article_prefs=article_prefs
+    )
     # Un retiro solo tiene efecto si la interpretación se aplicó (D-144).
     payload["retired_subject_kinds"] = (
         list(latest.retired_subject_kinds or ())
@@ -242,6 +280,9 @@ async def get_article_preferences(
     history = await preferences_svc.load_preference_history(
         session, actor.organization_id, item.id
     )
+    article_loaded = await preferences_svc.load_article_preferences(
+        session, actor.organization_id, [item.id]
+    )
     active_ids = {pref.id for pref in loaded.applicable}
     current_retired = set(loaded.retired_subject_kinds)
     retirements = [
@@ -259,6 +300,9 @@ async def get_article_preferences(
     return {
         "article_id": item.id,
         "preferences": [preference_view(pref) for pref in loaded.applicable],
+        "article_preferences": [
+            article_preference_view(event) for event in article_loaded.active_events
+        ],
         "retired_subject_kinds": list(loaded.retired_subject_kinds),
         "history": [
             {

@@ -10,7 +10,12 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from app.models import CommercialObservation, CommercialPreference, ObservationInterpretation
+from app.models import (
+    CommercialArticlePreference,
+    CommercialObservation,
+    CommercialPreference,
+    ObservationInterpretation,
+)
 
 
 def _text(value: Any) -> str | None:
@@ -46,9 +51,22 @@ def preference_view(pref: CommercialPreference) -> dict[str, Any]:
     }
 
 
+def article_preference_view(pref: CommercialArticlePreference) -> dict[str, Any]:
+    """Efecto entre artículos, con nombres verificados y sin confianza ni texto del modelo."""
+    return {
+        "article_preference_id": pref.id,
+        "article_id": pref.article_id,
+        "article_label": pref.article_label,
+        "relative_to_article_id": pref.relative_to_article_id,
+        "relative_to_article_label": pref.relative_to_article_label,
+        "effect": pref.effect,
+    }
+
+
 def interpretation_view(
     interpretation: ObservationInterpretation,
     prefs: dict[uuid.UUID, tuple[CommercialPreference, ...]],
+    article_prefs: dict[uuid.UUID, tuple[CommercialArticlePreference, ...]] | None = None,
 ) -> dict[str, Any]:
     return {
         "interpretation_id": interpretation.id,
@@ -60,6 +78,12 @@ def interpretation_view(
         "preferences": [
             preference_view(pref) for pref in prefs.get(interpretation.id, ())
         ],
+        "article_preferences": [
+            article_preference_view(pref)
+            for pref in (article_prefs or {}).get(interpretation.id, ())
+        ],
+        # Solo una pregunta breve y candidatos verificados; nunca el razonamiento del modelo.
+        "clarification": interpretation.clarification,
     }
 
 
@@ -69,6 +93,7 @@ def observation_view(
     prefs: dict[uuid.UUID, tuple[CommercialPreference, ...]],
     *,
     history: tuple[ObservationInterpretation, ...] = (),
+    article_prefs: dict[uuid.UUID, tuple[CommercialArticlePreference, ...]] | None = None,
 ) -> dict[str, Any]:
     """Forma O1 + la interpretación más reciente y, si se pide, todos los intentos."""
     attempts = history or ((latest,) if latest is not None else ())
@@ -86,9 +111,12 @@ def observation_view(
         "data_origin": row.data_origin,
         "interpretation_status": latest.status if latest is not None else "sin_interpretacion",
         "interpretation": (
-            interpretation_view(latest, prefs) if latest is not None else None
+            interpretation_view(latest, prefs, article_prefs)
+            if latest is not None
+            else None
         ),
         "interpretations": [
-            interpretation_view(interpretation, prefs) for interpretation in attempts
+            interpretation_view(interpretation, prefs, article_prefs)
+            for interpretation in attempts
         ],
     }

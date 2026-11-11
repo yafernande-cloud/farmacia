@@ -109,6 +109,8 @@ class SupplierOfferOut(BaseModel):
     # El carrito no se conecta en esta etapa: solo se informa si faltan datos comerciales.
     cart_eligible: bool
     cart_blockers: list[str]
+    # Clave opaca de orden comercial dentro de este proveedor. Sin vínculo verificado, neutra.
+    order_key: list[int] = Field(default_factory=list)
 
 
 class PublishedProductOut(BaseModel):

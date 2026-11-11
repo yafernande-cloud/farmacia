@@ -93,6 +93,7 @@ def _proposal(operations=(), retire=(), ambiguity=None) -> ObservationProposal:
     return ObservationProposal.model_validate(
         {
             "operations": list(operations),
+            "article_operations": [],
             "retire_subject_kinds": list(retire),
             "ambiguity": ambiguity,
         }
@@ -119,6 +120,7 @@ def test_esquema_estricto_para_salida_estructurada():
     _walk(schema)
     assert set(schema["properties"]) == {
         "operations",
+        "article_operations",
         "retire_subject_kinds",
         "ambiguity",
     }
@@ -462,7 +464,7 @@ def test_sin_operaciones_ni_retiros_no_hay_efectos():
 # --------------------------------------------------------------------------- adaptador
 
 
-def _completion_body(text: str = '{"operations": [], "retire_subject_kinds": [], "ambiguity": null}'):
+def _completion_body(text: str = '{"operations": [], "article_operations": [], "retire_subject_kinds": [], "ambiguity": null}'):
     return {
         "model": "modelo-de-prueba",
         "output": [
@@ -508,7 +510,7 @@ async def test_adaptador_envia_salida_estructurada_y_lee_la_respuesta():
     assert captured["body"]["reasoning"] == {"effort": "low"}
     assert captured["body"]["max_output_tokens"] == 2500
     assert result == RawCompletion(
-        text='{"operations": [], "retire_subject_kinds": [], "ambiguity": null}',
+        text='{"operations": [], "article_operations": [], "retire_subject_kinds": [], "ambiguity": null}',
         model="modelo-de-prueba",
         input_tokens=120,
         output_tokens=30,

@@ -258,6 +258,9 @@ class OfferOut(BaseModel):
     is_stale: bool
     observed_at: datetime
     imported_at: datetime
+    # Clave opaca de orden comercial (preferencias). La pantalla ordena de forma estable por esta
+    # clave y nunca por nombre ni fuente; sin preferencias todas las ofertas valen lo mismo.
+    order_key: list[int] = Field(default_factory=list)
 
 
 class OfferListOut(BaseModel):

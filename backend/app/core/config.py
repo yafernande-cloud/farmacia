@@ -149,7 +149,7 @@ class Settings(BaseSettings):
     # Esfuerzo de razonamiento de los modelos GPT-5.x. `low` basta para extraer una propuesta
     # breve y acotada; `none` lo desactiva. Se envía solo cuando tiene valor.
     openai_reasoning_effort: Literal["none", "low", "medium", "high", "xhigh"] | None = "low"
-    openai_prompt_version: str = "a6-observations-v2"
+    openai_prompt_version: str = "a6-observations-v3"
     # Protección básica contra llamadas excesivas; no sustituye un presupuesto (D-142 §8.5).
     openai_max_calls_per_minute: int = Field(default=30, ge=1, le=600)
     # Tolerancia implícita cuando la persona dice «aunque sea un poco más caro», sin porcentaje

@@ -35,13 +35,14 @@ from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.products import normalize_name
 from app.models import (
+    CommercialArticlePreference,
     CommercialPreference,
     ObservationInterpretation,
     PreferenceOrderTrace,
@@ -70,21 +71,26 @@ CLASS_ORDER: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class OfferView:
-    """Lo único que el motor necesita de una oferta. Nada se infiere: NULL sigue siendo NULL."""
+    """Lo único que el motor necesita de una oferta. Nada se infiere: NULL sigue siendo NULL.
+
+    `trade_item_id` puede ser `None` en ofertas vivas sin identidad verificada. Esas ofertas
+    siguen visibles y reciben la clave de artículo neutra: no se les inventa una asociación.
+    """
 
     offer_id: uuid.UUID
-    supplier_id: uuid.UUID
+    supplier_id: uuid.UUID | None
     laboratory: str | None
     brand: str | None
     currency: str
     price_amount: Decimal
-    price_basis: str
+    price_basis: str | None
     pack_units_per_commercial_unit: Decimal | None
     stock_status: str
     stock_quantity: Decimal | None
     stock_unit: str | None
-    sale_unit: str
+    sale_unit: str | None
     line_payable: Decimal | None = None
+    trade_item_id: uuid.UUID | None = None
 
 
 def offer_view(offer: Any, *, line_payable: Decimal | None = None) -> OfferView:
@@ -103,6 +109,7 @@ def offer_view(offer: Any, *, line_payable: Decimal | None = None) -> OfferView:
         stock_unit=offer.stock_unit,
         sale_unit=offer.sale_unit,
         line_payable=line_payable,
+        trade_item_id=getattr(offer, "trade_item_id", None),
     )
 
 
@@ -298,6 +305,163 @@ async def load_preference_history(
         .scalars()
         .all()
     )
+
+
+# --------------------------------------------------------- preferencias entre artículos
+
+
+@dataclass(frozen=True)
+class ArticlePreferences:
+    """Efectos vigentes **entre artículos** para una consulta concreta (A6 Fase 4).
+
+    No son equivalencias farmacológicas ni agrupaciones: solo dicen qué artículo va después.
+
+    * `demoted`: artículos cuya baja de prioridad global sigue vigente.
+    * `preferred_pairs`: pares `(ganador, perdedor)` vigentes. Solo demoran al perdedor cuando
+      ambos aparecen en la misma lista; no elevan al ganador por encima de artículos ajenos.
+
+    `events` conserva las filas consultadas (incluidos retiros) para trazabilidad interna.
+    """
+
+    events: tuple[CommercialArticlePreference, ...] = ()
+    active_events: tuple[CommercialArticlePreference, ...] = ()
+    demoted: frozenset[uuid.UUID] = frozenset()
+    preferred_pairs: tuple[tuple[uuid.UUID, uuid.UUID], ...] = ()
+
+    @property
+    def has_effects(self) -> bool:
+        return bool(self.demoted or self.preferred_pairs)
+
+    @property
+    def observation_ids(self) -> tuple[uuid.UUID, ...]:
+        return tuple(dict.fromkeys(event.observation_id for event in self.events))
+
+
+EMPTY_ARTICLES = ArticlePreferences()
+
+
+def _resolve_article_events(
+    events: Sequence[CommercialArticlePreference],
+) -> ArticlePreferences:
+    """Resuelve el evento más reciente por relación; la historia no se reescribe.
+
+    Relación global: `(artículo, None)`. Relación por par: `(ganador, alternativa)`. Un
+    `retire` con alternativa apaga ese par; sin alternativa apaga la baja global del artículo y
+    cualquier par en el que ese artículo sea el ganador. Un `prefer` posterior vuelve a
+    establecerlo porque se procesa después en la secuencia temporal.
+    """
+    ordered = sorted(events, key=lambda event: (event.created_at, str(event.id)))
+    latest: dict[tuple[uuid.UUID, uuid.UUID | None], CommercialArticlePreference] = {}
+    for event in ordered:
+        if event.effect == "retire":
+            if event.relative_to_article_id is not None:
+                latest[(event.article_id, event.relative_to_article_id)] = event
+            else:
+                latest[(event.article_id, None)] = event
+                for key in [k for k in latest if k[0] == event.article_id and k[1] is not None]:
+                    latest[key] = event
+            continue
+        latest[(event.article_id, event.relative_to_article_id)] = event
+
+    demoted: set[uuid.UUID] = set()
+    pairs: list[tuple[uuid.UUID, uuid.UUID]] = []
+    active: list[CommercialArticlePreference] = []
+    for (article_id, relative_to), event in latest.items():
+        if event.effect == "deprioritize" and relative_to is None:
+            demoted.add(article_id)
+            active.append(event)
+        elif event.effect == "prefer" and relative_to is not None:
+            pairs.append((article_id, relative_to))
+            active.append(event)
+    pairs.sort(key=lambda pair: (str(pair[0]), str(pair[1])))
+    active.sort(key=lambda event: (event.created_at, str(event.id)))
+    return ArticlePreferences(
+        events=tuple(events),
+        active_events=tuple(active),
+        demoted=frozenset(demoted),
+        preferred_pairs=tuple(pairs),
+    )
+
+
+async def load_article_preferences(
+    session: AsyncSession,
+    organization_id: uuid.UUID,
+    article_ids: Iterable[uuid.UUID],
+) -> ArticlePreferences:
+    """Carga los eventos entre artículos que tocan a los artículos consultados.
+
+    Solo filas con interpretación aplicada (`suggested`/`confirmed`) y estado aplicado. Una
+    observación ambigua (`needs_review`) o rechazada no ordena nada.
+    """
+    ids = list(dict.fromkeys(article_ids))
+    if not ids:
+        return EMPTY_ARTICLES
+    applied_interpretations = select(ObservationInterpretation.id).where(
+        ObservationInterpretation.organization_id == organization_id,
+        ObservationInterpretation.status.in_(APPLIED_STATUSES),
+    )
+    rows = (
+        (
+            await session.execute(
+                select(CommercialArticlePreference).where(
+                    CommercialArticlePreference.organization_id == organization_id,
+                    CommercialArticlePreference.status.in_(APPLIED_STATUSES),
+                    CommercialArticlePreference.interpretation_id.in_(
+                        applied_interpretations
+                    ),
+                    # El artículo puede ser el que se baja/prefiere o la alternativa del par.
+                    or_(
+                        CommercialArticlePreference.article_id.in_(ids),
+                        CommercialArticlePreference.relative_to_article_id.in_(ids),
+                    ),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return _resolve_article_events(rows)
+
+
+def rank_provider_offers(
+    article_prefs: ArticlePreferences,
+    item_prefs: dict[uuid.UUID, ItemPreferences] | None,
+    views: Sequence[OfferView],
+    *,
+    quantity: Decimal | None = None,
+    unit: str | None = None,
+) -> dict[uuid.UUID, tuple[int, ...]]:
+    """Clave de orden **dentro de un proveedor**: artículo primero, luego la oferta.
+
+    `(baja_global, derrotas_por_par, *rank_offers)`. Las ofertas sin `trade_item_id` conservan
+    la clave neutra y no participan de ningún par: siguen visibles, sin asociación inventada.
+    Los proveedores no se ordenan entre sí; cada uno aplica esta clave a sus propias ofertas.
+    """
+    item_prefs = item_prefs or {}
+    present = {view.trade_item_id for view in views if view.trade_item_id is not None}
+    losses: dict[uuid.UUID, int] = {}
+    for winner, loser in article_prefs.preferred_pairs:
+        if winner in present and loser in present:
+            losses[loser] = losses.get(loser, 0) + 1
+
+    grouped: dict[uuid.UUID | None, list[OfferView]] = {}
+    for view in views:
+        grouped.setdefault(view.trade_item_id, []).append(view)
+
+    out: dict[uuid.UUID, tuple[int, ...]] = {}
+    for article_id, group in grouped.items():
+        if article_id is None:
+            intra = {view.offer_id: ZERO_RANKS for view in group}
+            demoted, lost = 0, 0
+        else:
+            intra = rank_offers(
+                item_prefs.get(article_id, EMPTY), group, quantity=quantity, unit=unit
+            )
+            demoted = 1 if article_id in article_prefs.demoted else 0
+            lost = 1 if losses.get(article_id, 0) > 0 else 0
+        for view in group:
+            out[view.offer_id] = (demoted, lost) + tuple(intra[view.offer_id])
+    return out
 
 
 # --------------------------------------------------------------------------- orden

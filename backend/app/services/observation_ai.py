@@ -41,7 +41,9 @@ from app.core.errors import not_found
 from app.core.permissions import require_admin
 from app.domain.products import normalize_name
 from app.interpretation.commercial import (
+    ArticleResolution,
     CommercialContext,
+    ContextArticle,
     ContextSupplier,
     ObservationProposal,
     ProposalRejected,
@@ -56,12 +58,14 @@ from app.interpretation.openai_observations import (
     OpenAIResponsesModel,
 )
 from app.models import (
+    CommercialArticlePreference,
     CommercialObservation,
     CommercialPreference,
     ObservationInterpretation,
     OfferSnapshot,
     Supplier,
     TradeItem,
+    TradeItemAlias,
 )
 from app.services.actors import Actor
 from app.services.events import advisory_lock, emit
@@ -73,6 +77,10 @@ CONTEXT_OFFER_LIMIT = 200
 # Cota de sujetos conocidos que se muestran al modelo. Evita prompts sin límite en catálogos
 # grandes; el orden es determinista.
 CONTEXT_SUBJECT_LIMIT = 200
+# Cota del catálogo que se indexa para resolver nombres de otros artículos por igualdad exacta.
+CONTEXT_ARTICLE_LIMIT = 5000
+CONTEXT_ALIAS_LIMIT = 20000
+CLARIFICATION_CANDIDATE_LIMIT = 8
 UNCONFIGURED_MODEL = "not_configured"
 
 
@@ -83,7 +91,9 @@ class InterpretationOutcome:
     status: str
     interpretation_id: uuid.UUID | None = None
     preference_ids: tuple[uuid.UUID, ...] = ()
+    article_preference_ids: tuple[uuid.UUID, ...] = ()
     retired_subject_kinds: tuple[str, ...] = ()
+    clarification: dict | None = None
     error_code: str | None = None
     replayed: bool = False
 
@@ -177,6 +187,9 @@ async def interpret_observation(
         owns_provider = True
 
     context = await _build_context(session, cfg, observation)
+    resolve_article = await _catalog_article_resolver(
+        session, org, context.trade_item_id, context.display_name
+    )
     system, user = build_prompt(context, observation.text_original)
     started = time.monotonic()
     try:
@@ -231,6 +244,7 @@ async def interpret_observation(
             context,
             observation.text_original,
             implicit_tolerance_percent=cfg.observation_implicit_tolerance_percent,
+            resolve_article=resolve_article,
         )
     except ProposalRejected as exc:
         return await _persist_attempt(
@@ -246,6 +260,7 @@ async def interpret_observation(
             latency_ms=completion.latency_ms,
             error_code=exc.code,
             validated=None,
+            clarification=exc.clarification,
         )
 
     status = "suggested" if validated.has_effects else "no_preference"
@@ -291,11 +306,24 @@ async def _replayed(session: AsyncSession, existing: ObservationInterpretation) 
         .scalars()
         .all()
     )
+    article_preference_ids = (
+        (
+            await session.execute(
+                select(CommercialArticlePreference.id).where(
+                    CommercialArticlePreference.interpretation_id == existing.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
     return InterpretationOutcome(
         status=existing.status,
         interpretation_id=existing.id,
         preference_ids=tuple(preference_ids),
+        article_preference_ids=tuple(article_preference_ids),
         retired_subject_kinds=tuple(existing.retired_subject_kinds or ()),
+        clarification=existing.clarification,
         error_code=existing.error_code,
         replayed=True,
     )
@@ -315,6 +343,7 @@ async def _persist_attempt(
     latency_ms: int,
     error_code: str | None,
     validated: ValidatedInterpretation | None,
+    clarification: dict | None = None,
 ) -> InterpretationOutcome:
     """Escribe la interpretación y, solo si es aplicable, todas sus preferencias a la vez."""
     now = datetime.now(UTC)
@@ -328,6 +357,7 @@ async def _persist_attempt(
         model=model_name[:80],
         prompt_version=prompt_version[:40],
         retired_subject_kinds=list(retired),
+        clarification=clarification,
         raw_output=raw_output,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
@@ -372,6 +402,26 @@ async def _persist_attempt(
             )
             session.add(row)
             preferences.append(row)
+    article_preferences: list[CommercialArticlePreference] = []
+    if validated is not None and status == "suggested":
+        for pref in validated.article_preferences:
+            row = CommercialArticlePreference(
+                id=uuid.uuid4(),
+                organization_id=observation.organization_id,
+                interpretation_id=interpretation.id,
+                observation_id=observation.id,
+                article_id=pref.article_id,
+                article_label=pref.article_label,
+                relative_to_article_id=pref.relative_to_article_id,
+                relative_to_article_label=pref.relative_to_article_label,
+                effect=pref.effect,
+                confidence=pref.confidence,
+                status="suggested",
+                created_at=now,
+                data_origin="ai_derived",
+            )
+            session.add(row)
+            article_preferences.append(row)
     await session.flush()
 
     emit(
@@ -391,6 +441,8 @@ async def _persist_attempt(
             "model": interpretation.model,
             "prompt_version": interpretation.prompt_version,
             "preference_count": len(preferences),
+            "article_preference_count": len(article_preferences),
+            "clarification_kind": clarification.get("kind") if clarification else None,
             "retired_subject_kinds": list(retired),
         },
         after={"status": status, "error_code": error_code},
@@ -399,7 +451,9 @@ async def _persist_attempt(
         status=status,
         interpretation_id=interpretation.id,
         preference_ids=tuple(row.id for row in preferences),
+        article_preference_ids=tuple(row.id for row in article_preferences),
         retired_subject_kinds=tuple(retired),
+        clarification=clarification,
         error_code=error_code,
     )
 
@@ -484,6 +538,74 @@ async def _build_context(
     )
 
 
+async def _catalog_article_resolver(
+    session: AsyncSession,
+    organization_id: uuid.UUID,
+    current_id: uuid.UUID,
+    current_name: str,
+):
+    """Resolver determinista de nombres de artículos por igualdad exacta normalizada.
+
+    Solo usa el catálogo de la organización: nombre visible y alias activos. No compara parecido,
+    marca, laboratorio ni presentación, y no fusiona artículos. Dos coincidencias distintas son
+    ambigüedad legítima: se devuelven candidatos y se pide aclaración en lenguaje natural.
+    """
+    rows = (
+        await session.execute(
+            select(TradeItem.id, TradeItem.display_name)
+            .where(
+                TradeItem.organization_id == organization_id,
+                TradeItem.status == "active",
+            )
+            .order_by(TradeItem.display_name, TradeItem.id)
+            .limit(CONTEXT_ARTICLE_LIMIT)
+        )
+    ).all()
+    articles: dict[uuid.UUID, ContextArticle] = {
+        item_id: ContextArticle(item_id, name) for item_id, name in rows
+    }
+    # El artículo de la observación siempre se puede nombrar, aunque esté fuera de la cota.
+    articles.setdefault(current_id, ContextArticle(current_id, current_name))
+    by_name: dict[str, list[ContextArticle]] = {}
+    for article in articles.values():
+        key = normalize_name(article.display_name)
+        if key:
+            by_name.setdefault(key, []).append(article)
+    aliases = (
+        await session.execute(
+            select(TradeItemAlias.trade_item_id, TradeItemAlias.alias_text)
+            .where(
+                TradeItemAlias.organization_id == organization_id,
+                TradeItemAlias.status == "active",
+            )
+            .order_by(TradeItemAlias.normalized_alias, TradeItemAlias.id)
+            .limit(CONTEXT_ALIAS_LIMIT)
+        )
+    ).all()
+    for item_id, alias in aliases:
+        article = articles.get(item_id)
+        key = normalize_name(alias)
+        if article is None or not key:
+            continue
+        group = by_name.setdefault(key, [])
+        if all(existing.id != article.id for existing in group):
+            group.append(article)
+
+    def resolve(label: str) -> ArticleResolution:
+        key = normalize_name(label)
+        matches = by_name.get(key, ())
+        if not matches:
+            return ArticleResolution("not_found")
+        ordered = tuple(sorted(matches, key=lambda a: (normalize_name(a.display_name), str(a.id))))
+        if len(ordered) == 1:
+            return ArticleResolution("resolved", ordered[0])
+        return ArticleResolution(
+            "ambiguous", None, ordered[:CLARIFICATION_CANDIDATE_LIMIT]
+        )
+
+    return resolve
+
+
 async def load_interpretations(
     session: AsyncSession,
     organization_id: uuid.UUID,
@@ -547,6 +669,38 @@ async def load_preferences(
         .all()
     )
     grouped: dict[uuid.UUID, list[CommercialPreference]] = {}
+    for row in rows:
+        grouped.setdefault(row.interpretation_id, []).append(row)
+    return {key: tuple(value) for key, value in grouped.items()}
+
+
+async def load_article_preferences(
+    session: AsyncSession,
+    organization_id: uuid.UUID,
+    interpretation_ids: Iterable[uuid.UUID],
+) -> dict[uuid.UUID, tuple[CommercialArticlePreference, ...]]:
+    """Eventos entre artículos de esas interpretaciones. Solo lectura."""
+    ids = list(dict.fromkeys(interpretation_ids))
+    if not ids:
+        return {}
+    rows = (
+        (
+            await session.execute(
+                select(CommercialArticlePreference)
+                .where(
+                    CommercialArticlePreference.organization_id == organization_id,
+                    CommercialArticlePreference.interpretation_id.in_(ids),
+                )
+                .order_by(
+                    CommercialArticlePreference.created_at,
+                    CommercialArticlePreference.id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    grouped: dict[uuid.UUID, list[CommercialArticlePreference]] = {}
     for row in rows:
         grouped.setdefault(row.interpretation_id, []).append(row)
     return {key: tuple(value) for key, value in grouped.items()}

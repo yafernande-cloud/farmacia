@@ -223,9 +223,10 @@ def H(api, who="admin") -> dict[str, str]:
     return {"X-Demo-User-Id": str(api.ids[who])}
 
 
-def _response(operations=(), retire=(), ambiguity=None) -> dict:
+def _response(operations=(), retire=(), ambiguity=None, article_ops=()) -> dict:
     return {
         "operations": list(operations),
+        "article_operations": list(article_ops),
         "retire_subject_kinds": list(retire),
         "ambiguity": ambiguity,
     }

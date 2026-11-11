@@ -439,6 +439,9 @@ class ObservationInterpretation(Base):
     reviewed_by: Mapped[uuid.UUID | None] = mapped_column()
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     review_note: Mapped[str | None] = mapped_column(Text)
+    # Aclaración excepcional para una referencia ambigua (A6 Fase 4). Se guarda el intento tal
+    # como quedó (`needs_review`) y NO se aplica ninguna preferencia hasta que se resuelva.
+    clarification: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
     data_origin: Mapped[str] = mapped_column(String(12), server_default="ai_derived")
 
@@ -630,6 +633,108 @@ class CommercialPreference(Base):
     price_reference_basis: Mapped[str | None] = mapped_column(String(24))
     price_reference_quantity: Mapped[Decimal | None] = mapped_column(Numeric(12, 3))
     price_reference_quantity_unit: Mapped[str | None] = mapped_column(String(10))
+    confidence: Mapped[Decimal] = mapped_column(Numeric(3, 2))
+    status: Mapped[str] = mapped_column(String(16), server_default="suggested")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
+    data_origin: Mapped[str] = mapped_column(String(12), server_default="ai_derived")
+
+
+class CommercialArticlePreference(Base):
+    """Preferencia comercial **entre artículos** (A6 Fase 4, D-147).
+
+    Separada de `commercial_preference`, que solo ordena ofertas del mismo artículo. Aquí no se
+    declara equivalencia farmacológica: cada fila es un evento explícito sobre uno o dos artículos
+    del catálogo.
+
+    * `deprioritize` con `relative_to_article_id = NULL`: baja la prioridad del artículo en
+      cualquier lista donde aparezca.
+    * `prefer` con `relative_to_article_id`: el artículo gana frente a la alternativa cuando
+      ambos están presentes. Se guarda una sola dirección (ganador → perdedor).
+    * `retire`: deja sin efecto el evento anterior de la misma relación (global o par). No borra
+      historia: el motor resuelve el evento más reciente.
+
+    `article_label` y `relative_to_article_label` conservan el nombre verificado al momento de
+    interpretar, para que la API no tenga que inventar etiquetas ni exponer el texto del modelo.
+    """
+
+    __tablename__ = "commercial_article_preference"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id"),
+        ForeignKeyConstraint(["organization_id"], ["organization.id"]),
+        ForeignKeyConstraint(
+            ["interpretation_id", "organization_id"],
+            [
+                "observation_interpretation.id",
+                "observation_interpretation.organization_id",
+            ],
+        ),
+        ForeignKeyConstraint(
+            ["observation_id", "organization_id"],
+            ["commercial_observation.id", "commercial_observation.organization_id"],
+        ),
+        ForeignKeyConstraint(
+            ["article_id", "organization_id"], ["trade_item.id", "trade_item.organization_id"]
+        ),
+        ForeignKeyConstraint(
+            ["relative_to_article_id", "organization_id"],
+            ["trade_item.id", "trade_item.organization_id"],
+        ),
+        CheckConstraint(
+            "effect IN ('prefer','deprioritize','retire')", name="efecto_valido"
+        ),
+        CheckConstraint(
+            "status IN ('suggested','confirmed','rejected','needs_review')",
+            name="estado_valido",
+        ),
+        CheckConstraint(
+            "relative_to_article_id IS NULL OR article_id <> relative_to_article_id",
+            name="articulos_distintos",
+        ),
+        # Preferir exige una alternativa; bajar la prioridad global no lleva alternativa.
+        CheckConstraint(
+            "effect <> 'prefer' OR relative_to_article_id IS NOT NULL",
+            name="preferencia_con_alternativa",
+        ),
+        CheckConstraint(
+            "effect <> 'deprioritize' OR relative_to_article_id IS NULL",
+            name="baja_sin_alternativa",
+        ),
+        CheckConstraint("confidence >= 0 AND confidence <= 1", name="confianza_valida"),
+        CheckConstraint(f"data_origin IN ({ORIGINS})", name="origen_dato_valido"),
+        CheckConstraint(
+            "length(btrim(article_label)) > 0 AND length(article_label) <= 300",
+            name="etiqueta_articulo_valida",
+        ),
+        CheckConstraint(
+            "relative_to_article_label IS NULL OR (length(btrim(relative_to_article_label)) > 0"
+            " AND length(relative_to_article_label) <= 300)",
+            name="etiqueta_alternativa_valida",
+        ),
+        Index(
+            "ix_commercial_article_preference_article",
+            "organization_id",
+            "article_id",
+            "status",
+            "created_at",
+        ),
+        Index(
+            "ix_commercial_article_preference_relative",
+            "organization_id",
+            "relative_to_article_id",
+            "status",
+            "created_at",
+        ),
+        Index("ix_commercial_article_preference_interpretation", "interpretation_id"),
+    )  # fmt: skip
+    id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
+    organization_id: Mapped[uuid.UUID] = mapped_column()
+    interpretation_id: Mapped[uuid.UUID] = mapped_column()
+    observation_id: Mapped[uuid.UUID] = mapped_column()
+    article_id: Mapped[uuid.UUID] = mapped_column()
+    article_label: Mapped[str] = mapped_column(String(300))
+    relative_to_article_id: Mapped[uuid.UUID | None] = mapped_column()
+    relative_to_article_label: Mapped[str | None] = mapped_column(String(300))
+    effect: Mapped[str] = mapped_column(String(12))
     confidence: Mapped[Decimal] = mapped_column(Numeric(3, 2))
     status: Mapped[str] = mapped_column(String(16), server_default="suggested")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)

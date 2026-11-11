@@ -18,11 +18,16 @@ from app.db.session import get_session
 from app.main import create_app
 from app.models import (
     AppUser,
+    CommercialArticlePreference,
+    CommercialObservation,
+    ObservationInterpretation,
     OfferSnapshot,
     Organization,
     Source,
     Supplier,
     SupplierConnectorProfile,
+    SupplierProductMapping,
+    TradeItem,
 )
 from app.services.connectors import registry
 from app.services.connectors.base import (
@@ -503,3 +508,83 @@ async def test_un_cambio_de_estructura_pide_revision_pero_devuelve_lo_que_valido
     # La huella nueva ya quedó registrada: la siguiente consulta no vuelve a alertar.
     again = await search(api, query="predual 30")
     assert again.json()["state"] == "connected"
+
+
+async def test_el_orden_entre_articulos_llega_a_la_busqueda_en_vivo(api, sessions, fake):
+    """La baja de prioridad se aplica a las ofertas vivas ya vinculadas, sin persistirlas."""
+    assert (await put(api)).status_code == 200
+    async with sessions() as s, s.begin():
+        org = api.farm["org"]
+        primero = TradeItem(
+            organization_id=org,
+            display_name="Predual 30 mg comprimidos",
+            identity_key="vivo-predual-30",
+            data_origin="simulated",
+        )
+        alternativa = TradeItem(
+            organization_id=org,
+            display_name="Prenal 25 mg comprimidos",
+            identity_key="vivo-prenal-25",
+            data_origin="simulated",
+        )
+        s.add_all([primero, alternativa])
+        await s.flush()
+        for external_id, item in (("PRE-A", primero), ("PRE-B", alternativa)):
+            s.add(
+                SupplierProductMapping(
+                    organization_id=org,
+                    source_id=api.farm["source"],
+                    supplier_id=api.farm["supplier"],
+                    trade_item_id=item.id,
+                    external_id=external_id,
+                    data_origin="simulated",
+                )
+            )
+        observacion = CommercialObservation(
+            organization_id=org,
+            text_original="No me interesa tanto este producto.",
+            author_id=api.farm["admin"],
+            trade_item_id=primero.id,
+            data_origin="simulated",
+        )
+        s.add(observacion)
+        await s.flush()
+        interpretacion = ObservationInterpretation(
+            organization_id=org,
+            observation_id=observacion.id,
+            trade_item_id=primero.id,
+            status="suggested",
+            model="fake-observations",
+            prompt_version="test-v1",
+            data_origin="simulated",
+        )
+        s.add(interpretacion)
+        await s.flush()
+        s.add(
+            CommercialArticlePreference(
+                organization_id=org,
+                interpretation_id=interpretacion.id,
+                observation_id=observacion.id,
+                article_id=primero.id,
+                article_label="Predual 30 mg comprimidos",
+                effect="deprioritize",
+                confidence="0.90",
+                status="suggested",
+                data_origin="simulated",
+            )
+        )
+
+    fake.offers = [
+        offer(external_id="PRE-A", name="Predual 30 mg comprimidos"),
+        offer(external_id="PRE-B", name="Prenal 25 mg comprimidos"),
+    ]
+    r = await search(api)
+    assert r.status_code == 200, r.text
+    clave = {o["external_id"]: o["order_key"] for o in r.json()["offers"]}
+
+    # Las dos ofertas siguen visibles; la rebajada queda después dentro de la misma fuente.
+    assert set(clave) == {"PRE-A", "PRE-B"}
+    assert clave["PRE-B"][0] == 0
+    assert clave["PRE-A"][0] == 1
+    # Nada de esto se guarda como oferta: la búsqueda en vivo no persiste snapshots.
+    assert await count(sessions, OfferSnapshot) == 0

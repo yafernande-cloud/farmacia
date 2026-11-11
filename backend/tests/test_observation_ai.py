@@ -24,6 +24,7 @@ from app.interpretation.openai_observations import (
 )
 from app.models import (
     AppUser,
+    CommercialArticlePreference,
     CommercialObservation,
     CommercialPreference,
     ObservationInterpretation,
@@ -33,6 +34,7 @@ from app.models import (
     Supplier,
     SupplierProductMapping,
     TradeItem,
+    TradeItemAlias,
 )
 from app.services import observation_ai
 from app.services import preferences as preferences_svc
@@ -263,9 +265,10 @@ def _op(kind="laboratory", label="Laboratorio Chile", effect="prefer", tol=None,
     }
 
 
-def _response(operations=(), retire=(), ambiguity=None) -> dict:
+def _response(operations=(), retire=(), ambiguity=None, article_ops=()) -> dict:
     return {
         "operations": list(operations),
+        "article_operations": list(article_ops),
         "retire_subject_kinds": list(retire),
         "ambiguity": ambiguity,
     }
@@ -1142,3 +1145,139 @@ async def test_live_6_varias_categorias_en_una_observacion(sessions, ai_farm, li
     price = next(p for p in prefs.applicable if p.subject_kind == "price")
     assert price.price_reference_kind == "maximum"
     assert price.price_reference_amount == Decimal("2100.0000")
+
+
+# ------------------------------------------------------- A6 Fase 4: entre artículos
+
+
+async def _article_events(sessions, farm):
+    async with sessions() as s:
+        return (
+            (
+                await s.execute(
+                    select(CommercialArticlePreference).where(
+                        CommercialArticlePreference.organization_id == farm["org"]
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+
+async def _loaded_articles(sessions, farm, *keys):
+    async with sessions() as s:
+        return await preferences_svc.load_article_preferences(
+            s, farm["org"], [farm["items"][key] for key in keys]
+        )
+
+
+async def test_preferir_un_articulo_frente_a_otro_queda_trazado(sessions, ai_farm):
+    obs = await _observation(
+        sessions, ai_farm, "Prefiero el Losartán de 100 mg antes que el de 50 mg."
+    )
+    fake = FakeModel(
+        _response(
+            article_ops=[
+                {
+                    "article_label": "Losartán 100 mg x 20 comprimidos",
+                    "relative_to_label": "Losartán 50 mg x 20 comprimidos",
+                    "effect": "prefer",
+                    "confidence": 0.9,
+                }
+            ]
+        )
+    )
+
+    outcome = await _run(sessions, ai_farm, obs, fake)
+
+    assert outcome.status == "suggested"
+    assert outcome.error_code is None
+    assert len(outcome.article_preference_ids) == 1
+    loaded = await _loaded_articles(sessions, ai_farm, "a", "b")
+    assert loaded.preferred_pairs == ((ai_farm["items"]["b"], ai_farm["items"]["a"]),)
+
+
+async def test_bajar_la_prioridad_del_propio_articulo_no_lo_oculta(sessions, ai_farm):
+    obs = await _observation(sessions, ai_farm, "No me interesa tanto este producto.")
+    fake = FakeModel(
+        _response(
+            article_ops=[
+                {
+                    "article_label": "este producto",
+                    "relative_to_label": None,
+                    "effect": "deprioritize",
+                    "confidence": 0.9,
+                }
+            ]
+        )
+    )
+
+    outcome = await _run(sessions, ai_farm, obs, fake)
+
+    assert outcome.status == "suggested"
+    loaded = await _loaded_articles(sessions, ai_farm, "a")
+    assert ai_farm["items"]["a"] in loaded.demoted
+
+
+async def test_un_articulo_ambiguo_pide_aclaracion_y_no_aplica_nada(sessions, ai_farm):
+    # Dos artículos distintos comparten el alias «losa»: no se puede elegir uno solo.
+    async with sessions() as s, s.begin():
+        for key in ("a", "b"):
+            s.add(
+                TradeItemAlias(
+                    organization_id=ai_farm["org"],
+                    trade_item_id=ai_farm["items"][key],
+                    alias_text="losa",
+                    normalized_alias="losa",
+                    source="manual",
+                    status="active",
+                    created_by=ai_farm["admin"],
+                    data_origin="simulated",
+                )
+            )
+
+    obs = await _observation(sessions, ai_farm, "Prefiero el losa antes que este.")
+    fake = FakeModel(
+        _response(
+            article_ops=[
+                {
+                    "article_label": "losa",
+                    "relative_to_label": "este producto",
+                    "effect": "prefer",
+                    "confidence": 0.9,
+                }
+            ]
+        )
+    )
+
+    outcome = await _run(sessions, ai_farm, obs, fake)
+
+    assert outcome.status == "needs_review"
+    assert outcome.error_code == "ambiguous"
+    assert outcome.clarification is not None
+    assert "«losa»" in outcome.clarification["question"]
+    candidates = {c["display_name"] for c in outcome.clarification["candidates"]}
+    assert candidates == {
+        "Losartán 50 mg x 20 comprimidos",
+        "Losartán 100 mg x 20 comprimidos",
+    }
+    # La observación queda guardada, pero ninguna preferencia se aplica.
+    assert await _article_events(sessions, ai_farm) == []
+    loaded = await _loaded_articles(sessions, ai_farm, "a", "b")
+    assert loaded.has_effects is False
+
+    async with sessions() as s:
+        interp = (
+            await s.execute(
+                select(ObservationInterpretation).where(
+                    ObservationInterpretation.observation_id == obs
+                )
+            )
+        ).scalar_one()
+        assert interp.clarification is not None
+        assert interp.clarification["reference"] == "losa"
+        observation = (
+            await s.execute(select(CommercialObservation).where(CommercialObservation.id == obs))
+        ).scalar_one()
+        assert observation.text_original == "Prefiero el losa antes que este."

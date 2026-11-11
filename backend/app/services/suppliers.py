@@ -10,15 +10,16 @@ import uuid
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.credentials import encrypt_portal_password
 from app.core.errors import DomainError, not_found
 from app.core.permissions import require_admin
-from app.models import Source, Supplier, SupplierCredential
+from app.models import OfferSnapshot, Source, Supplier, SupplierCredential
 from app.services.actors import Actor
 from app.services.events import advisory_lock, emit
+from app.services.import_freshness import current_list_filter, latest_valid_run_ids
 from app.services.provenance import org_kind, origin_for
 
 # Estado público del portal. `connected` no existe a propósito: guardar una credencial no abre
@@ -387,6 +388,46 @@ async def list_suppliers(
     return list((await session.execute(q.order_by(Supplier.name))).scalars().all())
 
 
+async def _current_offer_count(
+    session: AsyncSession,
+    organization_id: uuid.UUID,
+    supplier_id: uuid.UUID,
+    source_ids: list[uuid.UUID],
+) -> int:
+    """Ofertas vigentes del proveedor: la última observación de cada SKU de la lista actual.
+
+    Es un dato aditivo para la tarjeta del proveedor. No crea ofertas ni snapshots y no altera
+    ninguna importación: cuenta lo que ya se muestra en «Ver precios».
+    """
+    if not source_ids:
+        return 0
+    rank = (
+        func.row_number()
+        .over(
+            partition_by=(OfferSnapshot.source_id, OfferSnapshot.external_id),
+            order_by=(OfferSnapshot.observed_at.desc(), OfferSnapshot.created_at.desc()),
+        )
+        .label("rank")
+    )
+    query = select(OfferSnapshot.id.label("offer_id"), rank).where(
+        OfferSnapshot.organization_id == organization_id,
+        OfferSnapshot.supplier_id == supplier_id,
+    )
+    run_filter = current_list_filter(
+        await latest_valid_run_ids(session, organization_id, source_ids=source_ids)
+    )
+    if run_filter is not None:
+        query = query.where(run_filter)
+    ranked = query.subquery()
+    return int(
+        (
+            await session.execute(
+                select(func.count()).select_from(ranked).where(ranked.c.rank == 1)
+            )
+        ).scalar_one()
+    )
+
+
 async def supplier_payload(session: AsyncSession, supplier: Supplier) -> dict:
     """Forma pública E6. `known_conditions`/`annotations`/`notes` son listas vacías: esas fuentes
     todavía no existen (las condiciones tipadas se leen aparte y E9 llega en C3)."""
@@ -403,6 +444,12 @@ async def supplier_payload(session: AsyncSession, supplier: Supplier) -> dict:
     has_credentials = (
         await _credential(session, supplier.organization_id, supplier.id) is not None
     )
+    offer_count = await _current_offer_count(
+        session,
+        supplier.organization_id,
+        supplier.id,
+        [source_id for source_id, _ in sources],
+    )
     return {
         "supplier_id": supplier.id,
         "name": supplier.name,
@@ -410,6 +457,8 @@ async def supplier_payload(session: AsyncSession, supplier: Supplier) -> dict:
         "status": supplier.status,
         "version": supplier.version,
         "sources": [sid for sid, _ in sources],
+        # Campo aditivo: son ofertas vigentes de la lista actual, no artículos únicos.
+        "offer_count": offer_count,
         "known_conditions": [],
         "annotations": [],
         "notes": [],

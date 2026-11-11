@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import select
@@ -46,11 +47,21 @@ from app.services.connectors.config import validate_profile
 from app.services.connectors.matching import classify_match
 from app.services.connectors.store import store
 from app.services.events import advisory_lock, emit
+from app.services.preferences import (
+    OfferView,
+    load_article_preferences,
+    load_item_preferences,
+    rank_provider_offers,
+)
 
 logger = logging.getLogger(__name__)
 
 MAX_QUERY = 120
 MIN_QUERY = 2
+
+# Identificador efímero y estable por resultado vivo (`fuente:SKU`). No identifica un artículo ni
+# se guarda: solo permite asociar la clave de orden a la oferta durante esta lectura.
+_LIVE_OFFER_NAMESPACE = uuid.UUID("6f1d3f9a-57a2-4b0c-9f0e-2c9f3a1b7d55")
 
 
 # ------------------------------------------------------------------ estado derivado
@@ -443,6 +454,8 @@ def _offer_payload(offer: SupplierOffer, *, query: str) -> dict[str, Any]:
         # La búsqueda no incorpora al carrito: solo informa si los datos comerciales alcanzan.
         "cart_eligible": not blockers,
         "cart_blockers": blockers,
+        # Se completa al leer; nunca se persiste con la oferta.
+        "order_key": [],
     }
 
 
@@ -506,6 +519,67 @@ async def _resolve_trade_item_ids(
         if resolved is None and entry.get("ean"):
             resolved = by_ean.get(entry["ean"])
         entry["trade_item_id"] = resolved
+    return snapshot
+
+
+async def _apply_order_keys(
+    session: AsyncSession, snapshot: dict[str, Any]
+) -> dict[str, Any]:
+    """Calcula la clave de orden de las ofertas **vivas** de esta fuente.
+
+    Se hace en cada lectura, después de resolver la identidad y sin guardar nada: una preferencia
+    recién enseñada se refleja al refrescar sin crear `OfferSnapshot` ni persistir la oferta. Las
+    ofertas sin vínculo quedan con clave neutra y siguen visibles. La marca no viaja en el
+    resultado vivo, así que las preferencias de marca no se aplican aquí (no se inventa).
+    """
+    entries = snapshot.get("offers", [])
+    if not entries:
+        return snapshot
+    views: list[OfferView] = []
+    for entry in entries:
+        price = entry.get("price") or {}
+        try:
+            amount = Decimal(str(price.get("amount")))
+        except (InvalidOperation, TypeError):
+            continue  # sin precio válido no es una oferta comparable; se deja sin clave
+        quantity = entry.get("stock_quantity")
+        views.append(
+            OfferView(
+                offer_id=uuid.uuid5(
+                    _LIVE_OFFER_NAMESPACE,
+                    f"{snapshot['source_id']}:{entry['external_id']}",
+                ),
+                supplier_id=None,
+                laboratory=entry.get("laboratory"),
+                brand=None,
+                currency=price.get("currency") or "",
+                price_amount=amount,
+                price_basis=entry.get("price_basis"),
+                pack_units_per_commercial_unit=None,
+                stock_status=entry.get("stock_status") or "unknown",
+                stock_quantity=Decimal(str(quantity)) if quantity is not None else None,
+                stock_unit=entry.get("stock_unit"),
+                sale_unit=entry.get("sale_unit"),
+                trade_item_id=entry.get("trade_item_id"),
+            )
+        )
+    if not views:
+        return snapshot
+    item_ids = {view.trade_item_id for view in views if view.trade_item_id is not None}
+    item_prefs = await load_item_preferences(
+        session, snapshot["organization_id"], item_ids
+    )
+    article_prefs = await load_article_preferences(
+        session, snapshot["organization_id"], item_ids
+    )
+    ranked = rank_provider_offers(article_prefs, item_prefs, views)
+    keyed = {view.offer_id: list(ranked[view.offer_id]) for view in views}
+    for entry in entries:
+        offer_id = uuid.uuid5(
+            _LIVE_OFFER_NAMESPACE, f"{snapshot['source_id']}:{entry['external_id']}"
+        )
+        if offer_id in keyed:
+            entry["order_key"] = keyed[offer_id]
     return snapshot
 
 
@@ -598,7 +672,9 @@ async def search_live(
         cached = await store.cached(key)
         if cached is not None and cached.get("organization_id") == actor.organization_id:
             # El vínculo puede haberse creado después de guardar la caché: se resuelve al leer.
-            return await _resolve_trade_item_ids(session, cached)
+            return await _apply_order_keys(
+                session, await _resolve_trade_item_ids(session, cached)
+            )
 
     if block is not None:
         snapshot = _snapshot(
@@ -690,6 +766,7 @@ async def search_live(
         )
 
     snapshot = await _resolve_trade_item_ids(session, snapshot)
+    snapshot = await _apply_order_keys(session, snapshot)
     await session.flush()
     if snapshot["state"] == "connected":
         await store.put(snapshot, cache_key=key)
@@ -741,4 +818,4 @@ async def get_search(
     if snapshot is None or snapshot.get("organization_id") != actor.organization_id:
         raise not_found("La búsqueda")
     # Se resuelve también aquí para que un vínculo recién creado aparezca sin repetir la búsqueda.
-    return await _resolve_trade_item_ids(session, snapshot)
+    return await _apply_order_keys(session, await _resolve_trade_item_ids(session, snapshot))

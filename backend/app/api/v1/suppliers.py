@@ -49,6 +49,8 @@ class SupplierOut(BaseModel):
     status: str
     version: int
     sources: list[uuid.UUID]
+    # Ofertas vigentes de la última lista cargada. Aditivo: no son artículos únicos.
+    offer_count: int = 0
     known_conditions: list[dict]
     annotations: list[dict]
     notes: list[dict]

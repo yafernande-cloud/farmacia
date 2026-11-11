@@ -21,6 +21,7 @@ from app.core.config import get_settings
 from app.main import create_app
 from app.models import (
     AppUser,
+    CommercialArticlePreference,
     CommercialObservation,
     CommercialPreference,
     ComparisonRun,
@@ -1582,3 +1583,134 @@ async def test_retiro_12_e3_e5_no_cambian_elegibilidad_precios_ni_totales(sessio
     assert [
         {k: row[k] for k in fields} for row in compare_before["supplier_totals"]
     ] == [{k: row[k] for k in fields} for row in compare_after["supplier_totals"]]
+
+
+# ------------------------------------------------ A6 Fase 4: orden entre artículos (E3/E6)
+
+
+async def _article_event(
+    sessions,
+    farm,
+    article_key: str,
+    effect: str,
+    relative_key: str | None = None,
+    *,
+    status: str = "suggested",
+    interpretation_status: str = "suggested",
+    label: str | None = None,
+) -> None:
+    """Deja un evento entre artículos como lo haría O2, sin llamar a OpenAI."""
+    interp_id = await _interpret(
+        sessions,
+        farm,
+        article_key,
+        status=interpretation_status,
+    )
+    async with sessions() as s, s.begin():
+        interp = await s.get(ObservationInterpretation, interp_id)
+        s.add(
+            CommercialArticlePreference(
+                organization_id=farm["org"],
+                interpretation_id=interp_id,
+                observation_id=interp.observation_id,
+                article_id=farm["items"][article_key],
+                article_label=label or farm["items"][article_key].hex,
+                relative_to_article_id=(
+                    farm["items"][relative_key] if relative_key is not None else None
+                ),
+                relative_to_article_label=(
+                    farm["items"][relative_key].hex if relative_key is not None else None
+                ),
+                effect=effect,
+                confidence="0.90",
+                status=status,
+                data_origin="simulated",
+            )
+        )
+
+
+async def test_una_baja_de_prioridad_reordena_los_precios_de_la_lista(api, sessions):
+    await _article_event(sessions, api.farm, "a", "deprioritize")
+
+    r = await api.get(
+        f"/api/v1/suppliers/{api.farm['suppliers']['Norte']}/offers", headers=H(api)
+    )
+    assert r.status_code == 200, r.text
+    claves = {o["external_id"]: o["order_key"] for o in r.json()["offers"]}
+
+    # Norte ofrece los dos artículos: el rebajado queda después. Sigue visible.
+    assert claves["A-N"][0] == 1
+    assert claves["B-N"][0] == 0
+    # Todas las ofertas del proveedor siguen presentes.
+    assert {"A-N", "B-N", "C-N", "D-N"} <= set(claves)
+
+
+async def test_una_preferencia_entre_articulos_no_se_aplica_si_falta_el_otro(api, sessions):
+    await _article_event(sessions, api.farm, "a", "prefer", "b")
+
+    r = await api.get(
+        f"/api/v1/suppliers/{api.farm['suppliers']['Centro']}/offers", headers=H(api)
+    )
+    assert r.status_code == 200, r.text
+    claves = {o["external_id"]: o["order_key"] for o in r.json()["offers"]}
+
+    # Centro no ofrece `b`: sin alternativa comparable nadie se demora ni desaparece.
+    assert claves["A-C"][:2] == [0, 0]
+    assert claves["C-C"][:2] == [0, 0]
+
+
+async def test_un_evento_no_aplicado_no_ordena_y_no_inventa_asociaciones(api, sessions):
+    await _article_event(
+        sessions, api.farm, "a", "deprioritize", interpretation_status="needs_review"
+    )
+
+    r = await api.get(
+        f"/api/v1/suppliers/{api.farm['suppliers']['Norte']}/offers", headers=H(api)
+    )
+    assert r.status_code == 200, r.text
+    assert {o["order_key"][0] for o in r.json()["offers"]} == {0}
+
+
+async def test_la_tarjeta_del_proveedor_informa_sus_ofertas_vigentes(api, sessions):
+    """`offer_count` es aditivo: cuenta la última observación de cada SKU, no artículos únicos."""
+    # Una observación posterior del mismo SKU reemplaza su precio; no suma una oferta nueva.
+    async with sessions() as s, s.begin():
+        original = await s.get(OfferSnapshot, api.farm["offers"]["A-N"])
+        s.add(
+            OfferSnapshot(
+                organization_id=original.organization_id,
+                supplier_id=original.supplier_id,
+                source_id=original.source_id,
+                trade_item_id=original.trade_item_id,
+                external_id=original.external_id,
+                price_amount="2050.00",
+                currency="CLP",
+                price_basis="per_commercial_unit",
+                sale_unit="box",
+                sale_unit_text="caja",
+                stock_status="known",
+                stock_quantity="90",
+                stock_unit="box",
+                tax_included=True,
+                discount_included=True,
+                minimum_known=True,
+                minimum_quantity="1",
+                minimum_unit="box",
+                multiple_known=True,
+                multiple_quantity="1",
+                multiple_unit="box",
+                observed_at=NOW + timedelta(minutes=1),
+                data_origin="simulated",
+            )
+        )
+
+    listado = await api.get("/api/v1/suppliers", headers=H(api))
+    assert listado.status_code == 200, listado.text
+    conteos = {s["name"]: s["offer_count"] for s in listado.json()["suppliers"]}
+    assert conteos == {"Proveedor Centro": 2, "Proveedor Norte": 4, "Proveedor Sur": 4}
+
+    detalle = await api.get(
+        f"/api/v1/suppliers/{api.farm['suppliers']['Norte']}", headers=H(api)
+    )
+    assert detalle.status_code == 200, detalle.text
+    assert detalle.json()["offer_count"] == 4
