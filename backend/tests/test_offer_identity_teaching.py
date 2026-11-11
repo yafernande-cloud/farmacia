@@ -911,7 +911,7 @@ async def test_cambiar_el_vinculo_a_otro_articulo_no_transfiere_preferencias(api
                 )
             )
         ).scalar_one()
-    assert skipped.payload["reason"] == "previous_target_not_offer_identity"
+    assert skipped.payload["reason"] == "previous_target_not_technical_identity"
     assert skipped.payload["to_trade_item_id"] == str(api.ids["other_item"])
 
     # El artículo que sí fue enseñado conserva su preferencia.

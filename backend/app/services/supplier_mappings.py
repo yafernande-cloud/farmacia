@@ -164,8 +164,11 @@ async def relink_mapping(
     """Corrige el artículo destino de un vínculo existente, con versión y auditoría.
 
     Solo reubica las preferencias cuando el vínculo anterior apuntaba a la **identidad técnica de
-    esa misma oferta**. Si el vínculo ya apuntaba a otro artículo canónico, no se transfiere nada:
-    cambiar el destino de un SKU no convierte las enseñanzas de un producto en las de otro.
+    ese mismo SKU**: la de una oferta viva (`offer:<fuente>:<SKU>`) o la que creó la importación de
+    la lista (`import:<fuente>:<SKU>`). Ambas nombran exactamente la misma fuente y el mismo código.
+    Si el vínculo ya apuntaba a otro artículo canónico, no se transfiere nada: cambiar el destino de
+    un SKU no convierte las enseñanzas de un producto en las de otro. Un artículo `import:` que
+    queda sin vínculos ni dependencias se desactiva, para no aparecer como artículo duplicado.
 
     Devuelve `(mapping, changed, adoption)`. `changed=False` cuando ya apuntaba al mismo artículo;
     en ese caso la reubicación se reintenta de forma idempotente.
@@ -249,15 +252,21 @@ async def relink_mapping(
     await session.flush()
 
     adoption: offer_svc.AdoptionResult | None = None
-    if offer_svc.is_offer_identity(previous_item):
-        # El destino anterior era la identidad técnica de esta misma oferta: reubicar es seguro.
+    if offer_svc.is_identity_of(previous_item, mapping.source_id, mapping.external_id):
+        # El destino anterior era la identidad técnica de este mismo SKU (oferta viva o artículo
+        # de importación): reubicar es seguro y la cronología decide quién gana.
         adoption = await offer_svc.adopt_offer_identity(
             session,
             actor,
             source_id=mapping.source_id,
             external_id=mapping.external_id,
             canonical_item_id=item.id,
+            identity_item=previous_item,
         )
+        # El artículo de importación que quedó sin vínculo deja de listarse como vigente. Conserva
+        # su historial y no se toca si todavía tiene vínculos u otras dependencias.
+        if offer_svc.is_import_identity(previous_item):
+            await offer_svc.retire_orphan_import_identity(session, actor, previous_item)
     else:
         # Artículo canónico → artículo canónico: no se transfieren preferencias.
         emit(
@@ -275,7 +284,7 @@ async def relink_mapping(
                 "external_id": mapping.external_id,
                 "from_trade_item_id": str(previous_id),
                 "to_trade_item_id": str(item.id),
-                "reason": "previous_target_not_offer_identity",
+                "reason": "previous_target_not_technical_identity",
             },
         )
 

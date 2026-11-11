@@ -15,6 +15,11 @@ identidad se **reubican** en el canónico conservando su `created_at` original (
 `adopt_offer_identity`). No se copian historiales completos ni se mezclan alcances: se reproduce,
 por clase, el mismo evento que el motor ya consideraba vigente, y la cronología existente decide
 quién gana. Un empate exacto de fecha se audita como conflicto y **no** se sobrescribe nada.
+
+La corrección de identidades admite también la identidad `import:<fuente>:<SKU>` que crea la
+importación de una lista, siempre que sea **exactamente** el mismo SKU de la misma fuente: al
+vincularlo a un artículo canónico, lo enseñado no se pierde ni se vuelve a enseñar. El artículo
+técnico que queda sin vínculos se desactiva, sin borrar historial.
 """
 
 from __future__ import annotations
@@ -31,13 +36,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import DomainError, not_found
 from app.models import (
+    ChainProduct,
     CommercialObservation,
     CommercialPreference,
     ObservationInterpretation,
+    QuoteLine,
     Source,
     Supplier,
     SupplierProductMapping,
     TradeItem,
+    TradeItemAlias,
 )
 from app.services.actors import Actor
 from app.services.events import advisory_lock, emit
@@ -45,17 +53,42 @@ from app.services.preferences import effective_events, load_item_preferences
 from app.services.provenance import org_kind, origin_for
 
 OFFER_IDENTITY_PREFIX = "offer:"
+IMPORT_IDENTITY_PREFIX = "import:"
 MAX_NAME = 300
 _GTIN = re.compile(r"[0-9]{8,14}")
 
 
 def offer_identity_key(source_id: uuid.UUID, external_id: str) -> str:
-    """Clave determinista de la identidad técnica de un SKU de una fuente."""
+    """Clave determinista de la identidad técnica de una oferta viva."""
     return f"{OFFER_IDENTITY_PREFIX}{source_id}:{external_id.strip()}"
+
+
+def import_identity_key(source_id: uuid.UUID, external_id: str) -> str:
+    """Clave determinista del artículo que crea la importación de una lista (`import:`)."""
+    return f"{IMPORT_IDENTITY_PREFIX}{source_id}:{external_id.strip()}"
 
 
 def is_offer_identity(item: TradeItem) -> bool:
     return item.identity_key.startswith(OFFER_IDENTITY_PREFIX)
+
+
+def is_import_identity(item: TradeItem) -> bool:
+    return item.identity_key.startswith(IMPORT_IDENTITY_PREFIX)
+
+
+def is_identity_of(item: TradeItem, source_id: uuid.UUID, external_id: str) -> bool:
+    """¿La identidad técnica de `item` es exactamente la de este SKU de esta fuente?
+
+    Admite las dos formas técnicas que nombran el mismo SKU —`offer:` de una oferta viva enseñada
+    sin vínculo e `import:` de la lista cargada— y exige **identificador de fuente y código
+    idénticos**. No compara nombres, laboratorios, marcas ni presentaciones: dos productos
+    parecidos nunca comparten identidad por parecido.
+    """
+    clean = external_id.strip()
+    return item.identity_key in {
+        offer_identity_key(source_id, clean),
+        import_identity_key(source_id, clean),
+    }
 
 
 @dataclass(frozen=True)
@@ -345,6 +378,7 @@ async def adopt_offer_identity(
     source_id: uuid.UUID,
     external_id: str,
     canonical_item_id: uuid.UUID,
+    identity_item: TradeItem | None = None,
 ) -> AdoptionResult:
     """Reubica en el artículo canónico el **estado vigente** de la identidad de la oferta.
 
@@ -357,18 +391,34 @@ async def adopt_offer_identity(
     Es idempotente: cada interpretación origen se reubica una sola vez. Las observaciones,
     interpretaciones y preferencias originales no se modifican. Nunca se transfieren preferencias
     entre dos artículos canónicos distintos.
+
+    `identity_item` permite reubicar desde un artículo técnico de **importación** (`import:`), pero
+    solo si es exactamente la identidad de esta fuente y este SKU: es el caso en que se corrige el
+    vínculo de una lista cargada y la enseñada no debe perderse. Sin ese parámetro se busca, como
+    siempre, la identidad `offer:` de la oferta viva.
     """
     org = actor.organization_id
     clean_external = external_id.strip()
-    key = offer_identity_key(source_id, clean_external)
 
-    identity = (
-        await session.execute(
-            select(TradeItem).where(
-                TradeItem.organization_id == org, TradeItem.identity_key == key
+    if identity_item is not None:
+        if identity_item.organization_id != org or not is_identity_of(
+            identity_item, source_id, clean_external
+        ):
+            raise DomainError(
+                "IDENTITY_NOT_FOR_SKU",
+                "La identidad técnica no corresponde a este SKU y esta fuente.",
+                status_code=422,
             )
-        )
-    ).scalar_one_or_none()
+        identity: TradeItem | None = identity_item
+    else:
+        key = offer_identity_key(source_id, clean_external)
+        identity = (
+            await session.execute(
+                select(TradeItem).where(
+                    TradeItem.organization_id == org, TradeItem.identity_key == key
+                )
+            )
+        ).scalar_one_or_none()
     if identity is None:
         return AdoptionResult(adopted=False, skipped="no_identity")
     if identity.id == canonical_item_id:
@@ -537,8 +587,13 @@ async def adopt_offer_identity(
                 "adopted_from_interpretation_id": str(interp.id),
                 "adopted_from_trade_item_id": str(identity.id),
                 "adopted_from_author_id": str(original.author_id),
+                "adopted_from_identity_key": identity.identity_key,
                 "canonical_trade_item_id": str(canonical.id),
-                "adoption_reason": "offer_identity_linked",
+                "adoption_reason": (
+                    "import_identity_linked"
+                    if is_import_identity(identity)
+                    else "offer_identity_linked"
+                ),
             }
         )
         observation = CommercialObservation(
@@ -652,3 +707,67 @@ async def adopt_offer_identity(
         preference_ids=tuple(derived_prefs),
         conflicts=tuple(conflicts),
     )
+
+
+# ------------------------------------------------------------------- retiro de identidades técnicas
+
+
+async def _has_dependency(
+    session: AsyncSession, model: type[Any], org: uuid.UUID, item_id: uuid.UUID
+) -> bool:
+    stmt = (
+        select(model.id)
+        .where(model.organization_id == org, model.trade_item_id == item_id)
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none() is not None
+
+
+async def retire_orphan_import_identity(
+    session: AsyncSession, actor: Actor, item: TradeItem
+) -> bool:
+    """Desactiva un artículo técnico `import:` que quedó sin vínculos.
+
+    Solo actúa sobre una identidad de importación **activa** de la propia organización y solo si no
+    queda ningún `SupplierProductMapping` ni otra dependencia operativa (línea de cotización,
+    precio de cadena o alias). El historial —ofertas observadas, observaciones,
+    interpretaciones, preferencias y trazas— se conserva intacto: la fila sigue existiendo, con su
+    identidad y su nombre publicados, y solo deja de listarse como artículo vigente. Devuelve
+    `True` cuando cambió el estado.
+    """
+    if not is_import_identity(item) or item.organization_id != actor.organization_id:
+        return False
+    if item.status != "active":
+        return False
+    for model in (
+        SupplierProductMapping,
+        QuoteLine,
+        ChainProduct,
+        TradeItemAlias,
+    ):
+        if await _has_dependency(session, model, actor.organization_id, item.id):
+            return False
+
+    item.status = "inactive"
+    item.version += 1
+    item.updated_at = datetime.now(UTC)
+    session.add(item)
+    await session.flush()
+    emit(
+        session,
+        org_id=actor.organization_id,
+        actor_id=actor.id,
+        action="trade_item.technical_identity_retired",
+        entity_type="trade_item",
+        entity_id=item.id,
+        event_type="catalog.technical_identity_retired",
+        aggregate_version=item.version,
+        payload={
+            "trade_item_id": str(item.id),
+            "identity_key": item.identity_key,
+            "identity_kind": "import",
+        },
+        before={"status": "active"},
+        after={"status": item.status, "version": item.version},
+    )
+    return True
