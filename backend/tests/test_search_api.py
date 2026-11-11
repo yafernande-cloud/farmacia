@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.api.deps import get_session
 from app.api.v1 import search as search_api
@@ -532,6 +532,33 @@ async def test_e1_requiere_admin(api):
         "/api/v1/searches", json={"query": "ibuprofeno 400"}, headers=H(api, "aux")
     )
     assert r.status_code == 403
+
+
+async def test_e1_solo_ofrece_articulos_activos_de_la_organizacion(api, sessions):
+    """E1 alimenta el diálogo de vinculación: no puede ofrecer inactivos ni artículos ajenos."""
+    async with sessions() as s, s.begin():
+        await s.execute(
+            update(TradeItem)
+            .where(TradeItem.organization_id == api.farm["org"])
+            .values(status="inactive")
+        )
+        s.add(
+            TradeItem(
+                organization_id=api.farm["other_org"],
+                display_name="Ibuprofeno 400 mg x 20 comprimidos",
+                identity_key="ajeno-ibuprofeno-400-20",
+                ingredient="ibuprofeno",
+                attributes=_attrs(
+                    "ibuprofeno", strength=("400", "mg"), form="comprimido", content=("20", "un")
+                ),
+                data_origin="simulated",
+            )
+        )
+
+    r = await _search(api)
+    assert r.status_code == 200, r.text
+    # Los de la organización están inactivos; el único activo pertenece a otra organización.
+    assert r.json()["results"] == []
 
 
 async def test_admin_aprobado_por_g1_busca_sin_superadmin(api, sessions):

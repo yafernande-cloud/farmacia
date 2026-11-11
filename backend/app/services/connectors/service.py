@@ -24,7 +24,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.errors import DomainError, not_found
 from app.core.permissions import require_admin
-from app.models import Source, Supplier, SupplierConnectorProfile
+from app.models import (
+    Source,
+    Supplier,
+    SupplierConnectorProfile,
+    SupplierProductMapping,
+    TradeItem,
+)
 from app.services.actors import Actor
 from app.services.connectors import presets, registry
 from app.services.connectors.base import (
@@ -386,6 +392,8 @@ def _published_payload(product: PublishedProduct, *, query: str) -> dict[str, An
     relation, reasons = classify_match(query, product.name)
     return {
         "external_id": product.external_id,
+        # Se completa al leer con un vínculo exacto; el motor no conserva ofertas.
+        "trade_item_id": None,
         "name": product.name,
         "laboratory": product.laboratory,
         "presentation": product.presentation,
@@ -412,6 +420,8 @@ def _offer_payload(offer: SupplierOffer, *, query: str) -> dict[str, Any]:
     blockers = cart_blockers(offer, match_relation=relation)
     return {
         "external_id": offer.external_id,
+        # Se completa al leer con un vínculo exacto; el motor no conserva ofertas.
+        "trade_item_id": None,
         "name": offer.name,
         "laboratory": offer.laboratory,
         "presentation": offer.presentation,
@@ -434,6 +444,69 @@ def _offer_payload(offer: SupplierOffer, *, query: str) -> dict[str, Any]:
         "cart_eligible": not blockers,
         "cart_blockers": blockers,
     }
+
+
+async def _resolve_trade_item_ids(
+    session: AsyncSession, snapshot: dict[str, Any]
+) -> dict[str, Any]:
+    """Marca en cada resultado el artículo interno vinculado, o `None`.
+
+    Solo hay dos fuentes admitidas, ambas exactas: el vínculo explícito de la fuente con ese SKU
+    y un EAN idéntico que apunte a un único artículo activo de la organización. Un EAN repetido es
+    ambiguo y no se resuelve; nunca se comparan nombres ni se inventa un identificador.
+    """
+    entries = [*snapshot.get("offers", []), *snapshot.get("published", [])]
+    if not entries:
+        return snapshot
+    org = snapshot["organization_id"]
+    source_id = snapshot["source_id"]
+    external_ids = {entry["external_id"] for entry in entries}
+
+    mapped = dict(
+        (
+            await session.execute(
+                select(
+                    SupplierProductMapping.external_id,
+                    SupplierProductMapping.trade_item_id,
+                ).where(
+                    SupplierProductMapping.organization_id == org,
+                    SupplierProductMapping.source_id == source_id,
+                    SupplierProductMapping.external_id.in_(external_ids),
+                )
+            )
+        ).all()
+    )
+
+    eans = {
+        entry["ean"]
+        for entry in entries
+        if entry.get("ean") and entry["external_id"] not in mapped
+    }
+    by_ean: dict[str, uuid.UUID | None] = {}
+    if eans:
+        rows = (
+            await session.execute(
+                select(TradeItem.gtin, TradeItem.id).where(
+                    TradeItem.organization_id == org,
+                    TradeItem.status == "active",
+                    TradeItem.gtin.in_(eans),
+                )
+            )
+        ).all()
+        grouped: dict[str, set[uuid.UUID]] = {}
+        for gtin, item_id in rows:
+            grouped.setdefault(gtin, set()).add(item_id)
+        # Solo un artículo distinto por EAN; dos o más quedan sin resolver.
+        by_ean = {
+            ean: (next(iter(ids)) if len(ids) == 1 else None) for ean, ids in grouped.items()
+        }
+
+    for entry in entries:
+        resolved = mapped.get(entry["external_id"])
+        if resolved is None and entry.get("ean"):
+            resolved = by_ean.get(entry["ean"])
+        entry["trade_item_id"] = resolved
+    return snapshot
 
 
 def _snapshot(
@@ -524,7 +597,8 @@ async def search_live(
     if block is None:
         cached = await store.cached(key)
         if cached is not None and cached.get("organization_id") == actor.organization_id:
-            return cached
+            # El vínculo puede haberse creado después de guardar la caché: se resuelve al leer.
+            return await _resolve_trade_item_ids(session, cached)
 
     if block is not None:
         snapshot = _snapshot(
@@ -615,6 +689,7 @@ async def search_live(
             profile=profile,
         )
 
+    snapshot = await _resolve_trade_item_ids(session, snapshot)
     await session.flush()
     if snapshot["state"] == "connected":
         await store.put(snapshot, cache_key=key)
@@ -665,4 +740,5 @@ async def get_search(
     snapshot = await store.get(str(search_id))
     if snapshot is None or snapshot.get("organization_id") != actor.organization_id:
         raise not_found("La búsqueda")
-    return snapshot
+    # Se resuelve también aquí para que un vínculo recién creado aparezca sin repetir la búsqueda.
+    return await _resolve_trade_item_ids(session, snapshot)

@@ -89,6 +89,8 @@ class MoneyOut(BaseModel):
 
 class SupplierOfferOut(BaseModel):
     external_id: str
+    # Artículo interno vinculado de forma exacta; `None` si aún no hay vínculo resuelto.
+    trade_item_id: uuid.UUID | None = None
     name: str
     laboratory: str | None
     presentation: str | None
@@ -117,6 +119,8 @@ class PublishedProductOut(BaseModel):
     """
 
     external_id: str
+    # Artículo interno vinculado de forma exacta; `None` si aún no hay vínculo resuelto.
+    trade_item_id: uuid.UUID | None = None
     name: str
     laboratory: str | None
     presentation: str | None
