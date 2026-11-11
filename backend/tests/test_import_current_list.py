@@ -356,3 +356,52 @@ async def test_el_filtro_de_lista_vigente_no_oculta_las_ofertas_api(sessions, fa
         detalle = await search.article_detail(s, actor, farm["old_item"])
         assert [o["external_id"] for o in detalle["offers"]] == ["PAR500-20"]
         assert detalle["offers_total"] == 1
+
+
+async def test_dos_skus_de_la_misma_fuente_siguen_visibles_en_el_mismo_articulo(sessions, farm):
+    """Dos SKU de una fuente pueden representar el mismo artículo sin taparse entre sí.
+
+    Es el caso AND-002 / AND-031: comparten artículo comercial, pero son dos ofertas distintas
+    de la misma fuente. La lectura vigente conserva una por SKU, no una por fuente.
+    """
+    async with sessions() as s, s.begin():
+        s.add(
+            SupplierProductMapping(
+                organization_id=farm["org"],
+                source_id=farm["source"],
+                supplier_id=farm["supplier"],
+                trade_item_id=farm["new_item"],
+                external_id="AND-002",
+                origin="explicit",
+                data_origin="simulated",
+            )
+        )
+
+    outcome = await run(
+        sessions,
+        farm["admin"],
+        farm["source"],
+        xlsx([fila("AND-001", "2490"), fila("AND-002", "3190")]),
+    )
+    assert outcome.status == "completed"
+
+    now = datetime.now(UTC)
+    async with sessions() as s:
+        actor = await load_actor(s, farm["admin"])
+        vigentes = await search._latest_offers(
+            s, farm["org"], [farm["new_item"]], now=now
+        )
+        ofertas = vigentes[farm["new_item"]]
+        assert {o.external_id: o.price_amount for o in ofertas} == {
+            "AND-001": Decimal("2490"),
+            "AND-002": Decimal("3190"),
+        }
+
+        agregado = search._aggregate(ofertas, now=now)
+        assert agregado["offer_count"] == 2
+        assert agregado["supplier_count"] == 1
+        assert agregado["lowest_price_amount"] == Decimal("2490")
+
+        detalle = await search.article_detail(s, actor, farm["new_item"])
+        assert detalle["offers_total"] == 2
+        assert {o["external_id"] for o in detalle["offers"]} == {"AND-001", "AND-002"}

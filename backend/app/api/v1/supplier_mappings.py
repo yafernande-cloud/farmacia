@@ -29,6 +29,16 @@ class SupplierProductMappingIn(BaseModel):
     trade_item_id: uuid.UUID
 
 
+class SupplierProductMappingPatchIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    trade_item_id: uuid.UUID
+    version: int | None = Field(
+        default=None,
+        description="Versión leída. Si se envía y no coincide, responde 409.",
+    )
+
+
 class SupplierProductMappingOut(BaseModel):
     mapping_id: uuid.UUID
     source_id: uuid.UUID
@@ -37,9 +47,32 @@ class SupplierProductMappingOut(BaseModel):
     external_name: str | None
     trade_item_id: uuid.UUID
     origin: Literal["explicit", "confirmed"]
+    version: int = 1
     # `False` cuando el vínculo ya existía con el mismo artículo: no se duplicó nada.
     created: bool
     created_at: datetime
+    # Reubicación de lo aprendido desde la oferta: conteos, nunca identificadores internos.
+    adopted_preferences: int = 0
+    adoption_conflicts: int = 0
+    adoption_skipped: str | None = None
+
+
+def _mapping_payload(mapping, *, created: bool, adoption) -> dict:
+    return {
+        "mapping_id": mapping.id,
+        "source_id": mapping.source_id,
+        "supplier_id": mapping.supplier_id,
+        "external_id": mapping.external_id,
+        "external_name": mapping.external_name,
+        "trade_item_id": mapping.trade_item_id,
+        "origin": mapping.origin,
+        "version": mapping.version,
+        "created": created,
+        "created_at": mapping.created_at,
+        "adopted_preferences": len(adoption.preference_ids) if adoption is not None else 0,
+        "adoption_conflicts": len(adoption.conflicts) if adoption is not None else 0,
+        "adoption_skipped": adoption.skipped if adoption is not None else None,
+    }
 
 
 @router.post(
@@ -60,7 +93,7 @@ async def create_supplier_product_mapping(
     response: Response,
 ):
     async with transaction(session):
-        mapping, created = await svc.create_mapping(
+        mapping, created, adoption = await svc.create_mapping(
             session,
             actor,
             source_id=body.source_id,
@@ -69,17 +102,34 @@ async def create_supplier_product_mapping(
             trade_item_id=body.trade_item_id,
         )
         await session.refresh(mapping)
-        payload = {
-            "mapping_id": mapping.id,
-            "source_id": mapping.source_id,
-            "supplier_id": mapping.supplier_id,
-            "external_id": mapping.external_id,
-            "external_name": mapping.external_name,
-            "trade_item_id": mapping.trade_item_id,
-            "origin": mapping.origin,
-            "created": created,
-            "created_at": mapping.created_at,
-        }
+        payload = _mapping_payload(mapping, created=created, adoption=adoption)
     if not created:
         response.status_code = 200
     return payload
+
+
+@router.put(
+    "/supplier-product-mappings/{mapping_id}",
+    response_model=SupplierProductMappingOut,
+    responses={
+        **ERRORS,
+        409: {"description": "El vínculo cambió de versión o el artículo está inactivo"},
+    },
+    summary="Corregir el artículo de un vínculo existente, conservando la trazabilidad",
+)
+async def relink_supplier_product_mapping(
+    mapping_id: uuid.UUID,
+    body: SupplierProductMappingPatchIn,
+    session: Session,
+    actor: StrongActor,
+):
+    async with transaction(session):
+        mapping, changed, adoption = await svc.relink_mapping(
+            session,
+            actor,
+            mapping_id=mapping_id,
+            trade_item_id=body.trade_item_id,
+            expected_version=body.version,
+        )
+        await session.refresh(mapping)
+        return _mapping_payload(mapping, created=changed, adoption=adoption)

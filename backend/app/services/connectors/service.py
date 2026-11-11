@@ -47,6 +47,7 @@ from app.services.connectors.config import validate_profile
 from app.services.connectors.matching import classify_match
 from app.services.connectors.store import store
 from app.services.events import advisory_lock, emit
+from app.services.offer_identities import offer_identity_key
 from app.services.preferences import (
     OfferView,
     load_article_preferences,
@@ -464,8 +465,9 @@ async def _resolve_trade_item_ids(
 ) -> dict[str, Any]:
     """Marca en cada resultado el artículo interno vinculado, o `None`.
 
-    Solo hay dos fuentes admitidas, ambas exactas: el vínculo explícito de la fuente con ese SKU
-    y un EAN idéntico que apunte a un único artículo activo de la organización. Un EAN repetido es
+    Solo hay fuentes exactas: el vínculo explícito de la fuente con ese SKU, un EAN idéntico que
+    apunte a un único artículo activo de la organización y, por último, la identidad técnica
+    `offer:<fuente>:<SKU>` cuando esa oferta ya fue enseñada sin vínculo. Un EAN repetido es
     ambiguo y no se resuelve; nunca se comparan nombres ni se inventa un identificador.
     """
     entries = [*snapshot.get("offers", []), *snapshot.get("published", [])]
@@ -514,10 +516,38 @@ async def _resolve_trade_item_ids(
             ean: (next(iter(ids)) if len(ids) == 1 else None) for ean, ids in grouped.items()
         }
 
+    # Tercera fuente exacta: la identidad técnica de un SKU ya enseñado. Es `inactive` y nunca
+    # aparece como artículo del catálogo; solo permite aplicar a esa oferta su preferencia.
+    pending = [
+        entry
+        for entry in entries
+        if entry["external_id"] not in mapped
+        and not (entry.get("ean") and by_ean.get(entry["ean"]))
+    ]
+    by_identity_key: dict[str, uuid.UUID] = {}
+    if pending:
+        by_identity_key = dict(
+            (
+                await session.execute(
+                    select(TradeItem.identity_key, TradeItem.id).where(
+                        TradeItem.organization_id == org,
+                        TradeItem.identity_key.in_(
+                            [
+                                offer_identity_key(source_id, entry["external_id"])
+                                for entry in pending
+                            ]
+                        ),
+                    )
+                )
+            ).all()
+        )
+
     for entry in entries:
         resolved = mapped.get(entry["external_id"])
         if resolved is None and entry.get("ean"):
             resolved = by_ean.get(entry["ean"])
+        if resolved is None:
+            resolved = by_identity_key.get(offer_identity_key(source_id, entry["external_id"]))
         entry["trade_item_id"] = resolved
     return snapshot
 

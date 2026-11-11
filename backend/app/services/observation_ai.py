@@ -519,13 +519,25 @@ async def _build_context(
             .limit(CONTEXT_SUBJECT_LIMIT)
         )
     ).all()
+    # Oferta en vivo que originó la observación: es su único contexto comercial posible, porque
+    # las ofertas vivas no se persisten como `OfferSnapshot`. No se inventa nada: se usa lo que la
+    # fuente publicó y la persona está viendo.
+    raw_view = (observation.context or {}).get("offer_view")
+    offer_view = raw_view if isinstance(raw_view, dict) else None
+    offer_laboratory = (offer_view or {}).get("laboratory")
+    offer_brand = (offer_view or {}).get("brand")
+    offer_currencies: set[str] = set()
+    if offer_view is not None and isinstance(offer_view.get("price"), dict):
+        currency = offer_view["price"].get("currency")
+        if currency:
+            offer_currencies.add(str(currency))
     # El propio artículo va primero, aunque estuviera fuera del límite o inactivo.
     known_laboratories = _unique(
-        [item.laboratory, *(row[0] for row in catalog_subjects)]
+        [offer_laboratory, item.laboratory, *(row[0] for row in catalog_subjects)]
     )[:CONTEXT_SUBJECT_LIMIT]
-    known_brands = _unique([item.brand, *(row[1] for row in catalog_subjects)])[
-        :CONTEXT_SUBJECT_LIMIT
-    ]
+    known_brands = _unique(
+        [offer_brand, item.brand, *(row[1] for row in catalog_subjects)]
+    )[:CONTEXT_SUBJECT_LIMIT]
     return CommercialContext(
         trade_item_id=item.id,
         display_name=item.display_name,
@@ -533,11 +545,16 @@ async def _build_context(
         item_laboratory=item.laboratory,
         item_brand=item.brand,
         suppliers=suppliers,
-        laboratories=_unique(offer.laboratory_as_published for offer in offers),
-        brands=_unique(offer.brand_as_published for offer in offers),
-        currencies=tuple(sorted({settings.currency} | {offer.currency for offer in offers})),
+        laboratories=_unique(
+            [offer_laboratory, *(offer.laboratory_as_published for offer in offers)]
+        ),
+        brands=_unique([offer_brand, *(offer.brand_as_published for offer in offers)]),
+        currencies=tuple(
+            sorted({settings.currency} | {offer.currency for offer in offers} | offer_currencies)
+        ),
         known_laboratories=known_laboratories,
         known_brands=known_brands,
+        offer_view=offer_view,
     )
 
 

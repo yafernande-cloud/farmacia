@@ -33,7 +33,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -159,12 +159,15 @@ def preference_class(pref: CommercialPreference) -> str:
     return _class_of(pref)
 
 
-def _winner_rows(
+def _winner_events(
     rows: Sequence[CommercialPreference],
     interpretations: dict[uuid.UUID, ObservationInterpretation],
     item_id: uuid.UUID,
-) -> tuple[list[CommercialPreference], list[str]]:
-    """Resuelve, por clase, el último evento aplicado: preferencia o retiro explícito.
+) -> tuple[
+    dict[str, tuple[Literal["set", "retire"], uuid.UUID]],
+    dict[str, dict[uuid.UUID, list[CommercialPreference]]],
+]:
+    """Por clase, el evento aplicado que gana: `(acción, interpretación)` y sus filas.
 
     Solo participan interpretaciones y filas en `suggested`/`confirmed`. Una interpretación
     rechazada, ambigua (`needs_review`) o sin preferencia (`no_preference`) no se adscribe a
@@ -192,10 +195,9 @@ def _winner_rows(
             continue  # contradicción en la misma interpretación: el retiro manda
         set_groups.setdefault(cls, {}).setdefault(pref.interpretation_id, []).append(pref)
 
-    winners: list[CommercialPreference] = []
-    retired: list[str] = []
+    winners: dict[str, tuple[Literal["set", "retire"], uuid.UUID]] = {}
     for cls in CLASS_ORDER:
-        events: list[tuple[tuple[datetime, str], str, uuid.UUID]] = []
+        events: list[tuple[tuple[datetime, str], Literal["set", "retire"], uuid.UUID]] = []
         for interpretation_id in set_groups.get(cls, {}):
             interp = interpretations[interpretation_id]
             events.append(((interp.created_at, str(interpretation_id)), "set", interpretation_id))
@@ -209,12 +211,57 @@ def _winner_rows(
         # `created_at` y `id`: el evento aplicado más reciente de la clase gana; el anterior es
         # historial. Un retiro posterior gana; una preferencia posterior vuelve a establecerla.
         _, action, interpretation_id = max(events, key=lambda event: event[0])
+        winners[cls] = (action, interpretation_id)
+    return winners, set_groups
+
+
+def _winner_rows(
+    rows: Sequence[CommercialPreference],
+    interpretations: dict[uuid.UUID, ObservationInterpretation],
+    item_id: uuid.UUID,
+) -> tuple[list[CommercialPreference], list[str]]:
+    """Resuelve, por clase, el último evento aplicado: preferencia o retiro explícito."""
+    events, set_groups = _winner_events(rows, interpretations, item_id)
+    winners: list[CommercialPreference] = []
+    retired: list[str] = []
+    for cls, (action, interpretation_id) in events.items():
         if action == "retire":
             retired.append(cls)
         else:
             winners.extend(set_groups[cls][interpretation_id])
     winners.sort(key=lambda p: (CLASS_ORDER.index(_class_of(p)), str(p.id)))
     return winners, retired
+
+
+@dataclass(frozen=True)
+class EffectiveEvent:
+    """Estado vigente de **una clase** para un artículo, listo para reubicarse con su cronología.
+
+    `action` distingue una preferencia establecida (`set`) de un retiro explícito (`retire`);
+    `interpretation_id` identifica el evento original y `preferences` son sus filas vigentes.
+    """
+
+    action: Literal["set", "retire"]
+    interpretation_id: uuid.UUID
+    preferences: tuple[CommercialPreference, ...] = ()
+
+
+def effective_events(prefs: ItemPreferences) -> dict[str, EffectiveEvent]:
+    """Por clase, el evento aplicado que hoy gana (lo mismo que aplica `rank_offers`)."""
+    if prefs.trade_item_id is None:
+        return {}
+    interpretations = {interp.id: interp for interp in prefs.interpretations}
+    events, groups = _winner_events(
+        list(prefs.applicable), interpretations, prefs.trade_item_id
+    )
+    return {
+        cls: EffectiveEvent(
+            action=action,
+            interpretation_id=interpretation_id,
+            preferences=tuple(groups.get(cls, {}).get(interpretation_id, ())),
+        )
+        for cls, (action, interpretation_id) in events.items()
+    }
 
 
 async def load_item_preferences(

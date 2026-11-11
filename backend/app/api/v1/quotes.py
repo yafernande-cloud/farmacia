@@ -11,6 +11,7 @@ aconseja ni explica.
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Header, Query, Response
@@ -21,6 +22,7 @@ from app.api.v1.demand import ERRORS
 from app.core.errors import DomainError
 from app.db.session import transaction
 from app.services import events, observation_ai
+from app.services import offer_identities as offer_svc
 from app.services import quotes as quote_svc
 
 router = APIRouter(tags=["cotizador"])
@@ -113,16 +115,75 @@ class MoveIn(BaseModel):
     )
 
 
+class OfferPriceIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    amount: Decimal = Field(ge=0)
+    currency: str = Field(min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
+
+
+class OfferContextIn(BaseModel):
+    """Oferta en vivo que la persona está viendo, con sus datos comerciales públicos.
+
+    No declara equivalencias ni crea un artículo: es la evidencia para resolver la identidad
+    interna y para que la interpretación conozca el laboratorio, la presentación y el precio
+    reales de la oferta (las ofertas vivas no se persisten como `OfferSnapshot`).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: uuid.UUID
+    external_id: str = Field(min_length=1, max_length=120)
+    name: str = Field(min_length=1, max_length=300)
+    supplier_id: uuid.UUID | None = None
+    laboratory: str | None = Field(default=None, max_length=200)
+    brand: str | None = Field(default=None, max_length=200)
+    presentation: str | None = Field(default=None, max_length=300)
+    price: OfferPriceIn | None = None
+    price_basis: str | None = Field(default=None, max_length=40)
+    sale_unit: str | None = Field(default=None, max_length=10)
+    stock_status: str | None = Field(default=None, max_length=20)
+    stock_quantity: Decimal | None = Field(default=None, ge=0)
+    stock_unit: str | None = Field(default=None, max_length=10)
+    ean: str | None = Field(default=None, max_length=14)
+    product_url: str | None = Field(default=None, max_length=2000)
+    image_url: str | None = Field(default=None, max_length=2000)
+
+    def to_service(self) -> offer_svc.OfferViewContext:
+        return offer_svc.OfferViewContext(
+            source_id=self.source_id,
+            external_id=self.external_id,
+            name=self.name,
+            supplier_id=self.supplier_id,
+            laboratory=self.laboratory,
+            brand=self.brand,
+            presentation=self.presentation,
+            price_amount=self.price.amount if self.price is not None else None,
+            currency=self.price.currency if self.price is not None else None,
+            price_basis=self.price_basis,
+            sale_unit=self.sale_unit,
+            stock_status=self.stock_status,
+            stock_quantity=self.stock_quantity,
+            stock_unit=self.stock_unit,
+            ean=self.ean,
+            product_url=self.product_url,
+            image_url=self.image_url,
+        )
+
+
 class ObservationIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=1, max_length=2000)
-    trade_item_id: uuid.UUID
+    # Al menos uno de `trade_item_id`, `offer` u `offer_snapshot_id` identifica el producto.
+    trade_item_id: uuid.UUID | None = None
     supplier_id: uuid.UUID | None = None
     offer_snapshot_id: uuid.UUID | None = None
     quote_id: uuid.UUID | None = None
     # Aclaración de una observación anterior: la original no se modifica ni se sobrescribe.
     previous_observation_id: uuid.UUID | None = None
+    # Oferta en vivo: permite enseñar sin volver a elegir ni vincular un artículo.
+    offer: OfferContextIn | None = None
 
 
 class LineObservationIn(BaseModel):
@@ -640,6 +701,7 @@ async def create_commercial_observation(
             quote_id=body.quote_id,
             previous_observation_id=body.previous_observation_id,
             idempotency_key=idempotency_key,
+            offer_view=body.offer.to_service() if body.offer is not None else None,
         )
         # Un reintento idempotente devuelve la observación con el estado ya interpretado, no
         # `sin_interpretacion`, sin volver a llamar al proveedor.

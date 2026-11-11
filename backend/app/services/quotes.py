@@ -48,6 +48,7 @@ from app.services import comparison as comparison_svc
 from app.services import coverage as coverage_svc
 from app.services import demand as demand_svc
 from app.services import events
+from app.services import offer_identities as offer_svc
 from app.services.actors import Actor
 from app.services.observation_views import observation_view
 from app.services.provenance import org_kind, origin_for
@@ -2044,13 +2045,14 @@ async def create_observation(
     actor: Actor,
     *,
     text: str,
-    trade_item_id: uuid.UUID,
+    trade_item_id: uuid.UUID | None = None,
     supplier_id: uuid.UUID | None = None,
     offer_snapshot_id: uuid.UUID | None = None,
     quote_id: uuid.UUID | None = None,
     line: QuoteLine | None = None,
     idempotency_key: str | None = None,
     previous_observation_id: uuid.UUID | None = None,
+    offer_view: offer_svc.OfferViewContext | None = None,
 ) -> CommercialObservation:
     """Guarda la observación siempre, sin categorías ni pasos extra (D-132).
 
@@ -2060,6 +2062,11 @@ async def create_observation(
 
     `previous_observation_id` deja trazable la aclaración: la observación anterior se conserva
     intacta (texto, interpretaciones y preferencias) y la nueva la referencia en su contexto.
+
+    `offer` es la oferta en vivo que la persona está viendo. Cuando llega, la identidad se resuelve
+    con evidencia verificable (vínculo explícito, EAN único o identidad técnica del SKU) y el
+    contexto comercial real de esa oferta se conserva para la interpretación. `trade_item_id` deja
+    de ser obligatorio: la persona nunca vuelve a elegir un artículo.
     """
     require_admin(actor.roles)
     org = actor.organization_id
@@ -2069,8 +2076,19 @@ async def create_observation(
             f"La observación debe tener entre 1 y {MAX_TEXT} caracteres.",
             status_code=422,
         )
+    if offer_view is not None and offer_snapshot_id is not None:
+        raise DomainError(
+            "OBSERVATION_INVALID",
+            "La oferta en vivo no se combina con una oferta guardada.",
+            status_code=422,
+        )
+    source_key = (
+        f"{offer_view.source_id}:{offer_view.external_id.strip()}"
+        if offer_view is not None
+        else ""
+    )
     request_hash = hashlib.sha256(
-        f"{trade_item_id}|{supplier_id}|{offer_snapshot_id}|{quote_id}|{text}".encode()
+        f"{trade_item_id}|{source_key}|{supplier_id}|{offer_snapshot_id}|{quote_id}|{text}".encode()
     ).hexdigest()
     if idempotency_key:
         await events.advisory_lock(session, f"idem:obs:{org}:{idempotency_key}")
@@ -2092,15 +2110,42 @@ async def create_observation(
             ).scalar_one_or_none()
             if row is not None:
                 return row
-    item = (
-        await session.execute(
-            select(TradeItem).where(
-                TradeItem.id == trade_item_id, TradeItem.organization_id == org
+    resolved: offer_svc.ResolvedOffer | None = None
+    if offer_view is not None:
+        # La oferta que la persona está viendo es la evidencia: no se le pide elegir nada más.
+        resolved = await offer_svc.resolve_offer_item(session, actor, offer_view)
+        item = resolved.item
+        if resolved.supplier is not None:
+            supplier_id = resolved.supplier.id
+    elif trade_item_id is not None:
+        item = (
+            await session.execute(
+                select(TradeItem).where(
+                    TradeItem.id == trade_item_id, TradeItem.organization_id == org
+                )
             )
+        ).scalar_one_or_none()
+        if item is None:
+            raise not_found("El artículo")
+    elif offer_snapshot_id is not None:
+        snapshot_offer = await _offer(session, org, offer_snapshot_id)
+        item = (
+            await session.execute(
+                select(TradeItem).where(
+                    TradeItem.id == snapshot_offer.trade_item_id,
+                    TradeItem.organization_id == org,
+                )
+            )
+        ).scalar_one_or_none()
+        if item is None:
+            raise not_found("El artículo")
+        supplier_id = supplier_id or snapshot_offer.supplier_id
+    else:
+        raise DomainError(
+            "OBSERVATION_INVALID",
+            "Indica el artículo o la oferta sobre la que quieres enseñar.",
+            status_code=422,
         )
-    ).scalar_one_or_none()
-    if item is None:
-        raise not_found("El artículo")
 
     previous: CommercialObservation | None = None
     if previous_observation_id is not None:
@@ -2147,8 +2192,8 @@ async def create_observation(
     elif quote_id is not None:
         quote = await _quote(session, org, quote_id)
 
-    supplier: Supplier | None = None
-    if supplier_id is not None:
+    supplier: Supplier | None = resolved.supplier if resolved is not None else None
+    if supplier_id is not None and supplier is None:
         supplier = (
             await session.execute(
                 select(Supplier).where(
@@ -2187,6 +2232,12 @@ async def create_observation(
     context = await _observation_context(
         session, item=item, supplier=supplier, offer=offer, quote=quote, line=line
     )
+    if offer_view is not None and resolved is not None:
+        # Contexto comercial real de la oferta viva: sin esto, sus datos no existirían para la IA
+        # (las ofertas vivas no se persisten como `OfferSnapshot`).
+        context["offer_view"] = offer_view.as_observation_context()
+        context["identity_resolution"] = resolved.resolution
+        context["technical_identity"] = offer_svc.is_offer_identity(resolved.item)
     if previous is not None:
         # Vínculo trazable hacia la observación aclarada; no se copia ni se altera su contenido.
         context["previous_observation_id"] = str(previous.id)
@@ -2228,6 +2279,13 @@ async def create_observation(
             "quote_id": str(quote_id) if quote_id else None,
             "quote_line_id": str(line.id) if line else None,
             "previous_observation_id": str(previous.id) if previous is not None else None,
+            "offer_source_id": (
+                str(offer_view.source_id) if offer_view is not None else None
+            ),
+            "offer_external_id": (
+                offer_view.external_id.strip() if offer_view is not None else None
+            ),
+            "identity_resolution": resolved.resolution if resolved is not None else None,
         },
         after=audit_after,
     )

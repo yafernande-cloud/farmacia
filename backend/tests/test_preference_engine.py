@@ -25,6 +25,7 @@ from app.models import (
     CommercialObservation,
     CommercialPreference,
     ComparisonRun,
+    ImportRun,
     ObservationInterpretation,
     OfferSnapshot,
     Organization,
@@ -457,6 +458,99 @@ async def test_e3_prefiere_laboratorio_del_producto_y_no_se_propaga(sessions, ap
     r = await api.get(f"/api/v1/articles/{api.farm['items']['c']}", headers=H(api))
     order_c = [o["offer_id"] for o in r.json()["offers"]]
     assert order_c == sorted(order_c, reverse=True)
+
+
+async def test_dos_skus_de_la_misma_fuente_se_ordenan_por_laboratorio_sin_perderse(
+    sessions, api
+):
+    """AND-002/AND-031: dos SKU del mismo artículo y fuente siguen siendo dos ofertas.
+
+    Sin preferencia manda la observación más reciente; con «prefiero ASCEND» la oferta ASCEND
+    pasa primero, sin ocultar ni fusionar la otra.
+    """
+    async with sessions() as s, s.begin():
+        source = (
+            await s.execute(select(Source).where(Source.name == "Lista Norte"))
+        ).scalar_one()
+        item = TradeItem(
+            organization_id=api.farm["org"],
+            display_name="Ibuprofeno 400 mg x 20 comprimidos",
+            identity_key="fixture-a6-ibuprofeno-400-20",
+            ingredient="ibuprofeno",
+            attributes=_attrs("ibuprofeno", "20"),
+            data_origin="simulated",
+        )
+        s.add(item)
+        await s.flush()
+        # Una lista importada real tiene `import_run`: es lo que distingue el SKU como unidad
+        # de oferta (dos SKU de la misma fuente) de una lectura en vivo (una por fuente).
+        run = ImportRun(
+            organization_id=api.farm["org"],
+            source_id=source.id,
+            file_name="lista-norte.xlsx",
+            file_hash="a" * 64,
+            status="completed",
+            rows_total=2,
+            rows_accepted=2,
+            imported_at=NOW,
+            data_origin="simulated",
+        )
+        s.add(run)
+        await s.flush()
+        common = dict(
+            organization_id=api.farm["org"],
+            supplier_id=api.farm["suppliers"]["Norte"],
+            source_id=source.id,
+            trade_item_id=item.id,
+            currency="CLP",
+            price_basis="per_commercial_unit",
+            sale_unit="box",
+            sale_unit_text="caja",
+            pack_units_per_commercial_unit="20",
+            pack_base_unit="un",
+            pack_text="caja x 20",
+            stock_status="known",
+            stock_quantity="10",
+            stock_unit="box",
+            evidence={"import_run_id": str(run.id)},
+            data_origin="simulated",
+        )
+        s.add_all(
+            [
+                OfferSnapshot(
+                    external_id="E-ASC",
+                    price_amount="3190",
+                    laboratory_as_published="ASCEND LABORATORIES SPA",
+                    observed_at=NOW - timedelta(minutes=2),
+                    **common,
+                ),
+                OfferSnapshot(
+                    external_id="E-COR",
+                    price_amount="2890",
+                    laboratory_as_published="Laboratorio Cordillera Ficticio",
+                    observed_at=NOW,
+                    **common,
+                ),
+            ]
+        )
+        api.farm["items"]["e"] = item.id
+
+    # Sin preferencia, la observación más reciente (Cordillera) va primero.
+    r = await api.get(f"/api/v1/articles/{api.farm['items']['e']}", headers=H(api))
+    assert [o["external_id"] for o in r.json()["offers"]] == ["E-COR", "E-ASC"]
+
+    await _interpret(
+        sessions,
+        api.farm,
+        "e",
+        preferences=[_lab("ASCEND LABORATORIES SPA")],
+    )
+
+    r = await api.get(f"/api/v1/articles/{api.farm['items']['e']}", headers=H(api))
+    body = r.json()
+    assert body["offers_total"] == 2
+    assert [o["external_id"] for o in body["offers"]] == ["E-ASC", "E-COR"]
+    assert {o["price"]["money"]["amount"] for o in body["offers"]} == {"2890.00", "3190.00"}
 
 
 async def test_e3_precedencia_precio_antes_que_proveedor(sessions, api):

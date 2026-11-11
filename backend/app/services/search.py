@@ -141,32 +141,68 @@ def _current(offer: OfferSnapshot, now: datetime) -> bool:
 async def _latest_offers(
     session: AsyncSession, org: uuid.UUID, item_ids: list[uuid.UUID], *, now: datetime
 ) -> dict[uuid.UUID, list[OfferSnapshot]]:
-    """Última observación por (artículo, fuente) de la lista vigente de cada fuente.
+    """Última observación vigente de cada oferta de los artículos pedidos.
 
-    Para las fuentes de archivo solo compiten las ofertas de la última importación con filas
-    aceptadas: una fila ausente o rechazada en la lista nueva no se presenta como precio actual
-    (D-151). Las fuentes en vivo, sin `import_run`, conservan la lectura anterior.
+    En una **lista importada** la unidad de oferta es el SKU: un artículo puede recibir varios
+    SKU de la misma fuente (dos presentaciones comerciales del mismo producto) y todos deben
+    seguir visibles. Antes se agrupaba solo por (artículo, fuente), lo que escondía la segunda
+    oferta y falseaba `offer_count`, el precio mínimo, la comparación y la cotización. Solo
+    compiten las filas de la última importación con filas aceptadas: una fila ausente o
+    rechazada en la lista nueva no se presenta como precio actual (D-151).
+
+    En una **fuente en vivo** no hay lista ni SKU como unidad de catálogo: cada lectura es una
+    observación completa de la fuente. Se conserva la última por (artículo, fuente), como antes;
+    así una lectura nueva reemplaza a la anterior aunque la fuente haya cambiado el código.
     """
     if not item_ids:
         return {}
-    statement = (
-        select(OfferSnapshot)
-        .where(
-            OfferSnapshot.organization_id == org,
-            OfferSnapshot.trade_item_id.in_(item_ids),
+    run_ids = await latest_valid_run_ids(session, org)
+    rows: list[OfferSnapshot] = []
+
+    if run_ids:
+        # Fuentes con lista vigente: una oferta por SKU, solo de la corrida vigente.
+        statement = (
+            select(OfferSnapshot)
+            .where(
+                OfferSnapshot.organization_id == org,
+                OfferSnapshot.trade_item_id.in_(item_ids),
+                OfferSnapshot.source_id.in_(list(run_ids)),
+                current_list_filter(run_ids),
+            )
+            .ext(
+                distinct_on(
+                    OfferSnapshot.trade_item_id,
+                    OfferSnapshot.source_id,
+                    OfferSnapshot.external_id,
+                )
+            )
+            .order_by(
+                OfferSnapshot.trade_item_id,
+                OfferSnapshot.source_id,
+                OfferSnapshot.external_id,
+                OfferSnapshot.observed_at.desc(),
+                OfferSnapshot.created_at.desc(),
+                OfferSnapshot.id.desc(),
+            )
         )
-        .ext(distinct_on(OfferSnapshot.trade_item_id, OfferSnapshot.source_id))
-        .order_by(
-            OfferSnapshot.trade_item_id,
-            OfferSnapshot.source_id,
-            OfferSnapshot.observed_at.desc(),
-            OfferSnapshot.created_at.desc(),
-        )
+        rows.extend((await session.execute(statement)).scalars().all())
+
+    # Fuentes sin `import_run`: una lectura vigente por artículo y fuente.
+    live = select(OfferSnapshot).where(
+        OfferSnapshot.organization_id == org,
+        OfferSnapshot.trade_item_id.in_(item_ids),
     )
-    run_filter = current_list_filter(await latest_valid_run_ids(session, org))
-    if run_filter is not None:
-        statement = statement.where(run_filter)
-    rows = (await session.execute(statement)).scalars().all()
+    if run_ids:
+        live = live.where(OfferSnapshot.source_id.not_in(list(run_ids)))
+    live = live.ext(distinct_on(OfferSnapshot.trade_item_id, OfferSnapshot.source_id)).order_by(
+        OfferSnapshot.trade_item_id,
+        OfferSnapshot.source_id,
+        OfferSnapshot.observed_at.desc(),
+        OfferSnapshot.created_at.desc(),
+        OfferSnapshot.id.desc(),
+    )
+    rows.extend((await session.execute(live)).scalars().all())
+
     grouped: dict[uuid.UUID, list[OfferSnapshot]] = {}
     for o in rows:
         grouped.setdefault(o.trade_item_id, []).append(o)

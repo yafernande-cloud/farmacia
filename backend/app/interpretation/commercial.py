@@ -31,7 +31,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -176,9 +176,13 @@ class CommercialContext:
     # incluyen ofertas, precios ni stock de otros artículos.
     known_laboratories: tuple[str, ...] = ()
     known_brands: tuple[str, ...] = ()
+    # Oferta en vivo que la persona está viendo. Sus datos no viven en `OfferSnapshot`, así que
+    # este es el único contexto real que el modelo puede usar (nombre, laboratorio, presentación,
+    # precio y stock publicados). No declara ninguna equivalencia con otro artículo.
+    offer_view: dict[str, Any] | None = None
 
     def as_prompt_json(self) -> dict:
-        return {
+        payload = {
             "articulo": {
                 "nombre": self.display_name,
                 "principio_activo": self.ingredient,
@@ -194,6 +198,9 @@ class CommercialContext:
             ],
             "monedas_admitidas": list(self.currencies),
         }
+        if self.offer_view is not None:
+            payload["oferta_seleccionada"] = self.offer_view
+        return payload
 
     def supplier_by_label(self, label: str) -> ContextSupplier | None:
         key = normalize_name(label)
