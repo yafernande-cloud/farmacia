@@ -408,10 +408,12 @@ class OfferSnapshot(Base):
     brand_as_published: Mapped[str | None] = mapped_column(String(200))
     price_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
     currency: Mapped[str] = mapped_column(String(3))
-    price_basis: Mapped[str] = mapped_column(String(24), server_default="per_commercial_unit")
+    # NULL = la fuente no lo informó. No se completa por suposición y no hay valor por defecto:
+    # un default afirmaría una base comercial que nadie declaró (migración 0030).
+    price_basis: Mapped[str | None] = mapped_column(String(24))
     tax_included: Mapped[bool | None] = mapped_column(Boolean)
     discount_included: Mapped[bool | None] = mapped_column(Boolean)
-    sale_unit: Mapped[str] = mapped_column(String(10))
+    sale_unit: Mapped[str | None] = mapped_column(String(10))
     sale_unit_text: Mapped[str | None] = mapped_column(String(40))
     pack_units_per_commercial_unit: Mapped[Decimal | None] = mapped_column(Numeric(12, 3))
     pack_base_unit: Mapped[str | None] = mapped_column(String(10))

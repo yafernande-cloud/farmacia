@@ -64,7 +64,9 @@ ELIGIBILITY_ORDER = {"eligible": 0, "needs_review": 1, "ineligible": 2}
 class LineInput:
     article_id: uuid.UUID
     value: Decimal
-    unit: str
+    # NULL = la oferta elegida no informa su unidad de venta. Solo coincide con otra unidad
+    # desconocida: nunca se equipara a «caja», «envase» ni «unidad».
+    unit: str | None
 
 
 # --------------------------------------------------------------------------- formatos
@@ -371,6 +373,9 @@ def _candidate_values(
     if (
         offer.stock_status == "known"
         and offer.stock_quantity is not None
+        # Sin unidad de venta confirmada no se puede afirmar que el stock esté en la misma unidad
+        # que la cantidad seleccionada.
+        and offer.sale_unit is not None
         and offer.stock_unit == offer.sale_unit
     ):
         stock_sufficient = offer.stock_quantity >= purchased

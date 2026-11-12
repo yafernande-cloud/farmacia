@@ -428,9 +428,13 @@ def _published_payload(product: PublishedProduct, *, query: str) -> dict[str, An
     }
 
 
-def _offer_payload(offer: SupplierOffer, *, query: str) -> dict[str, Any]:
+def _offer_payload(
+    offer: SupplierOffer, *, query: str, allow_unknown_terms: bool = False
+) -> dict[str, Any]:
     relation, reasons = classify_match(query, offer.name)
-    blockers = cart_blockers(offer, match_relation=relation)
+    blockers = cart_blockers(
+        offer, match_relation=relation, allow_unknown_terms=allow_unknown_terms
+    )
     return {
         "external_id": offer.external_id,
         # Se completa al leer con un vínculo exacto; el motor no conserva ofertas.
@@ -643,6 +647,12 @@ def _snapshot(
     now = _now()
     offers = offers or []
     published = published or []
+    # La excepción se decide con el perfil guardado de esta fuente (FarmaLoop), no con nada que
+    # venga en la petición.
+    allow_unknown_terms = presets.allows_unknown_commercial_terms(
+        mechanism=profile.mechanism if profile is not None else None,
+        config=profile.config if profile is not None else None,
+    )
     return {
         "search_id": uuid.uuid4(),
         # Uso interno para comprobar la organización; no forma parte de la respuesta HTTP.
@@ -666,7 +676,10 @@ def _snapshot(
         "profile_version": profile.version if profile is not None else None,
         "discarded": discarded,
         "warnings": warnings or [],
-        "offers": [_offer_payload(offer, query=query) for offer in offers],
+        "offers": [
+            _offer_payload(offer, query=query, allow_unknown_terms=allow_unknown_terms)
+            for offer in offers
+        ],
         "published": [_published_payload(product, query=query) for product in published],
     }
 

@@ -42,6 +42,7 @@ from app.models import (
     ShippingTermsSnapshot,
     Source,
     Supplier,
+    SupplierConnectorProfile,
     SupplierProductMapping,
     TradeItem,
 )
@@ -168,6 +169,7 @@ async def shop(sessions):
                 "external_id": external_id,
                 "price_amount": price,
                 "currency": "CLP",
+                "price_basis": "per_commercial_unit",
                 "sale_unit": "box",
                 "sale_unit_text": "caja",
                 "stock_status": "known",
@@ -1703,6 +1705,142 @@ async def test_agregar_oferta_viva_la_registra_una_sola_vez(api, sessions):
     )
     assert r.status_code == 422
     assert r.json()["error"]["code"] == "OFFER_NOT_IN_SUPPLIER"
+
+
+async def _perfil_conector(api, sessions, *, config: dict) -> None:
+    """Perfil guardado de la fuente del proveedor «uno», para decidir la excepción por identidad."""
+    async with sessions() as s, s.begin():
+        s.add(
+            SupplierConnectorProfile(
+                organization_id=api.shop["org"],
+                supplier_id=api.shop["suppliers"]["uno"],
+                source_id=api.shop["sources"]["uno"],
+                mechanism="algolia",
+                config=config,
+                field_map={},
+                enabled=True,
+            )
+        )
+
+
+FARMALOOP_CONFIG = {
+    "endpoint": "https://app-dsn.algolia.net/1/indexes/f_products_prod/query",
+    "app_id_secret_ref": "FARMALOOP_ALGOLIA_APP_ID",
+    "api_key_secret_ref": "FARMALOOP_ALGOLIA_API_KEY",
+    "index": "f_products_prod",
+}
+
+
+async def test_farmaloop_cotiza_sin_unidad_de_venta_ni_base_del_precio(api, sessions):
+    """La excepción se decide por el perfil guardado, no por lo que envíe el cliente.
+
+    FarmaLoop no publica unidad de venta ni base del precio: se conservan desconocidas, la línea
+    guarda la cantidad en ofertas seleccionadas y el subtotal usa el precio publicado.
+    """
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    quote_id = await _quote(api)
+    oferta = _live_offer(
+        api,
+        sale_unit=None,
+        price_basis=None,
+        stock_status="unknown",
+        stock_quantity=None,
+        stock_unit=None,
+    )
+    body = {
+        "supplier_id": str(api.shop["suppliers"]["uno"]),
+        "offer": oferta,
+        "quantity": {"value": "2", "unit": None},
+    }
+    r = await api.post(f"/api/v1/quotes/{quote_id}/lines", json=body, headers=H(api))
+    assert r.status_code == 201, r.text
+    line = r.json()["line"]
+    assert line["quantity"] == {"value": "2", "unit": None}
+    assert line["unit_price"] == {
+        "amount": "1700.00",
+        "currency": "CLP",
+        "basis": None,
+        "sale_unit": None,
+    }
+    # El subtotal es precio publicado × cantidad seleccionada; la base no se inventa.
+    assert line["subtotal"] == {"amount": "3400.00", "currency": "CLP"}
+
+    async with sessions() as s:
+        snapshot = (
+            await s.execute(
+                select(OfferSnapshot).where(
+                    OfferSnapshot.organization_id == api.shop["org"],
+                    OfferSnapshot.external_id == "LIVE-1",
+                )
+            )
+        ).scalars().one()
+        assert snapshot.sale_unit is None
+        assert snapshot.price_basis is None
+        assert snapshot.price_amount == Decimal("1700.00")
+
+    # El informe final declara la unidad desconocida y conserva el subtotal calculado.
+    r = await _finalize(api, quote_id)
+    assert r.status_code == 200, r.text
+    item = r.json()["report"]["items"][0]
+    assert item["quantity"] == {"value": "2", "unit": None}
+    assert item["unit_price"]["basis"] is None
+    assert item["subtotal"] == {"amount": "3400.00", "currency": "CLP"}
+
+
+async def test_sin_el_perfil_de_farmaloop_los_atributos_siguen_siendo_obligatorios(api, sessions):
+    """Un conector con otra identidad no hereda la excepción aunque su mecanismo sea Algolia."""
+    await _perfil_conector(
+        api,
+        sessions,
+        config={
+            "endpoint": "https://otra-dsn.algolia.net/1/indexes/productos/query",
+            "app_id": "OTRAAPP",
+            "api_key_secret_ref": "OTRA_API_KEY",
+            "index": "productos",
+        },
+    )
+    quote_id = await _quote(api)
+    sin_unidad = _live_offer(api, sale_unit=None, price_basis="per_commercial_unit")
+    r = await _add_live(api, quote_id, offer=sin_unidad)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "OFFER_SALE_UNIT_UNKNOWN"
+
+    sin_base = _live_offer(api, sale_unit="box", price_basis=None)
+    r = await _add_live(api, quote_id, offer=sin_base)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "OFFER_PRICE_BASIS_UNKNOWN"
+
+    async with sessions() as s:
+        vivas = (
+            await s.execute(
+                select(OfferSnapshot).where(
+                    OfferSnapshot.organization_id == api.shop["org"],
+                    OfferSnapshot.external_id == "LIVE-1",
+                )
+            )
+        ).scalars().all()
+        assert vivas == []
+
+
+async def test_una_fuente_sin_perfil_no_puede_omitir_unidad_ni_base(api, sessions):
+    quote_id = await _quote(api)
+    r = await _add_live(
+        api, quote_id, offer=_live_offer(api, sale_unit=None, price_basis=None)
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "OFFER_PRICE_BASIS_UNKNOWN"
+
+
+async def test_farmaloop_rechaza_un_valor_presente_pero_invalido(api, sessions):
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    quote_id = await _quote(api)
+    r = await _add_live(api, quote_id, offer=_live_offer(api, price_basis="unknown"))
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "OFFER_PRICE_BASIS_UNKNOWN"
+
+    r = await _add_live(api, quote_id, offer=_live_offer(api, sale_unit="saco"))
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "OFFER_SALE_UNIT_UNKNOWN"
 
 
 async def test_tras_liberar_la_misma_persona_puede_reportar_de_nuevo(api, sessions):

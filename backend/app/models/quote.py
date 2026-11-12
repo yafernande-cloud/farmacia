@@ -265,7 +265,9 @@ class QuoteLine(Base):
     # Copia denormalizada del artículo de la oferta; el servicio valida que coincida.
     trade_item_id: Mapped[uuid.UUID] = mapped_column()
     quantity: Mapped[Decimal] = mapped_column(Numeric(12, 3))
-    quantity_unit: Mapped[str] = mapped_column(String(10))
+    # NULL = la oferta elegida no informa su unidad de venta: la cantidad se cuenta en ofertas y
+    # no se declara una unidad que nadie informó (migración 0030).
+    quantity_unit: Mapped[str | None] = mapped_column(String(10))
     status: Mapped[str] = mapped_column(String(10), server_default="active")
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     removed_by: Mapped[uuid.UUID | None] = mapped_column()

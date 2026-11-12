@@ -133,7 +133,8 @@ class OfferSupplierOut(BaseModel):
 
 class OfferPriceOut(BaseModel):
     money: MoneyOut
-    basis: Literal["per_commercial_unit", "per_base_unit"]
+    # NULL = la fuente no declaró si el precio es por unidad comercial o por unidad base.
+    basis: Literal["per_commercial_unit", "per_base_unit"] | None
     tax_included: bool | None
     discount_included: bool | None
 

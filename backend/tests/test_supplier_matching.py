@@ -74,6 +74,26 @@ def test_el_carrito_sigue_bloqueado_sin_unidad_de_venta_ni_base_de_precio():
     ]
 
 
+def test_solo_el_conector_identificado_puede_omitir_esos_atributos():
+    """La excepción es explícita y nunca el comportamiento por defecto."""
+    offer = _offer()
+    assert cart_eligible(offer, match_relation="direct", allow_unknown_terms=True) is True
+    assert cart_blockers(offer, match_relation="direct", allow_unknown_terms=True) == []
+    # Aun con la excepción, un impedimento real sigue bloqueando.
+    sin_stock = _offer(stock_status="out_of_stock")
+    assert cart_eligible(sin_stock, match_relation="direct", allow_unknown_terms=True) is False
+    relacionada = _offer()
+    assert (
+        cart_eligible(relacionada, match_relation="related", allow_unknown_terms=True) is False
+    )
+
+
+def test_con_datos_confirmados_la_elegibilidad_no_cambia():
+    """Con datos confirmados la elegibilidad es la misma, con o sin la excepción."""
+    offer = _offer(sale_unit="box", price_basis="per_commercial_unit")
+    assert cart_eligible(offer, match_relation="direct", allow_unknown_terms=True) is True
+
+
 def test_un_resultado_relacionado_tampoco_entra_al_carrito():
     offer = _offer(name="Pregalex Pregabalina 150 mg 30 comprimidos")
     relation, _ = classify_match("predual", offer.name)

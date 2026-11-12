@@ -19,16 +19,21 @@ Lo que este preset deliberadamente **no** afirma:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 FARMALOOP = "farmaloop"
 PRESETS = (FARMALOOP,)
 
+# Identidad del conector FarmaLoop en el perfil guardado: la referencia de la credencial de su
+# Algolia público. No es un nombre que envíe el cliente.
+FARMALOOP_APP_ID_SECRET_REF = "FARMALOOP_ALGOLIA_APP_ID"
+
 _PRESET: dict[str, Any] = {
     "mechanism": "algolia",
     "config": {
         "endpoint": "https://{app_id}-dsn.algolia.net/1/indexes/{index}/query",
-        "app_id_secret_ref": "FARMALOOP_ALGOLIA_APP_ID",
+        "app_id_secret_ref": FARMALOOP_APP_ID_SECRET_REF,
         "api_key_secret_ref": "FARMALOOP_ALGOLIA_API_KEY",
         "index": "f_products_prod",
         "query_param": "query",
@@ -68,3 +73,20 @@ def preset(name: str) -> dict[str, Any]:
         "config": {k: (dict(v) if isinstance(v, dict) else v) for k, v in _PRESET["config"].items()},
         "field_map": {k: dict(v) for k, v in _PRESET["field_map"].items()},
     }
+
+
+def allows_unknown_commercial_terms(
+    *, mechanism: str | None, config: Mapping[str, Any] | None
+) -> bool:
+    """¿Este conector puede cotizar sin unidad de venta ni base del precio?
+
+    Solo FarmaLoop, y por su **identidad guardada**: el mecanismo Algolia junto con la referencia
+    de credencial que lo identifica. La pregunta se responde con el perfil del servidor, nunca con
+    un nombre, proveedor ni campo enviado por el cliente, así que la excepción no se puede pedir
+    desde la API ni reutilizar para otro proveedor.
+    """
+    return (
+        mechanism == "algolia"
+        and isinstance(config, Mapping)
+        and config.get("app_id_secret_ref") == FARMALOOP_APP_ID_SECRET_REF
+    )

@@ -42,6 +42,7 @@ from app.models import (
     QuoteLine,
     QuoteLineAllocation,
     Supplier,
+    SupplierConnectorProfile,
     TradeItem,
 )
 from app.services import comparison as comparison_svc
@@ -50,6 +51,7 @@ from app.services import demand as demand_svc
 from app.services import events
 from app.services import offer_identities as offer_svc
 from app.services.actors import Actor
+from app.services.connectors import presets
 from app.services.observation_views import observation_view
 from app.services.provenance import org_kind, origin_for
 from app.services.search import _latest_offers
@@ -732,6 +734,14 @@ async def _normalize_allocations(
         raise DomainError(
             "ALLOCATION_EMPTY", "La lista de asignaciones no puede estar vacía.", status_code=422
         )
+    # Un reporte se mide en una unidad concreta; una línea sin unidad confirmada no puede cubrirlo
+    # sin inventar la equivalencia.
+    if unit is None:
+        raise DomainError(
+            "LINE_UNIT_UNCONFIRMED",
+            "La oferta no informa su unidad de venta; no se puede asignar a un reporte.",
+            status_code=422,
+        )
     out: list[dict[str, Any]] = []
     seen: set[uuid.UUID] = set()
     total = ZERO
@@ -1060,11 +1070,18 @@ async def _active_line_for_live_offer(
     ).scalars().first()
 
 
-def _live_offer_terms(offer: offer_svc.OfferViewContext) -> tuple[Decimal, str]:
+def _live_offer_terms(
+    offer: offer_svc.OfferViewContext, *, allow_unknown_terms: bool
+) -> tuple[Decimal, str]:
     """Valida los términos comerciales mínimos de una oferta viva y devuelve (precio, moneda).
 
     Se valida incluso cuando la selección ya existe: una repetición con datos inválidos no debe
     devolver la línea anterior como si la oferta fuera válida.
+
+    `allow_unknown_terms` solo es verdadero para el conector que el perfil guardado identifica como
+    FarmaLoop: ese conector puede no informar unidad de venta ni base del precio, y entonces se
+    conservan desconocidas. Otro proveedor debe informarlas. Un valor presente pero inválido se
+    rechaza siempre, también en FarmaLoop.
     """
     amount = _dec(offer.price_amount)
     currency = (offer.currency or "").strip()
@@ -1074,19 +1091,58 @@ def _live_offer_terms(offer: offer_svc.OfferViewContext) -> tuple[Decimal, str]:
             "La oferta no trae un precio y una moneda válidos; no se puede cotizar.",
             status_code=422,
         )
-    if offer.price_basis not in ("per_commercial_unit", "per_base_unit"):
+    if offer.price_basis is not None and offer.price_basis not in (
+        "per_commercial_unit",
+        "per_base_unit",
+    ):
         raise DomainError(
             "OFFER_PRICE_BASIS_UNKNOWN",
-            "La base del precio de la oferta no está confirmada.",
+            "La base del precio informada por la oferta no es válida.",
             status_code=422,
         )
-    if offer.sale_unit not in UNITS:
+    if offer.sale_unit is not None and offer.sale_unit not in UNITS:
         raise DomainError(
             "OFFER_SALE_UNIT_UNKNOWN",
-            "La unidad de venta de la oferta no está confirmada.",
+            "La unidad de venta informada por la oferta no es válida.",
             status_code=422,
         )
+    if not allow_unknown_terms:
+        if offer.price_basis is None:
+            raise DomainError(
+                "OFFER_PRICE_BASIS_UNKNOWN",
+                "La base del precio de la oferta no está confirmada.",
+                status_code=422,
+            )
+        if offer.sale_unit is None:
+            raise DomainError(
+                "OFFER_SALE_UNIT_UNKNOWN",
+                "La unidad de venta de la oferta no está confirmada.",
+                status_code=422,
+            )
     return amount, currency
+
+
+async def _allows_unknown_terms(
+    session: AsyncSession, org: uuid.UUID, source_id: uuid.UUID
+) -> bool:
+    """¿La fuente guardada es el conector que puede cotizar sin unidad ni base del precio?
+
+    Se lee del perfil persistido de la fuente —mecanismo y referencia de credencial—, nunca de un
+    nombre o proveedor que venga en la petición, así que no se puede reclamar la excepción.
+    """
+    profile = (
+        await session.execute(
+            select(SupplierConnectorProfile).where(
+                SupplierConnectorProfile.organization_id == org,
+                SupplierConnectorProfile.source_id == source_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if profile is None or not profile.enabled:
+        return False
+    return presets.allows_unknown_commercial_terms(
+        mechanism=profile.mechanism, config=profile.config
+    )
 
 
 async def _live_offer_snapshot(
@@ -1094,6 +1150,8 @@ async def _live_offer_snapshot(
     actor: Actor,
     offer: offer_svc.OfferViewContext,
     resolved: offer_svc.ResolvedOffer,
+    *,
+    allow_unknown_terms: bool,
 ) -> OfferSnapshot:
     """Guarda como `OfferSnapshot` la oferta viva que la persona eligió.
 
@@ -1103,7 +1161,7 @@ async def _live_offer_snapshot(
     repetir la misma selección no cree filas ni líneas duplicadas.
     """
     org = actor.organization_id
-    amount, currency = _live_offer_terms(offer)
+    amount, currency = _live_offer_terms(offer, allow_unknown_terms=allow_unknown_terms)
     external_id = offer.external_id.strip()
     latest = (
         (
@@ -1210,7 +1268,9 @@ async def add_line(
     quote = await _quote(session, org, quote_id)
     _ensure_draft(quote)
     value = _quantity(quantity)
-    unit = _unit(quantity_unit)
+    # La unidad es obligatoria solo si se declara: una oferta viva puede no informarla y entonces
+    # la cantidad se cuenta en ofertas seleccionadas, sin inventar caja, envase ni unidad.
+    unit = None if quantity_unit is None else _unit(quantity_unit)
     if offer_context is not None and offer_snapshot_id is not None:
         raise DomainError(
             "OFFER_CONFLICT",
@@ -1225,6 +1285,7 @@ async def add_line(
         )
     resolved_live: offer_svc.ResolvedOffer | None = None
     snapshot: OfferSnapshot | None = None
+    allow_unknown_terms = False
     if offer_context is not None:
         # Oferta viva: se resuelve la identidad con evidencia (vínculo, EAN o código) y la
         # observación se crea recién cuando la línea no exista.
@@ -1247,7 +1308,14 @@ async def add_line(
             )
         supplier = resolved_live.supplier
         item = resolved_live.item
-        _live_offer_terms(offer_context)
+        # Solo el conector identificado por el perfil guardado de esta fuente (FarmaLoop) puede
+        # cotizar sin unidad de venta ni base del precio.
+        allow_unknown_terms = await _allows_unknown_terms(session, org, source.id)
+        _live_offer_terms(offer_context, allow_unknown_terms=allow_unknown_terms)
+        # Si la fuente sí declara la unidad de venta, la línea la adopta: la unidad nunca se
+        # supone, se toma del dato publicado.
+        if unit is None and offer_context.sale_unit is not None:
+            unit = _unit(offer_context.sale_unit)
     else:
         snapshot = await _offer(session, org, offer_snapshot_id)
         if snapshot.supplier_id != supplier_id:
@@ -1328,7 +1396,13 @@ async def add_line(
                 },
             )
         # Solo ahora se registra la observación: una selección repetida no crea filas nuevas.
-        snapshot = await _live_offer_snapshot(session, actor, offer_context, resolved_live)
+        snapshot = await _live_offer_snapshot(
+            session,
+            actor,
+            offer_context,
+            resolved_live,
+            allow_unknown_terms=allow_unknown_terms,
+        )
 
     if cart is None:
         cart = QuoteCart(

@@ -204,7 +204,8 @@ class ComparisonCandidate(Base):
     adjustment: Mapped[str | None] = mapped_column(String(20))
     price_amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
     currency: Mapped[str] = mapped_column(String(3))
-    price_basis: Mapped[str] = mapped_column(String(24))
+    # Copia la base del precio de la oferta evaluada; NULL = no informada (migración 0030).
+    price_basis: Mapped[str | None] = mapped_column(String(24))
     tax_included: Mapped[bool | None] = mapped_column(Boolean)
     discount_included: Mapped[bool | None] = mapped_column(Boolean)
     pack_units_per_commercial_unit: Mapped[Decimal | None] = mapped_column(Numeric(12, 3))

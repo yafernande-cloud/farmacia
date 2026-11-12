@@ -195,6 +195,7 @@ async def farm(sessions):
                 "currency": "CLP",
                 "sale_unit": "box",
                 "sale_unit_text": "caja",
+                "price_basis": "per_commercial_unit",
                 "stock_status": "known",
                 "stock_quantity": "90",
                 "stock_unit": "box",

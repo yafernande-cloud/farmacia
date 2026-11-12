@@ -296,9 +296,10 @@ async def test_busqueda_exitosa_no_persiste_ofertas(api, sessions, fake):
     assert found["stock_quantity"] is None
     assert found["match_relation"] == "direct"
     assert found["match_reasons"] == ["all_query_terms_in_name"]
-    # La presentación no confirma unidad de venta ni base del precio: sigue bloqueada.
-    assert found["cart_eligible"] is False
-    assert found["cart_blockers"] == ["sale_unit_unconfirmed", "price_basis_unconfirmed"]
+    # FarmaLoop no publica unidad de venta ni base del precio: se conservan desconocidas y la
+    # oferta sigue siendo cotizable con el precio y el stock que sí informó.
+    assert found["cart_eligible"] is True
+    assert found["cart_blockers"] == []
     assert body["published"] == []
     assert fake.calls == 1
 
@@ -308,6 +309,35 @@ async def test_busqueda_exitosa_no_persiste_ofertas(api, sessions, fake):
     assert row.last_error_kind is None
     assert row.schema_fingerprint == "huella-1"
     assert await count(sessions, OfferSnapshot) == 0
+
+
+async def test_un_conector_con_otra_identidad_no_hereda_la_excepcion_de_farmaloop(api, fake):
+    """El mismo mecanismo Algolia, sin la identidad guardada de FarmaLoop, exige ambos atributos."""
+    base = (await put(api)).json()
+    config = {
+        key: value
+        for key, value in base["config"].items()
+        if key != "app_id_secret_ref"
+    }
+    config["app_id"] = "OTRAAPP"
+    r = await put(
+        api,
+        body={
+            "mechanism": base["mechanism"],
+            "config": config,
+            "field_map": base["field_map"],
+        },
+        version=1,
+    )
+    assert r.status_code == 200, r.text
+
+    body = (await search(api)).json()
+    assert body["state"] == "connected"
+    found = body["offers"][0]
+    assert found["sale_unit"] is None
+    assert found["price_basis"] is None
+    assert found["cart_eligible"] is False
+    assert found["cart_blockers"] == ["sale_unit_unconfirmed", "price_basis_unconfirmed"]
 
 
 async def test_una_publicacion_sin_precio_se_muestra_aparte_y_nunca_es_elegible(
@@ -347,8 +377,6 @@ async def test_una_publicacion_sin_precio_se_muestra_aparte_y_nunca_es_elegible(
     assert directa["cart_blockers"] == [
         "not_available_for_sale",
         "no_current_price",
-        "sale_unit_unconfirmed",
-        "price_basis_unconfirmed",
     ]
 
     sin_stock_informado = by_id["8127"]
@@ -358,7 +386,9 @@ async def test_una_publicacion_sin_precio_se_muestra_aparte_y_nunca_es_elegible(
     assert "not_available_for_sale" not in sin_stock_informado["cart_blockers"]
     assert "no_current_price" in sin_stock_informado["cart_blockers"]
 
-    assert all(item["cart_eligible"] is False for item in body["offers"])
+    # Las publicaciones nunca son elegibles; la oferta con precio, sí.
+    assert all(item["cart_eligible"] is True for item in body["offers"])
+    assert all(item["cart_eligible"] is False for item in body["published"])
     assert await count(sessions, OfferSnapshot) == 0
 
 
@@ -405,14 +435,12 @@ async def test_los_resultados_relacionados_se_muestran_pero_no_se_presentan_como
         assert related["match_relation"] == "related"
         assert related["match_reasons"] == ["query_not_confirmed_by_name"]
         assert related["cart_eligible"] is False
-        assert related["cart_blockers"] == [
-            "match_not_direct",
-            "sale_unit_unconfirmed",
-            "price_basis_unconfirmed",
-        ]
+        assert related["cart_blockers"] == ["match_not_direct"]
 
-    # Ninguna oferta está habilitada mientras falten unidad de venta y base del precio.
-    assert all(item["cart_eligible"] is False for item in body["offers"])
+    # La coincidencia directa con precio válido sí se puede cotizar aunque FarmaLoop no informe
+    # unidad de venta ni base del precio; las relacionadas siguen bloqueadas.
+    assert by_id["140429"]["cart_eligible"] is True
+    assert by_id["105469"]["cart_eligible"] is True
     assert await count(sessions, OfferSnapshot) == 0
 
 
