@@ -361,6 +361,11 @@ async def _demand_row(api, key) -> dict:
     raise AssertionError("faltante ausente")
 
 
+def _alloc_pairs(allocations: list[dict]) -> list[tuple[str, str]]:
+    """Lo que importa de cada asignación: a qué reporte y cuánto. No se comparan marcas internas."""
+    return [(a["demand_item_id"], a["quantity"]) for a in allocations]
+
+
 # --------------------------------------------------------------------------- cotizaciones
 
 
@@ -1405,12 +1410,16 @@ def _live_offer(api, *, supplier="uno", external="LIVE-1", price="1700.00", **ov
     return offer
 
 
-def _add_live(api, quote_id, *, quantity="3", offer=None, allocations=None, key=None):
+def _add_live(
+    api, quote_id, *, quantity="3", offer=None, allocations=None, demand=None, key=None
+):
     body = {
         "supplier_id": str(api.shop["suppliers"]["uno"]),
         "offer": offer or _live_offer(api),
         "quantity": {"value": quantity, "unit": "box"},
     }
+    if demand:
+        body["demand_item_id"] = str(api.shop["demands"][demand])
     if allocations is not None:
         body["demand_allocations"] = allocations
     headers = H(api)
@@ -1950,6 +1959,155 @@ async def test_sin_el_perfil_de_farmaloop_los_atributos_siguen_siendo_obligatori
             )
         ).scalars().all()
         assert vivas == []
+
+
+async def test_farmaloop_asocia_el_faltante_sin_unidad_y_lo_libera(api, sessions):
+    """Salonpas: reporte sin cantidad, oferta FarmaLoop sin unidad y vínculo explícito.
+
+    La cantidad a cotizar se fija con SET (1 por defecto, auditado); la línea conserva la unidad
+    desconocida, la asignación explícita cuenta una oferta y el informe libera solo esa cantidad.
+    """
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    demand_id = api.shop["demands"]["desconocida"]
+    fila = await _demand_row(api, "desconocida")
+    r = await _set_quantity(api, demand_id, fila["version"], value="1", unit="unit")
+    assert r.status_code == 200, r.text
+
+    quote_id = await _quote(api)
+    oferta = _live_offer(
+        api,
+        external="107581",
+        name="Salonpas x 10 parches",
+        price="2990.00",
+        sale_unit=None,
+        price_basis=None,
+    )
+    r = await _add_live(api, quote_id, quantity="1", offer=oferta, demand="desconocida")
+    assert r.status_code == 201, r.text
+    line = r.json()["line"]
+    assert line["quantity"] == {"value": "1", "unit": None}
+    assert line["demand_item_id"] == str(demand_id)
+    assert _alloc_pairs(line["demand_allocations"]) == [(str(demand_id), "1")]
+    async with sessions() as s:
+        row = await s.get(QuoteLine, uuid.UUID(line["line_id"]))
+        assert row.quantity_unit is None
+        snapshot = await s.get(OfferSnapshot, row.offer_snapshot_id)
+        assert snapshot.sale_unit is None and snapshot.price_basis is None
+
+    fila = await _demand_row(api, "desconocida")
+    assert fila["status"] == "active"
+    assert fila["quoted_quantity"] == "1"
+    assert fila["replenishment_state"] == "in_quote"
+    text = await _telegram_list(sessions, api.shop["org"])
+    assert "<s><b>Ibuprofeno sin cantidad</b></s>" in text
+    assert "Estado: 🛒 En carrito" in text
+
+    r = await _finalize(api, quote_id, key="finalize-farmaloop-salonpas")
+    assert r.status_code == 200, r.text
+    assert r.json()["pending"] == []
+    assert r.json()["released"] == [
+        {"demand_item_id": str(demand_id), "quantity": "1", "quantity_unit": "unit"}
+    ]
+    async with sessions() as s:
+        assert (await s.get(DemandItem, demand_id)).status == "released"
+
+
+async def test_farmaloop_no_asocia_si_el_reporte_se_mide_en_caja(api, sessions):
+    """Sin unidad comercial no se cubre un reporte en caja: no se inventa la equivalencia."""
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    quote_id = await _quote(api)
+    r = await _add_live(
+        api,
+        quote_id,
+        quantity="1",
+        offer=_live_offer(api, sale_unit=None, price_basis=None),
+        demand="exacta",
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "UNIT_MISMATCH"
+    assert "no declara unidad de venta" in r.json()["error"]["message"]
+    r = await api.get(f"/api/v1/quotes/{quote_id}", headers=H(api))
+    assert r.json()["carts"] == []
+
+
+async def test_farmaloop_cobertura_parcial_no_libera_el_faltante(api, sessions):
+    """Se libera solo lo cubierto por asignaciones explícitas; 1 de 2 no cierra el reporte."""
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    demand_id = api.shop["demands"]["desconocida"]
+    fila = await _demand_row(api, "desconocida")
+    r = await _set_quantity(api, demand_id, fila["version"], value="2", unit="unit")
+    assert r.status_code == 200, r.text
+    quote_id = await _quote(api)
+    r = await _add_live(
+        api,
+        quote_id,
+        quantity="1",
+        offer=_live_offer(api, sale_unit=None, price_basis=None),
+        demand="desconocida",
+    )
+    assert r.status_code == 201, r.text
+    r = await _finalize(api, quote_id, key="finalize-farmaloop-parcial")
+    assert r.status_code == 200, r.text
+    assert r.json()["released"] == []
+    assert r.json()["pending"][0]["reason"] == "coverage_incomplete"
+    fila = await _demand_row(api, "desconocida")
+    assert fila["status"] == "active"
+    assert fila["quoted_quantity"] == "0"
+
+
+async def test_farmaloop_regulariza_una_linea_existente_con_patch(api, sessions):
+    """La línea ya guardada se asocia con un PATCH explícito, sin duplicarla ni reescribirla."""
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    demand_id = api.shop["demands"]["desconocida"]
+    fila = await _demand_row(api, "desconocida")
+    r = await _set_quantity(api, demand_id, fila["version"], value="1", unit="unit")
+    assert r.status_code == 200, r.text
+    quote_id = await _quote(api)
+    r = await _add_live(
+        api,
+        quote_id,
+        quantity="1",
+        offer=_live_offer(
+            api, external="107581", price="2990.00", sale_unit=None, price_basis=None
+        ),
+    )
+    assert r.status_code == 201, r.text
+    line = r.json()["line"]
+    assert line["demand_item_id"] is None
+
+    r = await api.patch(
+        f"/api/v1/quotes/{quote_id}/lines/{line['line_id']}",
+        json={
+            "version": line["version"],
+            "quantity": {"value": "1", "unit": None},
+            "demand_allocations": [{"demand_item_id": str(demand_id), "quantity": 1}],
+        },
+        headers=H(api),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()["line"]
+    assert body["line_id"] == line["line_id"]
+    assert body["demand_item_id"] == str(demand_id)
+    assert _alloc_pairs(body["demand_allocations"]) == [(str(demand_id), "1")]
+    # La observación original se conserva: mismo proveedor, cantidad y precio elegido.
+    assert body["supplier_id"] == str(api.shop["suppliers"]["uno"])
+    assert body["quantity"] == {"value": "1", "unit": None}
+    assert body["unit_price"]["amount"] == "2990.00"
+    assert (await _demand_row(api, "desconocida"))["replenishment_state"] == "in_quote"
+
+    # Quitar las asignaciones devuelve el reporte a la bandeja sin borrar la línea ni su historial.
+    r = await api.patch(
+        f"/api/v1/quotes/{quote_id}/lines/{line['line_id']}",
+        json={
+            "version": body["version"],
+            "quantity": {"value": "1", "unit": None},
+            "demand_allocations": [],
+        },
+        headers=H(api),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["line"]["demand_item_id"] is None
+    assert (await _demand_row(api, "desconocida"))["replenishment_state"] == "pending"
 
 
 async def test_una_fuente_sin_perfil_no_puede_omitir_unidad_ni_base(api, sessions):

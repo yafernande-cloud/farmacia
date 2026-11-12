@@ -718,15 +718,21 @@ async def _normalize_allocations(
     org: uuid.UUID,
     *,
     line_quantity: Decimal,
-    unit: str,
+    unit: str | None,
     item: TradeItem,
     raw: list[dict[str, Any]] | None,
     demand_item_id: uuid.UUID | None,
+    allow_unknown_unit: bool = False,
 ) -> list[dict[str, Any]]:
     """Valida asignaciones explícitas. Nunca suma ni reparte cantidades por su cuenta.
 
     Compatibilidad: una línea con `demand_item_id` y sin lista recibe una asignación por su
     cantidad total, que es exactamente lo que hacía C5-A.
+
+    `allow_unknown_unit` reproduce la excepción de FarmaLoop en la asociación: una oferta de ese
+    conector puede no declarar unidad de venta, y entonces la cantidad asignada cuenta ofertas
+    seleccionadas. Solo cubre reportes medidos en la unidad genérica (`unit`) o sin unidad: ni la
+    línea ni el reporte inventan una equivalencia con caja, paquete o botella.
     """
     if raw is not None and demand_item_id is not None:
         raise DomainError(
@@ -743,8 +749,10 @@ async def _normalize_allocations(
             "ALLOCATION_EMPTY", "La lista de asignaciones no puede estar vacía.", status_code=422
         )
     # Un reporte se mide en una unidad concreta; una línea sin unidad confirmada no puede cubrirlo
-    # sin inventar la equivalencia.
-    if unit is None:
+    # sin inventar la equivalencia. La única excepción es el conector que no publica unidad de
+    # venta (FarmaLoop), y solo contra reportes en la unidad genérica: la línea queda sin unidad y
+    # cada asignación cuenta ofertas seleccionadas, nunca una caja supuesta.
+    if unit is None and not allow_unknown_unit:
         raise DomainError(
             "LINE_UNIT_UNCONFIRMED",
             "La oferta no informa su unidad de venta; no se puede asignar a un reporte.",
@@ -773,16 +781,24 @@ async def _normalize_allocations(
         seen.add(demand_id)
         demand = await _allocation_demand(session, org, demand_id)
         if demand.quantity_unit != unit:
-            raise DomainError(
-                "UNIT_MISMATCH",
-                "La unidad del reporte no coincide con la unidad de la línea.",
-                status_code=422,
-                details={
-                    "demand_item_id": str(demand.id),
-                    "report_unit": demand.quantity_unit,
-                    "line_unit": unit,
-                },
-            )
+            generic_report = allow_unknown_unit and unit is None and demand.quantity_unit == "unit"
+            if not generic_report:
+                message = (
+                    "La oferta no declara unidad de venta y el reporte se mide en "
+                    f"«{demand.quantity_unit}»: no se asigna sin inventar la equivalencia."
+                    if allow_unknown_unit and unit is None
+                    else "La unidad del reporte no coincide con la unidad de la línea."
+                )
+                raise DomainError(
+                    "UNIT_MISMATCH",
+                    message,
+                    status_code=422,
+                    details={
+                        "demand_item_id": str(demand.id),
+                        "report_unit": demand.quantity_unit,
+                        "line_unit": unit,
+                    },
+                )
         total += quantity
         out.append(
             {
@@ -994,12 +1010,18 @@ async def _replace_allocations(
         )
     ).scalars().all()
     before = [_allocation_payload(row) for row in existing]
+    # La misma excepción de FarmaLoop aplica al reemplazar asignaciones de una línea ya creada:
+    # se decide por la fuente guardada de su observación, nunca por el proveedor de la petición.
+    snapshot = await session.get(OfferSnapshot, line.offer_snapshot_id)
+    allow_unknown_unit = snapshot is not None and await _allows_unknown_terms(
+        session, org, snapshot.source_id
+    )
     # `PATCH` con lista vacía es la acción explícita de **quitar** todas las asignaciones (D-137).
     # En el alta (`add_line`) la lista vacía sigue rechazándose: ahí no hay nada que quitar.
     normalized = (
         await _normalize_allocations(
             session, org, line_quantity=line.quantity, unit=line.quantity_unit, item=item,
-            raw=raw, demand_item_id=None,
+            raw=raw, demand_item_id=None, allow_unknown_unit=allow_unknown_unit,
         )
         if raw
         else []
@@ -1300,6 +1322,9 @@ async def add_line(
     resolved_live: offer_svc.ResolvedOffer | None = None
     snapshot: OfferSnapshot | None = None
     allow_unknown_terms = False
+    # Misma identidad de conector que habilita cotizar sin unidad: la asociación con un reporte
+    # hereda la excepción en lugar de reclamarla por nombre de proveedor.
+    allow_unknown_unit = False
     if offer_context is not None:
         # Oferta viva: se resuelve la identidad con evidencia (vínculo, EAN o código) y la
         # observación se crea recién cuando la línea no exista.
@@ -1325,6 +1350,7 @@ async def add_line(
         # Solo el conector identificado por el perfil guardado de esta fuente (FarmaLoop) puede
         # cotizar sin unidad de venta ni base del precio.
         allow_unknown_terms = await _allows_unknown_terms(session, org, source.id)
+        allow_unknown_unit = allow_unknown_terms
         _live_offer_terms(offer_context, allow_unknown_terms=allow_unknown_terms)
         # La unidad de la línea sale de lo que publicó el proveedor, también cuando el cliente
         # repite otra unidad: si la fuente declara «box», la línea la adopta; si no declara
@@ -1340,6 +1366,8 @@ async def add_line(
                 "La oferta no pertenece al proveedor indicado.",
                 status_code=422,
             )
+        # Una oferta ya publicada conserva la misma excepción por la fuente que la registró.
+        allow_unknown_unit = await _allows_unknown_terms(session, org, snapshot.source_id)
         supplier = (
             await session.execute(
                 select(Supplier).where(
@@ -1379,6 +1407,7 @@ async def add_line(
     allocations = await _normalize_allocations(
         session, org, line_quantity=value, unit=unit, item=item,
         raw=demand_allocations, demand_item_id=demand_item_id,
+        allow_unknown_unit=allow_unknown_unit,
     )  # fmt: skip
     # Atajo compatible: con una sola asignación la línea conserva `demand_item_id`/relación.
     single = allocations[0] if len(allocations) == 1 else None
