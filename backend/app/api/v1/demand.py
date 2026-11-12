@@ -89,9 +89,11 @@ def item_out(
         "pending_quantity": i.target_quantity,
         "pending_purchase_quantity": i.target_quantity,
         "is_pending": i.status == "active",
-        "replenishment_state": {"cancelled": "cancelled", "fulfilled": "fulfilled"}.get(
-            i.status, "pending"
-        ),
+        "replenishment_state": {
+            "cancelled": "cancelled",
+            "fulfilled": "fulfilled",
+            "released": "released",
+        }.get(i.status, "pending"),
     }
     return s.DemandItemOut(
         # Se calcula desde los atributos guardados: un faltante histórico que ya trae el nombre
@@ -221,7 +223,9 @@ async def me(actor: CurrentActor, session: Session):
             summary="Lista compartida de faltantes (paginada por cursor)")  # fmt: skip
 async def list_demand_items(
     session: Session, actor: CurrentActor,
-    status: Annotated[str, Query(pattern="^(active|cancelled|fulfilled)$")] = "active",
+    status: Annotated[
+        str, Query(pattern="^(active|cancelled|fulfilled|released)$")
+    ] = "active",
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     cursor: str | None = None,
     pending_only: Annotated[

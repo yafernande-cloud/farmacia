@@ -64,25 +64,6 @@ class AllocationIn(BaseModel):
     quantity: int = Field(gt=0, description="Entero > 0. La suma no puede superar la línea.")
 
 
-class LineIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    supplier_id: uuid.UUID
-    offer_snapshot_id: uuid.UUID
-    quantity: dict[str, Any] = Field(
-        examples=[{"value": "3", "unit": "box"}],
-        description="`value` entero > 0 (texto o número) y `unit` ∈ box|package|unit|bottle.",
-    )
-    demand_item_id: uuid.UUID | None = Field(
-        default=None,
-        description="Atajo de una sola asignación; incompatible con `demand_allocations`.",
-    )
-    demand_allocations: list[AllocationIn] | None = Field(
-        default=None,
-        description="Asignaciones explícitas a uno o varios reportes. Sin reparto automático.",
-    )
-
-
 class LinePatchIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -171,6 +152,41 @@ class OfferContextIn(BaseModel):
         )
 
 
+class LineIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    supplier_id: uuid.UUID
+    # Oferta ya publicada (lista cargada) u oferta viva del conector; exactamente una.
+    offer_snapshot_id: uuid.UUID | None = Field(
+        default=None, description="Oferta persistida. Incompatible con `offer`."
+    )
+    offer: OfferContextIn | None = Field(
+        default=None,
+        description="Oferta viva que la persona está viendo; se registra al agregarla.",
+    )
+    quantity: dict[str, Any] = Field(
+        examples=[{"value": "3", "unit": "box"}],
+        description="`value` entero > 0 (texto o número) y `unit` ∈ box|package|unit|bottle.",
+    )
+    demand_item_id: uuid.UUID | None = Field(
+        default=None,
+        description="Atajo de una sola asignación; incompatible con `demand_allocations`.",
+    )
+    demand_allocations: list[AllocationIn] | None = Field(
+        default=None,
+        description="Asignaciones explícitas a uno o varios reportes. Sin reparto automático.",
+    )
+
+
+class QuoteFinalizeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: int | None = Field(
+        default=None,
+        description="Versión leída de la cotización. Si se envía, una versión vieja no finaliza.",
+    )
+
+
 class ObservationIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -205,6 +221,10 @@ class QuoteOut(BaseModel):
     updated_at: datetime
     closed_by: uuid.UUID | None
     closed_at: datetime | None
+    report_number: int | None = None
+    report_label: str | None = None
+    finalized_at: datetime | None = None
+    finalized_by: uuid.UUID | None = None
     data_origin: str
     derived_state: str
     carts: list[dict[str, Any]]
@@ -223,6 +243,10 @@ class QuoteListItemOut(BaseModel):
     updated_at: datetime
     closed_by: uuid.UUID | None
     closed_at: datetime | None
+    report_number: int | None = None
+    report_label: str | None = None
+    finalized_at: datetime | None = None
+    finalized_by: uuid.UUID | None = None
     data_origin: str
     supplier_ids: list[uuid.UUID] = []
     supplier_count: int = 0
@@ -240,9 +264,30 @@ class QuoteSummaryOut(BaseModel):
     status: str
     version: int
     updated_at: datetime
+    report_number: int | None = None
+    report_label: str | None = None
+    finalized_at: datetime | None = None
+    finalized_by: uuid.UUID | None = None
     derived_state: str
     suppliers: list[dict[str, Any]]
     estimated_total: dict[str, Any]
+
+
+class QuoteFinalizeOut(BaseModel):
+    quote: dict[str, Any]
+    report: dict[str, Any]
+    released: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    deduplicated: bool = False
+
+
+class QuoteReportOut(BaseModel):
+    quote_id: uuid.UUID
+    report_number: int | None
+    report_label: str | None
+    finalized_at: datetime | None
+    finalized_by: uuid.UUID | None
+    report: dict[str, Any]
 
 
 class LineOut(BaseModel):
@@ -252,6 +297,9 @@ class LineOut(BaseModel):
     supplier_id: uuid.UUID
     offer_snapshot_id: uuid.UUID
     trade_item_id: uuid.UUID
+    product: dict[str, Any]
+    unit_price: dict[str, Any] | None
+    subtotal: dict[str, Any] | None
     quantity: dict[str, Any]
     status: str
     removed_at: datetime | None
@@ -357,6 +405,10 @@ async def list_quotes(
     updated_from: datetime | None = None,
     updated_to: datetime | None = None,
     q: Annotated[str | None, Query(max_length=120)] = None,
+    finalized: Annotated[
+        bool | None,
+        Query(description="`true` = solo cotizaciones con informe (historial)."),
+    ] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     cursor: str | None = None,
 ):
@@ -367,6 +419,7 @@ async def list_quotes(
         updated_from=updated_from,
         updated_to=updated_to,
         q=q,
+        finalized=finalized,
         limit=limit,
         cursor=cursor,
     )
@@ -420,6 +473,48 @@ async def patch_quote(
         return await quote_svc.quote_detail(session, actor, quote_id)
 
 
+@router.post(
+    "/quotes/{quote_id}/finalize",
+    response_model=QuoteFinalizeOut,
+    responses=ERRORS,
+    summary="Generar el informe, cerrar la cotización y liberar los faltantes cubiertos",
+)
+async def finalize_quote(
+    quote_id: uuid.UUID,
+    session: Session,
+    actor: StrongActor,
+    body: QuoteFinalizeIn | None = None,
+    idempotency_key: IdemKey = None,
+):
+    expected_version = body.version if body is not None else None
+    digest = (
+        events.request_hash(
+            {"quote_id": str(quote_id), "version": expected_version}
+        )
+        if idempotency_key
+        else None
+    )
+    async with transaction(session):
+        return await quote_svc.finalize_quote(
+            session,
+            actor,
+            quote_id,
+            idempotency_key=idempotency_key,
+            request_hash=digest,
+            expected_version=expected_version,
+        )
+
+
+@router.get(
+    "/quotes/{quote_id}/report",
+    response_model=QuoteReportOut,
+    responses=ERRORS,
+    summary="Informe congelado de una cotización finalizada (nunca se recalcula)",
+)
+async def get_quote_report(quote_id: uuid.UUID, session: Session, actor: StrongActor):
+    return await quote_svc.quote_report(session, actor, quote_id)
+
+
 # --------------------------------------------------------------------------- E10: líneas
 
 
@@ -451,6 +546,19 @@ async def add_line(
                 "quote_id": str(quote_id),
                 "supplier_id": str(body.supplier_id),
                 "offer_snapshot_id": str(body.offer_snapshot_id),
+                "offer": (
+                    {
+                        "source_id": str(body.offer.source_id),
+                        "external_id": body.offer.external_id,
+                        "price": body.offer.price.model_dump(mode="json")
+                        if body.offer.price
+                        else None,
+                        "price_basis": body.offer.price_basis,
+                        "sale_unit": body.offer.sale_unit,
+                    }
+                    if body.offer is not None
+                    else None
+                ),
                 "value": str(value),
                 "unit": unit,
                 "demand_item_id": str(body.demand_item_id) if body.demand_item_id else None,
@@ -473,6 +581,7 @@ async def add_line(
             quote_id,
             supplier_id=body.supplier_id,
             offer_snapshot_id=body.offer_snapshot_id,
+            offer_context=body.offer.to_service() if body.offer is not None else None,
             quantity=value,
             quantity_unit=unit,
             demand_item_id=body.demand_item_id,

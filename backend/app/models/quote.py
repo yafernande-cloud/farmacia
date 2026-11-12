@@ -76,16 +76,45 @@ class Quote(Base):
         ForeignKeyConstraint(
             ["closed_by", "organization_id"], ["app_user.id", "app_user.organization_id"]
         ),
+        ForeignKeyConstraint(
+            ["finalized_by", "organization_id"], ["app_user.id", "app_user.organization_id"]
+        ),
         CheckConstraint("status IN ('draft','closed')", name="estado_valido"),
         # Cerrada exige autor y fecha; abierta no los conserva (reabrir los limpia).
         CheckConstraint(
             "(status = 'closed') = (closed_at IS NOT NULL AND closed_by IS NOT NULL)",
             name="cierre_coherente",
         ),
+        # Finalizar congela el informe y cierra: número, fecha, autor y reporte van juntos.
+        # Una cotización abierta conserva esos campos vacíos.
+        CheckConstraint(
+            "(finalized_at IS NULL AND report_number IS NULL AND report_label IS NULL"
+            " AND finalized_by IS NULL AND report IS NULL)"
+            " OR (finalized_at IS NOT NULL AND report_number IS NOT NULL"
+            " AND report_label IS NOT NULL AND finalized_by IS NOT NULL"
+            " AND report IS NOT NULL AND status = 'closed')",
+            name="finalizacion_coherente",
+        ),
         CheckConstraint(f"data_origin IN ({ORIGINS})", name="origen_dato_valido"),
         CheckConstraint("version >= 1", name="version_valida"),
         CheckConstraint("title IS NULL OR length(btrim(title)) > 0", name="titulo_no_vacio"),
         CheckConstraint("title IS NULL OR length(title) <= 120", name="titulo_largo_valido"),
+        # Número correlativo por organización, solo para cotizaciones finalizadas.
+        Index(
+            "uq_quote_report_number",
+            "organization_id",
+            "report_number",
+            unique=True,
+            postgresql_where=text("report_number IS NOT NULL"),
+        ),
+        # Una clave de idempotencia identifica un único informe dentro de la organización.
+        Index(
+            "uq_quote_finalize_key",
+            "organization_id",
+            "finalize_key",
+            unique=True,
+            postgresql_where=text("finalize_key IS NOT NULL"),
+        ),
         Index("ix_quote_org_updated", "organization_id", "updated_at"),
     )  # fmt: skip
     id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
@@ -96,6 +125,15 @@ class Quote(Base):
     created_by: Mapped[uuid.UUID] = mapped_column()
     closed_by: Mapped[uuid.UUID | None] = mapped_column()
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Informe de cotización congelado al finalizar (precios del momento, nunca recalculados).
+    report_number: Mapped[int | None] = mapped_column(Integer)
+    report_label: Mapped[str | None] = mapped_column(String(30))
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finalized_by: Mapped[uuid.UUID | None] = mapped_column()
+    report: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    # Idempotencia del cierre: repetir la misma clave y contenido no duplica el informe.
+    finalize_key: Mapped[str | None] = mapped_column(String(128))
+    finalize_hash: Mapped[str | None] = mapped_column(String(64))
     data_origin: Mapped[str] = mapped_column(String(12), server_default="unclassified")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)

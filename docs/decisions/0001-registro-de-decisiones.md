@@ -2717,3 +2717,61 @@ regresión focalizada (`test_supplier_connectors_api`, `test_supplier_connectors
 `test_article_preferences`, `test_supplier_mappings_api`, `test_offer_identity_teaching`, `test_search_api`):
 **144 aprobadas**; `ruff check` limpio. Suite completa no ejecutada en esta pasada (base vigente: 1.236 aprobadas, 8
 omitidas); se correrá antes del cierre del módulo. Sin commit, push, despliegue ni Lovable Publish al implementarse.
+
+### D-154 — Carrito persistente, informe finalizado y liberación de faltantes (2026-11-11)
+
+**Contexto.** El carrito de la pantalla de Lovable era una demostración en `sessionStorage`, desconectada del backend,
+y «Mis cotizaciones» duplicaba lo que ya hacía el propio carrito. El flujo acordado con la propietaria es: Pao busca,
+elige manualmente una oferta (la IA solo la ordena), la agrega a una cotización que se conserva, revisa el carrito,
+genera el informe y finaliza; **solo entonces** se liberan los faltantes cubiertos. No hay compras, pagos ni
+confirmaciones de compra en este alcance.
+
+1. **Un solo carrito, en el servidor.** El borrador (`quote` en `draft`) es la cotización activa y se recupera al
+   recargar o al iniciar otra sesión. Cada línea referencia la observación inmutable de la oferta (`OfferSnapshot`), de
+   modo que el precio elegido no cambia si el proveedor publica otro después. Agregar o quitar líneas **no** libera
+   faltantes. La pantalla «Mis cotizaciones» se retira del menú lateral y su ruta redirige a «Cotizador»; el historial
+   muestra **exclusivamente** cotizaciones finalizadas.
+2. **Alta de ofertas vivas.** Una oferta en vivo no está persistida: al agregarla se registra su `OfferSnapshot`
+   (fuente, código externo, nombre, laboratorio, presentación, precio, base de precio, unidad de venta, stock y EAN) y
+   la línea queda anclada a ella. El backend exige precio, base de precio y unidad de venta conocidos; si faltan,
+   responde `422` (`OFFER_WITHOUT_PRICE`, `OFFER_PRICE_BASIS_UNKNOWN`, `OFFER_SALE_UNIT_UNKNOWN`) y la oferta no entra.
+   La deduplicación por `(source_id, external_id)` dentro del carrito devuelve la línea existente (`deduplicated`), nunca
+   suma cantidades; la validación ocurre **antes** de deduplicar. Las ofertas de listas cargadas y del catálogo se
+   agregan por su `offer_snapshot_id` ya publicado.
+3. **Vínculo con faltantes.** La persona elige la oferta; la línea solo se asocia a un faltante cuando la unidad
+   coincide con la cantidad pedida conocida (`quote_line_allocation`, cantidades explícitas). Si la unidad no coincide,
+   la oferta se agrega igual y no se inventa el vínculo. No hay botones de vinculación manual ni tareas de asociación:
+   cualquier identidad que falte la resuelve el sistema (D-152 y D-153 no cambian).
+4. **Finalización e idempotencia.** `POST /quotes/{id}/finalize` toma un bloqueo por cotización, exige la versión
+   vigente, cierra la cotización y congela el informe (número correlativo por organización, etiqueta `COT-000001`,
+   fecha, productos, cantidades, proveedores, precios, subtotales y total). Repetir la misma `Idempotency-Key` devuelve
+   el informe original (`deduplicated=true`); otra clave sobre una cotización ya finalizada responde `409
+   QUOTE_ALREADY_FINALIZED` y reutilizar una clave en otra cotización `409 IDEMPOTENCY_KEY_REUSED`. Una cotización vacía
+   (`QUOTE_EMPTY`), con líneas no cotizables (`QUOTE_LINES_NOT_QUOTABLE`) o con monedas distintas
+   (`QUOTE_CURRENCY_MISMATCH`) no se finaliza y **sigue en borrador**. Si la finalización falla, no se libera nada ni se
+   registra una cotización terminada. El frontend conserva la clave mientras el resultado es desconocido (sin conexión
+   o error 5xx) y la descarta cuando recibió el informe.
+5. **Liberación.** Un faltante pasa a `status='released'` (con `released_at/by/quote_id`) en la **misma transacción** que
+   genera el informe, y solo cuando la cobertura de cotizaciones finalizadas —esta y las anteriores— completa la cantidad
+   pedida conocida. Cobertura parcial queda `pending` (`coverage_incomplete`) y cantidad desconocida queda `pending`
+   (`quantity_unknown`). Como el índice único de identidad solo cubre filas `active`, la misma persona puede volver a
+   reportar el producto por Telegram como un faltante independiente; el historial, las observaciones y las asignaciones
+   anteriores se conservan. Liberar no significa comprar ni recibir.
+6. **Alcance y límites.** Compras, pagos y confirmaciones de compra quedan fuera. Telegram, proveedores y «Enseñar a la
+   IA» mantienen su funcionamiento. No se modifican D-152 ni D-153, no se alteran datos ni reglas de SIMULACIÓN y no se
+   agregan tareas manuales para Pao. Migración **`0029`** (columnas del informe e idempotencia en `quote`, estado
+   `released` y columnas de liberación en `demand_item`); **no aplicada a `farmacia` ni a `farmacia_demo`** en esta
+   pasada.
+
+**Estado.** Implementada en código el 2026-11-11. Backend: `app/services/quotes.py` (finalización con bloqueo, informe
+congelado, liberación y validación previa de ofertas vivas), `app/api/v1/quotes.py` y `app/api/v1/schemas.py`,
+`app/api/v1/demand.py`, `app/services/demand.py` (estado `released`) y migración `0029`. Frontend:
+`src/lib/cotizacion-api.ts` (nuevo cliente tipado con claves de idempotencia y lectura del carrito),
+`src/routes/index.tsx` (carrito conectado, recuperación del borrador, cantidades, quitar, vaciar y finalizar con
+informe), `src/components/MiCotizacion.tsx`, `src/components/InformeCotizacion.tsx`, `src/components/OfertasPorProveedor.tsx`,
+`src/components/PreciosListasCargadas.tsx`, `src/components/AppSidebar.tsx`, `src/routes/historial.tsx` y
+`src/routes/mis-cotizaciones.tsx` (redirección). Pruebas: `tests/test_quotes_api.py` (informe congelado, reintentos,
+liberación completa/parcial, altas de ofertas vivas, deduplicación y re-reporte por Telegram), `tests/test_db_schema.py`,
+`src/test/cotizacion-api.test.ts` (nuevo), `src/test/historial.test.tsx` (nuevo) y actualización de
+`src/test/main-screen.test.tsx`, `src/test/flujo-proveedores-en-vivo.test.tsx` y `src/test/precios-listas-ensenar.test.tsx`.
+Sin commit, push, despliegue ni Lovable Publish.

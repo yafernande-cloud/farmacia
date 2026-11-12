@@ -101,6 +101,8 @@ def _state(item: DemandItem, purchased: Decimal, quoted: Decimal) -> str:
         return "cancelled"
     if item.status == "fulfilled":
         return "fulfilled"
+    if item.status == "released":
+        return "released"
     if purchased > 0:
         return "purchased"
     if quoted > 0:

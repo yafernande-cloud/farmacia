@@ -57,7 +57,11 @@ class DemandItem(Base):
         UniqueConstraint("id", "organization_id"),
         ForeignKeyConstraint(["cycle_id", "organization_id"], ["purchase_cycle.id", "purchase_cycle.organization_id"]),
         CheckConstraint("data_origin IN ('simulated','captured','ai_derived','unclassified')", name="origen_dato_valido"),
-        CheckConstraint("status IN ('active','cancelled','fulfilled')", name="estado_valido"),
+        # `released`: el reporte quedó cubierto por completo en una cotización finalizada y se
+        # libera para que la misma persona pueda volver a reportarlo (la historia no se borra).
+        CheckConstraint(
+            "status IN ('active','cancelled','fulfilled','released')", name="estado_valido"
+        ),
         CheckConstraint("target_quantity IS NULL OR target_quantity >= 0", name="cantidad_no_negativa"),
         # Cantidad y unidad van juntas: nunca una cantidad sin unidad ni al revés (inv. 4).
         CheckConstraint("(target_quantity IS NULL) = (quantity_unit IS NULL)", name="cantidad_con_unidad"),
@@ -87,6 +91,23 @@ class DemandItem(Base):
             ["app_user.id", "app_user.organization_id"],
             name="fk_demand_item_cancelled_by_app_user",
         ),
+        # La liberación la hace una cotización finalizada y conserva autor y fecha.
+        ForeignKeyConstraint(
+            ["released_by", "organization_id"],
+            ["app_user.id", "app_user.organization_id"],
+            name="fk_demand_item_released_by_app_user",
+        ),
+        ForeignKeyConstraint(
+            ["released_quote_id", "organization_id"],
+            ["quote.id", "quote.organization_id"],
+            name="fk_demand_item_released_quote",
+        ),
+        # Liberado exige fecha, autor y cotización; cualquier otro estado no los conserva.
+        CheckConstraint(
+            "(status = 'released') = (released_at IS NOT NULL AND released_by IS NOT NULL"
+            " AND released_quote_id IS NOT NULL)",
+            name="liberacion_coherente",
+        ),
         # Respaldo de la deduplicación por autor: una misma persona no crea dos necesidades idénticas
         # en el mismo ciclo; dos personas distintas sí tienen una cada una (D-135).
         Index(
@@ -102,6 +123,7 @@ class DemandItem(Base):
         Index("ix_demand_item_family", "organization_id", "cycle_id", "ingredient"),
         Index("ix_demand_item_reporter", "organization_id", "cycle_id", "reported_by", "status"),
         Index("ix_demand_item_pharma", "organization_id", "pharma_identity_key"),
+        Index("ix_demand_item_released_quote", "organization_id", "released_quote_id"),
     )  # fmt: skip
     id: Mapped[uuid.UUID] = mapped_column(**UUID_PK)
     organization_id: Mapped[uuid.UUID] = mapped_column()
@@ -116,6 +138,10 @@ class DemandItem(Base):
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancelled_by: Mapped[uuid.UUID | None] = mapped_column()
     cancellation_reason: Mapped[str | None] = mapped_column(Text)
+    # Liberación al finalizar una cotización que cubrió todo lo pedido (no es compra).
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    released_by: Mapped[uuid.UUID | None] = mapped_column()
+    released_quote_id: Mapped[uuid.UUID | None] = mapped_column()
     display_name: Mapped[str] = mapped_column(String(300))
     ingredient: Mapped[str] = mapped_column(String(200))
     # Atributos estructurados (esquema v2): potencias con su unidad original, contenido, forma,

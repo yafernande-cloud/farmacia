@@ -288,7 +288,7 @@ class DemandItemOut(BaseModel):
     )
     is_pending: bool = True
     replenishment_state: Literal[
-        "pending", "in_quote", "purchased", "fulfilled", "cancelled"
+        "pending", "in_quote", "purchased", "fulfilled", "cancelled", "released"
     ] = "pending"
 
 

@@ -31,12 +31,14 @@ from app.models import (
     AuditEvent,
     CommercialObservation,
     DemandItem,
+    DemandObservation,
     OfferSnapshot,
     Organization,
     PurchaseCycle,
     Quote,
     QuoteCart,
     QuoteLine,
+    QuoteLineAllocation,
     ShippingTermsSnapshot,
     Source,
     Supplier,
@@ -1366,3 +1368,400 @@ async def test_el_evento_de_auditoria_y_el_outbox_se_escriben_juntos(api, sessio
         carts = (await s.execute(select(QuoteCart))).scalars().all()
         assert len(carts) == 1
         assert (await s.execute(select(CommercialObservation))).scalars().all() == []
+
+
+# --------------------------------------------------------------------------- finalización
+
+
+def _finalize(api, quote_id, *, key=None, version=None):
+    headers = H(api)
+    if key:
+        headers["Idempotency-Key"] = key
+    body = {} if version is None else {"version": version}
+    return api.post(
+        f"/api/v1/quotes/{quote_id}/finalize", json=body, headers=headers
+    )
+
+
+def _live_offer(api, *, supplier="uno", external="LIVE-1", price="1700.00", **over) -> dict:
+    offer = {
+        "source_id": str(api.shop["sources"][supplier]),
+        "supplier_id": str(api.shop["suppliers"][supplier]),
+        "external_id": external,
+        "name": "Ibuprofeno 400 mg x 20 comprimidos",
+        "laboratory": "ASCEND",
+        "presentation": "Caja de 20 comprimidos",
+        "price_basis": "per_commercial_unit",
+        "sale_unit": "box",
+        "stock_status": "known",
+        "stock_quantity": "25",
+        "stock_unit": "box",
+    }
+    if price is not None:
+        offer["price"] = {"amount": price, "currency": "CLP"}
+    offer.update(over)
+    return offer
+
+
+def _add_live(api, quote_id, *, quantity="3", offer=None, allocations=None, key=None):
+    body = {
+        "supplier_id": str(api.shop["suppliers"]["uno"]),
+        "offer": offer or _live_offer(api),
+        "quantity": {"value": quantity, "unit": "box"},
+    }
+    if allocations is not None:
+        body["demand_allocations"] = allocations
+    headers = H(api)
+    if key:
+        headers["Idempotency-Key"] = key
+    return api.post(f"/api/v1/quotes/{quote_id}/lines", json=body, headers=headers)
+
+
+async def test_finalizar_genera_informe_congelado_y_lo_muestra_en_el_historial(api, sessions):
+    quote_id = await _quote(api, "Reposición de noviembre")
+    assert (await _add(api, quote_id, offer="uno_x", value="3")).status_code == 201
+    assert (await _add(api, quote_id, offer="uno_y", value="2")).status_code == 201
+
+    r = await _finalize(api, quote_id, key="finalize-cot-1")
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["deduplicated"] is False
+    assert data["quote"]["status"] == "closed"
+    assert data["quote"]["report_label"] == "COT-000001"
+    assert data["quote"]["report_number"] == 1
+    assert data["quote"]["finalized_at"] is not None
+    assert data["released"] == [] and data["pending"] == []
+
+    report = data["report"]
+    assert report["schema_version"] == 1
+    assert report["label"] == "COT-000001"
+    assert report["currency"] == "CLP"
+    assert report["total"] == {"amount": "8000.00", "currency": "CLP"}
+    assert len(report["items"]) == 2
+    by_code = {item["product"]["code"]: item for item in report["items"]}
+    assert by_code["U-X"]["product"]["name"] is None  # el proveedor no publicó nombre aquí
+    assert by_code["U-X"]["quantity"] == {"value": "3", "unit": "box"}
+    assert by_code["U-X"]["unit_price"]["amount"] == "2000.00"
+    assert by_code["U-X"]["subtotal"] == {"amount": "6000.00", "currency": "CLP"}
+    assert by_code["U-Y"]["subtotal"] == {"amount": "2000.00", "currency": "CLP"}
+    assert report["suppliers"][0]["subtotal"] == {"amount": "8000.00", "currency": "CLP"}
+
+    # El informe guardado se recupera tal cual, aunque después cambie la oferta del proveedor.
+    r = await api.get(f"/api/v1/quotes/{quote_id}/report", headers=H(api))
+    assert r.status_code == 200, r.text
+    assert r.json()["report"] == report
+    assert r.json()["report_label"] == "COT-000001"
+
+    # La observación es de solo agregar: un precio nuevo es otra fila, nunca un UPDATE.
+    async with sessions() as s, s.begin():
+        s.add(
+            OfferSnapshot(
+                organization_id=api.shop["org"],
+                supplier_id=api.shop["suppliers"]["uno"],
+                source_id=api.shop["sources"]["uno"],
+                trade_item_id=api.shop["items"]["x"],
+                external_id="U-X",
+                price_amount="99999.00",
+                currency="CLP",
+                sale_unit="box",
+                observed_at=LATER,
+                data_origin="simulated",
+            )
+        )
+    r = await api.get(f"/api/v1/quotes/{quote_id}/report", headers=H(api))
+    assert r.json()["report"]["items"][0]["unit_price"]["amount"] == "2000.00"
+
+    # Historial: solo cotizaciones finalizadas. La vista del carrito activo no se duplica.
+    other = await _quote(api, "Sigue en preparación")
+    r = await api.get("/api/v1/quotes?finalized=true", headers=H(api))
+    assert [q["quote_id"] for q in r.json()["quotes"]] == [quote_id]
+    assert r.json()["quotes"][0]["report_label"] == "COT-000001"
+    r = await api.get("/api/v1/quotes?finalized=false", headers=H(api))
+    assert [q["quote_id"] for q in r.json()["quotes"]] == [other]
+
+    # Una cotización finalizada no se reabre: el cierre sostiene el informe.
+    r = await api.patch(
+        f"/api/v1/quotes/{quote_id}",
+        json={"version": data["quote"]["version"], "status": "draft"},
+        headers=H(api),
+    )
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "QUOTE_FINALIZED"
+
+
+async def test_reintentos_no_duplican_el_informe_ni_aceptan_otra_clave(api):
+    quote_id = await _quote(api)
+    await _add(api, quote_id, value="1")
+
+    first = await _finalize(api, quote_id, key="finalize-replay-1")
+    assert first.status_code == 200, first.text
+    assert first.json()["quote"]["report_label"] == "COT-000001"
+
+    again = await _finalize(api, quote_id, key="finalize-replay-1")
+    assert again.status_code == 200, again.text
+    assert again.json()["deduplicated"] is True
+    assert again.json()["quote"]["report_label"] == "COT-000001"
+    assert again.json()["report"] == first.json()["report"]
+
+    r = await _finalize(api, quote_id, key="finalize-replay-2")
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "QUOTE_ALREADY_FINALIZED"
+
+    # La misma clave no cierra dos cotizaciones distintas de la organización.
+    other = await _quote(api)
+    await _add(api, other, supplier="dos", offer="dos_x", value="1")
+    r = await _finalize(api, other, key="finalize-replay-1")
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+    # Aislamiento por organización: la cotización ajena no se ve ni se finaliza.
+    r = await _finalize(api, other)  # aún abierta, pero la vista ajena da 404
+    assert r.status_code == 200
+    outsider = await api.post(
+        f"/api/v1/quotes/{other}/finalize", json={}, headers=H(api, "outsider")
+    )
+    assert outsider.status_code == 404
+
+
+async def test_no_finaliza_vacia_ni_con_monedas_distintas(api, sessions):
+    quote_id = await _quote(api)
+    r = await _finalize(api, quote_id, key="finalize-empty-1")
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "QUOTE_EMPTY"
+
+    async with sessions() as s, s.begin():
+        usd = OfferSnapshot(
+            organization_id=api.shop["org"],
+            supplier_id=api.shop["suppliers"]["dos"],
+            source_id=api.shop["sources"]["dos"],
+            trade_item_id=api.shop["items"]["y"],
+            external_id="D-Y-USD",
+            price_amount="5.00",
+            currency="USD",
+            sale_unit="box",
+            observed_at=NOW,
+            data_origin="simulated",
+        )
+        s.add(usd)
+        await s.flush()
+        usd_id = usd.id
+
+    await _add(api, quote_id, offer="uno_x", value="1")
+    r = await api.post(
+        f"/api/v1/quotes/{quote_id}/lines",
+        json={
+            "supplier_id": str(api.shop["suppliers"]["dos"]),
+            "offer_snapshot_id": str(usd_id),
+            "quantity": {"value": "1", "unit": "box"},
+        },
+        headers=H(api),
+    )
+    assert r.status_code == 201, r.text
+    r = await _finalize(api, quote_id, key="finalize-usd-1")
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "QUOTE_CURRENCY_MISMATCH"
+
+    # Nada quedó cerrado ni liberado.
+    r = await api.get(f"/api/v1/quotes/{quote_id}", headers=H(api))
+    assert r.json()["status"] == "draft"
+    assert r.json()["report_label"] is None
+
+
+async def test_libera_solo_cuando_las_cotizaciones_finalizadas_cubren_todo(api, sessions):
+    demand_id = api.shop["demands"]["exacta"]  # 10 cajas
+
+    parcial = await _quote(api, "Primera parte")
+    r = await _add(
+        api, parcial, value="4", allocations=_alloc(api, ("exacta", 4))
+    )
+    assert r.status_code == 201, r.text
+    r = await _finalize(api, parcial, key="finalize-parcial-1")
+    assert r.status_code == 200, r.text
+    assert r.json()["released"] == []
+    assert r.json()["pending"] == [
+        {
+            "demand_item_id": str(demand_id),
+            "reason": "coverage_incomplete",
+            "allocated_quantity": "4",
+            "target_quantity": "10",
+        }
+    ]
+    # Quitar o agregar en el carrito no libera; solo finalizar, y solo si cubre todo.
+    assert (await _demand_row(api, "exacta"))["id"] == str(demand_id)
+
+    resto = await _quote(api, "Segunda parte")
+    r = await _add(api, resto, value="6", allocations=_alloc(api, ("exacta", 6)))
+    assert r.status_code == 201, r.text
+    r = await _finalize(api, resto, key="finalize-resto-1")
+    assert r.status_code == 200, r.text
+    assert r.json()["pending"] == []
+    assert r.json()["released"] == [
+        {"demand_item_id": str(demand_id), "quantity": "10", "quantity_unit": "box"}
+    ]
+
+    async with sessions() as s:
+        item = await s.get(DemandItem, demand_id)
+        assert item.status == "released"
+        assert item.released_quote_id == uuid.UUID(resto)
+        assert item.released_by == api.shop["admin"]
+        # El historial anterior se conserva: la asignación sigue existiendo.
+        rows = (
+            await s.execute(
+                select(QuoteLineAllocation).where(
+                    QuoteLineAllocation.demand_item_id == demand_id
+                )
+            )
+        ).scalars().all()
+        assert len(rows) == 2
+
+    r = await api.get("/api/v1/demand-items?status=released", headers=H(api))
+    assert r.status_code == 200, r.text
+    remote = next(row for row in r.json()["items"] if row["id"] == str(demand_id))
+    assert remote["replenishment_state"] == "released"
+    assert remote["is_pending"] is False
+    # El listado activo ya no lo muestra.
+    r = await api.get("/api/v1/demand-items", headers=H(api))
+    assert str(demand_id) not in [row["id"] for row in r.json()["items"]]
+
+    # Los dos informes siguen disponibles.
+    for quote_id in (parcial, resto):
+        r = await api.get(f"/api/v1/quotes/{quote_id}/report", headers=H(api))
+        assert r.status_code == 200
+
+
+async def test_agregar_oferta_viva_la_registra_una_sola_vez(api, sessions):
+    quote_id = await _quote(api)
+
+    r = await _add_live(api, quote_id, quantity="3")
+    assert r.status_code == 201, r.text
+    line = r.json()["line"]
+    assert line["product"]["code"] == "LIVE-1"
+    assert line["product"]["laboratory"] == "ASCEND"
+    assert line["product"]["presentation"] == "Caja de 20 comprimidos"
+    assert line["unit_price"]["amount"] == "1700.00"
+    assert line["subtotal"] == {"amount": "5100.00", "currency": "CLP"}
+    assert line["selected"]["review_status"] == "accepted"
+
+    async with sessions() as s:
+        rows = (
+            await s.execute(
+                select(OfferSnapshot).where(
+                    OfferSnapshot.organization_id == api.shop["org"],
+                    OfferSnapshot.external_id == "LIVE-1",
+                )
+            )
+        ).scalars().all()
+        assert len(rows) == 1
+
+    # Repetir la misma selección no la duplica ni crea otra observación.
+    r = await _add_live(api, quote_id, quantity="3")
+    assert r.status_code == 200, r.text
+    assert r.json()["deduplicated"] is True
+    assert r.json()["line"]["line_id"] == line["line_id"]
+
+    # Otra cantidad sobre la misma oferta se corrige con PATCH, no con una segunda línea.
+    r = await _add_live(api, quote_id, quantity="4")
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "LINE_EXISTS"
+    assert r.json()["error"]["details"]["line_id"] == line["line_id"]
+
+    # Un precio nuevo no reapunta la línea elegida: el precio se conserva.
+    r = await _add_live(api, quote_id, quantity="3", offer=_live_offer(api, price="1500.00"))
+    assert r.status_code == 200, r.text
+    assert r.json()["line"]["selected"]["price"]["amount"] == "1700.00"
+    async with sessions() as s:
+        rows = (
+            await s.execute(
+                select(OfferSnapshot).where(
+                    OfferSnapshot.organization_id == api.shop["org"],
+                    OfferSnapshot.external_id == "LIVE-1",
+                )
+            )
+        ).scalars().all()
+        assert len(rows) == 1
+
+    # Otra oferta del mismo producto (otro código) sí es una selección distinta.
+    r = await _add_live(
+        api, quote_id, quantity="1", offer=_live_offer(api, external="LIVE-2", price="1800.00")
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["line"]["line_id"] != line["line_id"]
+
+    r = await _add_live(api, quote_id, offer=_live_offer(api, price_basis="unknown"))
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "OFFER_PRICE_BASIS_UNKNOWN"
+    r = await _add_live(api, quote_id, offer=_live_offer(api, price=None))
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "OFFER_WITHOUT_PRICE"
+    body = {
+        "supplier_id": str(api.shop["suppliers"]["uno"]),
+        "offer": _live_offer(api, supplier="dos"),
+        "quantity": {"value": "1", "unit": "box"},
+    }
+    r = await api.post(
+        f"/api/v1/quotes/{quote_id}/lines", json=body, headers=H(api)
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "OFFER_NOT_IN_SUPPLIER"
+
+
+async def test_tras_liberar_la_misma_persona_puede_reportar_de_nuevo(api, sessions):
+    from app.services.actors import load_actor
+    from app.services.demand import record_observation
+
+    # Persona nueva: su reporte es propio y su identidad no choca con los faltantes del fixture.
+    async with sessions() as s, s.begin():
+        persona = AppUser(
+            organization_id=api.shop["org"], display_name="Auxiliar Nueva", roles=["auxiliary"]
+        )
+        s.add(persona)
+        await s.flush()
+        persona_id = persona.id
+
+    async with sessions() as s, s.begin():
+        actor = await load_actor(s, persona_id)
+        first = await record_observation(
+            s,
+            actor,
+            text="falta ibuprofeno 400 mg x 20 comprimidos",
+            idempotency_key="telegram-antes-1",
+            declared_quantity=Decimal("10"),
+            declared_unit="box",
+        )
+        assert first.outcome == "created_item"
+        demand_id = first.item.id
+        version = first.item.version
+    assert (await _set_quantity(api, demand_id, version, value="10")).status_code == 200
+
+    quote_id = await _quote(api)
+    r = await _add(
+        api, quote_id, value="10", allocations=[{"demand_item_id": str(demand_id), "quantity": 10}]
+    )
+    assert r.status_code == 201, r.text
+    r = await _finalize(api, quote_id, key="finalize-telegram-1")
+    assert r.status_code == 200, r.text
+    assert [row["demand_item_id"] for row in r.json()["released"]] == [str(demand_id)]
+
+    async with sessions() as s, s.begin():
+        actor = await load_actor(s, persona_id)
+        again = await record_observation(
+            s,
+            actor,
+            text="falta ibuprofeno 400 mg x 20 comprimidos",
+            idempotency_key="telegram-despues-1",
+            declared_quantity=Decimal("10"),
+            declared_unit="box",
+        )
+        assert again.outcome == "created_item"
+        assert again.item.id != demand_id
+        assert again.item.status == "active"
+    async with sessions() as s:
+        old = await s.get(DemandItem, demand_id)
+        assert old.status == "released"  # la historia anterior se conserva
+        assert old.released_quote_id == uuid.UUID(quote_id)
+        observations = (
+            await s.execute(
+                select(DemandObservation).where(DemandObservation.demand_item_id == demand_id)
+            )
+        ).scalars().all()
+        assert len(observations) == 1

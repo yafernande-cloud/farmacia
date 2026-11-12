@@ -103,6 +103,11 @@ def _iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat()
 
 
+def _currency_ok(value: str) -> bool:
+    """Mismo formato que exige la base: tres letras mayúsculas (`CLP`, `USD`)."""
+    return len(value) == 3 and value.isalpha() and value.isupper()
+
+
 def _json_safe(value: Any) -> Any:
     """Auditoría/outbox son JSONB: UUID, fechas y Decimal se guardan como texto."""
     if isinstance(value, uuid.UUID):
@@ -272,6 +277,33 @@ def _remainder(line: QuoteLine, quote: Quote) -> str:
     return "open"
 
 
+def _product_payload(offer: OfferSnapshot) -> dict:
+    """Datos del producto tal como los publicó el proveedor; nunca completados por suposición."""
+    evidence = offer.evidence if isinstance(offer.evidence, dict) else {}
+    presentation = evidence.get("presentation")
+    return {
+        "name": offer.external_name,
+        "laboratory": offer.laboratory_as_published,
+        "brand": offer.brand_as_published,
+        "presentation": presentation if isinstance(presentation, str) else None,
+        "code": offer.external_id,
+    }
+
+
+def _unit_price(offer: OfferSnapshot) -> dict | None:
+    price = _money(offer.price_amount, offer.currency)
+    if price is None:
+        return None
+    return {**price, "basis": offer.price_basis, "sale_unit": offer.sale_unit}
+
+
+def _line_subtotal(line: QuoteLine, offer: OfferSnapshot) -> dict | None:
+    """Subtotal congelado del precio elegido. Sin unidad coincidente no se inventa un monto."""
+    if line.quantity_unit != offer.sale_unit:
+        return None
+    return _money(offer.price_amount * line.quantity, offer.currency)
+
+
 def _line_payload(
     line: QuoteLine,
     quote: Quote,
@@ -289,6 +321,10 @@ def _line_payload(
         "supplier_id": line.supplier_id,
         "offer_snapshot_id": line.offer_snapshot_id,
         "trade_item_id": line.trade_item_id,
+        # Producto, código y precio de la oferta elegida: lo que se revisa antes de finalizar.
+        "product": _product_payload(selected),
+        "unit_price": _unit_price(selected),
+        "subtotal": _line_subtotal(line, selected),
         "quantity": {"value": _qty(line.quantity), "unit": line.quantity_unit},
         "status": line.status,
         "removed_at": line.removed_at,
@@ -343,6 +379,11 @@ def _quote_summary(quote: Quote) -> dict:
         "updated_at": quote.updated_at,
         "closed_by": quote.closed_by,
         "closed_at": quote.closed_at,
+        # Solo existen cuando la cotización generó su informe (finalizada).
+        "report_number": quote.report_number,
+        "report_label": quote.report_label,
+        "finalized_at": quote.finalized_at,
+        "finalized_by": quote.finalized_by,
         "data_origin": quote.data_origin,
     }
 
@@ -410,6 +451,7 @@ async def list_quotes(
     updated_from: datetime | None = None,
     updated_to: datetime | None = None,
     q: str | None = None,
+    finalized: bool | None = None,
     limit: int = 20,
     cursor: str | None = None,
 ) -> tuple[list[dict], str | None]:
@@ -418,6 +460,11 @@ async def list_quotes(
     stmt = select(Quote).where(Quote.organization_id == org)
     if status is not None:
         stmt = stmt.where(Quote.status == status)
+    if finalized is True:
+        # El historial muestra exclusivamente cotizaciones que generaron su informe.
+        stmt = stmt.where(Quote.finalized_at.is_not(None))
+    elif finalized is False:
+        stmt = stmt.where(Quote.finalized_at.is_(None))
     if updated_from is not None:
         stmt = stmt.where(Quote.updated_at >= updated_from)
     if updated_to is not None:
@@ -531,6 +578,14 @@ async def update_quote(
             quote.closed_by = actor.id
             quote.closed_at = now
         elif status == "draft" and quote.status != "draft":
+            if quote.finalized_at is not None:
+                # Reabrir borraría el cierre que sostiene el informe ya generado.
+                raise DomainError(
+                    "QUOTE_FINALIZED",
+                    "La cotización ya generó su informe y no se reabre.",
+                    status_code=409,
+                    details={"report_label": quote.report_label},
+                )
             quote.status = "draft"
             quote.closed_by = None
             quote.closed_at = None
@@ -978,13 +1033,152 @@ async def _prior_add(
     ).scalar_one_or_none()
 
 
+async def _active_line_for_live_offer(
+    session: AsyncSession,
+    org: uuid.UUID,
+    cart_id: uuid.UUID,
+    source_id: uuid.UUID,
+    external_id: str,
+) -> QuoteLine | None:
+    """Línea activa del carrito para el mismo SKU vivo (misma fuente y mismo código).
+
+    Evita dos selecciones de la misma oferta viva aunque su precio haya cambiado: el precio
+    elegido se conserva y actualizarlo es una acción explícita (`refresh`/`move`).
+    """
+    return (
+        await session.execute(
+            select(QuoteLine)
+            .join(OfferSnapshot, OfferSnapshot.id == QuoteLine.offer_snapshot_id)
+            .where(
+                QuoteLine.organization_id == org,
+                QuoteLine.quote_cart_id == cart_id,
+                QuoteLine.status == "active",
+                OfferSnapshot.source_id == source_id,
+                OfferSnapshot.external_id == external_id.strip(),
+            )
+        )
+    ).scalars().first()
+
+
+def _live_offer_terms(offer: offer_svc.OfferViewContext) -> tuple[Decimal, str]:
+    """Valida los términos comerciales mínimos de una oferta viva y devuelve (precio, moneda).
+
+    Se valida incluso cuando la selección ya existe: una repetición con datos inválidos no debe
+    devolver la línea anterior como si la oferta fuera válida.
+    """
+    amount = _dec(offer.price_amount)
+    currency = (offer.currency or "").strip()
+    if amount is None or amount < 0 or not _currency_ok(currency):
+        raise DomainError(
+            "OFFER_WITHOUT_PRICE",
+            "La oferta no trae un precio y una moneda válidos; no se puede cotizar.",
+            status_code=422,
+        )
+    if offer.price_basis not in ("per_commercial_unit", "per_base_unit"):
+        raise DomainError(
+            "OFFER_PRICE_BASIS_UNKNOWN",
+            "La base del precio de la oferta no está confirmada.",
+            status_code=422,
+        )
+    if offer.sale_unit not in UNITS:
+        raise DomainError(
+            "OFFER_SALE_UNIT_UNKNOWN",
+            "La unidad de venta de la oferta no está confirmada.",
+            status_code=422,
+        )
+    return amount, currency
+
+
+async def _live_offer_snapshot(
+    session: AsyncSession,
+    actor: Actor,
+    offer: offer_svc.OfferViewContext,
+    resolved: offer_svc.ResolvedOffer,
+) -> OfferSnapshot:
+    """Guarda como `OfferSnapshot` la oferta viva que la persona eligió.
+
+    La búsqueda de conectores no persiste ofertas. Al agregar una al carrito, sus datos
+    comerciales se convierten en una observación fechada e inmutable: el precio queda anclado y
+    el informe final puede conservarlo. Se reutiliza la observación idéntica más reciente para que
+    repetir la misma selección no cree filas ni líneas duplicadas.
+    """
+    org = actor.organization_id
+    amount, currency = _live_offer_terms(offer)
+    external_id = offer.external_id.strip()
+    latest = (
+        (
+            await session.execute(
+                select(OfferSnapshot)
+                .where(
+                    OfferSnapshot.organization_id == org,
+                    OfferSnapshot.source_id == resolved.source.id,
+                    OfferSnapshot.external_id == external_id,
+                    OfferSnapshot.trade_item_id == resolved.item.id,
+                )
+                .order_by(OfferSnapshot.observed_at.desc(), OfferSnapshot.created_at.desc())
+                .limit(5)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for row in latest:
+        if (
+            row.price_amount == amount
+            and row.currency == currency
+            and row.price_basis == offer.price_basis
+            and row.sale_unit == offer.sale_unit
+        ):
+            return row
+
+    now = _now()
+    stock_quantity = _dec(offer.stock_quantity)
+    stock_unit = offer.stock_unit if offer.stock_unit in UNITS else None
+    stock_known = (
+        offer.stock_status == "known"
+        and stock_quantity is not None
+        and stock_unit is not None
+    )
+    snapshot = OfferSnapshot(
+        id=uuid.uuid4(),
+        organization_id=org,
+        supplier_id=resolved.source.supplier_id,
+        source_id=resolved.source.id,
+        trade_item_id=resolved.item.id,
+        external_id=external_id,
+        external_name=(offer.name or "").strip()[:300] or None,
+        laboratory_as_published=offer.laboratory,
+        brand_as_published=offer.brand,
+        price_amount=amount,
+        currency=currency,
+        price_basis=offer.price_basis,
+        sale_unit=offer.sale_unit,
+        stock_status="known" if stock_known else "unknown",
+        stock_quantity=stock_quantity if stock_known else None,
+        stock_unit=stock_unit if stock_known else None,
+        observed_at=now,
+        evidence={
+            "origin": "live_offer",
+            "source_id": str(resolved.source.id),
+            "external_id": external_id,
+            "presentation": offer.presentation,
+            "product_url": offer.product_url,
+        },
+        data_origin=origin_for(await org_kind(session, org)),
+    )
+    session.add(snapshot)
+    await session.flush()
+    return snapshot
+
+
 async def add_line(
     session: AsyncSession,
     actor: Actor,
     quote_id: uuid.UUID,
     *,
     supplier_id: uuid.UUID,
-    offer_snapshot_id: uuid.UUID,
+    offer_snapshot_id: uuid.UUID | None = None,
+    offer_context: offer_svc.OfferViewContext | None = None,
     quantity: Any,
     quantity_unit: Any,
     demand_item_id: uuid.UUID | None = None,
@@ -992,7 +1186,11 @@ async def add_line(
     idempotency_key: str | None = None,
     request_hash: str | None = None,
 ) -> tuple[QuoteLine, QuoteCart, Quote, bool, list[str]]:
-    """Agrega una línea. Devuelve (línea, carrito, cotización, deduplicada, advertencias)."""
+    """Agrega una línea. Devuelve (línea, carrito, cotización, deduplicada, advertencias).
+
+    La oferta puede ser una ya persistida (`offer_snapshot_id`, listas cargadas) o una oferta viva
+    de un conector (`offer_context`), que se registra como observación inmutable al agregarla.
+    """
     require_admin(actor.roles)
     org = actor.organization_id
     quote = await _quote(session, org, quote_id)
@@ -1013,29 +1211,69 @@ async def add_line(
     _ensure_draft(quote)
     value = _quantity(quantity)
     unit = _unit(quantity_unit)
-    offer = await _offer(session, org, offer_snapshot_id)
-    if offer.supplier_id != supplier_id:
+    if offer_context is not None and offer_snapshot_id is not None:
         raise DomainError(
-            "OFFER_NOT_IN_SUPPLIER",
-            "La oferta no pertenece al proveedor indicado.",
+            "OFFER_CONFLICT",
+            "Indica la oferta publicada o la oferta viva, no ambas.",
             status_code=422,
         )
-    supplier = (
-        await session.execute(
-            select(Supplier).where(Supplier.id == supplier_id, Supplier.organization_id == org)
+    if offer_context is None and offer_snapshot_id is None:
+        raise DomainError(
+            "OFFER_REQUIRED",
+            "Indica la oferta que se agrega a la cotización.",
+            status_code=422,
         )
-    ).scalar_one_or_none()
-    if supplier is None:
-        raise not_found("El proveedor")
-    item = (
-        await session.execute(
-            select(TradeItem).where(
-                TradeItem.id == offer.trade_item_id, TradeItem.organization_id == org
+    resolved_live: offer_svc.ResolvedOffer | None = None
+    snapshot: OfferSnapshot | None = None
+    if offer_context is not None:
+        # Oferta viva: se resuelve la identidad con evidencia (vínculo, EAN o código) y la
+        # observación se crea recién cuando la línea no exista.
+        resolved_live = await offer_svc.resolve_offer_item(session, actor, offer_context)
+        source = resolved_live.source
+        if source.supplier_id is None:
+            raise DomainError(
+                "OFFER_WITHOUT_SUPPLIER",
+                "La oferta viva no tiene proveedor asociado.",
+                status_code=422,
             )
-        )
-    ).scalar_one_or_none()
-    if item is None:
-        raise not_found("El artículo")
+        if supplier_id != source.supplier_id or (
+            offer_context.supplier_id is not None
+            and offer_context.supplier_id != source.supplier_id
+        ):
+            raise DomainError(
+                "OFFER_NOT_IN_SUPPLIER",
+                "La oferta no pertenece al proveedor indicado.",
+                status_code=422,
+            )
+        supplier = resolved_live.supplier
+        item = resolved_live.item
+        _live_offer_terms(offer_context)
+    else:
+        snapshot = await _offer(session, org, offer_snapshot_id)
+        if snapshot.supplier_id != supplier_id:
+            raise DomainError(
+                "OFFER_NOT_IN_SUPPLIER",
+                "La oferta no pertenece al proveedor indicado.",
+                status_code=422,
+            )
+        supplier = (
+            await session.execute(
+                select(Supplier).where(
+                    Supplier.id == supplier_id, Supplier.organization_id == org
+                )
+            )
+        ).scalar_one_or_none()
+        if supplier is None:
+            raise not_found("El proveedor")
+        item = (
+            await session.execute(
+                select(TradeItem).where(
+                    TradeItem.id == snapshot.trade_item_id, TradeItem.organization_id == org
+                )
+            )
+        ).scalar_one_or_none()
+        if item is None:
+            raise not_found("El artículo")
     cart = (
         await session.execute(
             select(QuoteCart).where(
@@ -1065,6 +1303,33 @@ async def add_line(
     # C5-B comprobará aquí las compras vigentes del reporte y agregará
     # `demand_already_purchased` a `warnings`; hoy la tabla de compras no existe.
 
+    if resolved_live is not None:
+        # La misma oferta viva (fuente + código) no se selecciona dos veces en el carrito.
+        existing_live = (
+            await _active_line_for_live_offer(
+                session, org, cart.id, resolved_live.source.id, offer_context.external_id
+            )
+            if cart is not None
+            else None
+        )
+        if existing_live is not None:
+            if existing_live.quantity == value and (
+                not demand_allocations
+                or await _allocations_equivalent(session, org, existing_live, allocations)
+            ):
+                return existing_live, cart, quote, True, []
+            raise DomainError(
+                "LINE_EXISTS",
+                "Esa oferta ya está en el carrito con otra cantidad. Usa PATCH para cambiarla.",
+                status_code=409,
+                details={
+                    "current_quantity": _qty(existing_live.quantity),
+                    "line_id": str(existing_live.id),
+                },
+            )
+        # Solo ahora se registra la observación: una selección repetida no crea filas nuevas.
+        snapshot = await _live_offer_snapshot(session, actor, offer_context, resolved_live)
+
     if cart is None:
         cart = QuoteCart(
             id=uuid.uuid4(),
@@ -1083,7 +1348,7 @@ async def add_line(
         await session.execute(
             select(QuoteLine).where(
                 QuoteLine.quote_cart_id == cart.id,
-                QuoteLine.offer_snapshot_id == offer.id,
+                QuoteLine.offer_snapshot_id == snapshot.id,
                 QuoteLine.status == "active",
             )
         )
@@ -1106,8 +1371,8 @@ async def add_line(
         organization_id=org,
         quote_cart_id=cart.id,
         supplier_id=supplier_id,
-        offer_snapshot_id=offer.id,
-        trade_item_id=offer.trade_item_id,
+        offer_snapshot_id=snapshot.id,
+        trade_item_id=snapshot.trade_item_id,
         quantity=value,
         quantity_unit=unit,
         status="active",
@@ -1128,7 +1393,7 @@ async def add_line(
         "line_id": str(line.id),
         "cart_id": str(cart.id),
         "supplier_id": str(supplier_id),
-        "offer_snapshot_id": str(offer.id),
+        "offer_snapshot_id": str(snapshot.id),
         "trade_item_id": str(line.trade_item_id),
         "quantity": _qty(value),
         "quantity_unit": unit,
@@ -1160,7 +1425,7 @@ async def add_line(
             "quote_id": str(quote.id),
             "cart_id": str(cart.id),
             "supplier_id": str(supplier_id),
-            "offer_snapshot_id": str(offer.id),
+            "offer_snapshot_id": str(snapshot.id),
             "quantity": _qty(value),
             "quantity_unit": unit,
             "demand_item_id": str(demand.id) if demand else None,
@@ -1971,6 +2236,443 @@ async def quote_summary(session: AsyncSession, actor: Actor, quote_id: uuid.UUID
         }
     )
     return result
+
+
+# --------------------------------------------------------------------------- finalización
+
+
+REPORT_SCHEMA_VERSION = 1
+
+
+def _report_quote_info(quote: Quote, number: int, label: str, now: datetime) -> dict:
+    return {
+        "schema_version": REPORT_SCHEMA_VERSION,
+        "quote_id": str(quote.id),
+        "title": quote.title,
+        "number": number,
+        "label": label,
+        "finalized_at": now.isoformat(),
+    }
+
+
+async def finalize_quote(
+    session: AsyncSession,
+    actor: Actor,
+    quote_id: uuid.UUID,
+    *,
+    idempotency_key: str | None = None,
+    request_hash: str | None = None,
+    expected_version: int | None = None,
+) -> dict:
+    """Genera el informe, cierra la cotización y libera los faltantes cubiertos por completo.
+
+    Todo ocurre en una sola transacción: si algo falla no se libera ningún faltante ni queda un
+    informe a medias. Repetir la misma clave devuelve el informe original sin crear otro registro.
+    El informe congela precios, cantidades y subtotales; los cambios posteriores de los proveedores
+    no lo modifican.
+    """
+    require_admin(actor.roles)
+    org = actor.organization_id
+    await events.advisory_lock(session, f"quote:{quote_id}")
+    quote = await _quote(session, org, quote_id)
+
+    if quote.finalized_at is not None:
+        if idempotency_key and quote.finalize_key == idempotency_key:
+            if request_hash is not None and quote.finalize_hash != request_hash:
+                raise DomainError(
+                    "IDEMPOTENCY_KEY_REUSED",
+                    "Esa clave de idempotencia ya se usó con otro contenido.",
+                    status_code=409,
+                )
+            release = (quote.report or {}).get("release", {})
+            return {
+                "quote": _quote_summary(quote),
+                "report": quote.report,
+                "released": release.get("released", []),
+                "pending": release.get("pending", []),
+                "deduplicated": True,
+            }
+        raise DomainError(
+            "QUOTE_ALREADY_FINALIZED",
+            "La cotización ya generó su informe.",
+            status_code=409,
+            details={"report_label": quote.report_label},
+        )
+    _ensure_draft(quote)
+    if expected_version is not None:
+        _require_version(expected_version, quote.version)
+    if idempotency_key:
+        # La clave identifica un único informe dentro de la organización.
+        await events.advisory_lock(session, f"quote-finalize:{org}:{idempotency_key}")
+        used = (
+            await session.execute(
+                select(Quote.id).where(
+                    Quote.organization_id == org,
+                    Quote.finalize_key == idempotency_key,
+                    Quote.id != quote.id,
+                )
+            )
+        ).first()
+        if used is not None:
+            raise DomainError(
+                "IDEMPOTENCY_KEY_REUSED",
+                "Esa clave de idempotencia ya cerró otra cotización.",
+                status_code=409,
+            )
+
+    now = _now()
+    carts = list(
+        (
+            await session.execute(
+                select(QuoteCart)
+                .where(
+                    QuoteCart.quote_id == quote.id,
+                    QuoteCart.organization_id == org,
+                    QuoteCart.status == "active",
+                )
+                .order_by(QuoteCart.created_at, QuoteCart.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    cart_ids = [cart.id for cart in carts]
+    lines = (
+        list(
+            (
+                await session.execute(
+                    select(QuoteLine)
+                    .where(
+                        QuoteLine.organization_id == org,
+                        QuoteLine.quote_cart_id.in_(cart_ids),
+                        QuoteLine.status == "active",
+                    )
+                    .order_by(QuoteLine.added_at, QuoteLine.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if cart_ids
+        else []
+    )
+    if not lines:
+        raise DomainError(
+            "QUOTE_EMPTY",
+            "La cotización no tiene productos activos que informar.",
+            status_code=409,
+        )
+    issues = await _quote_allocation_issues(session, org, quote.id)
+    if issues:
+        raise DomainError(
+            "QUOTE_HAS_INCONSISTENT_ALLOCATIONS",
+            "La cotización tiene asignaciones que no coinciden con sus reportes. Corrige las "
+            "líneas antes de finalizarla.",
+            status_code=409,
+            details={"quote_id": str(quote.id), "issues": issues},
+        )
+
+    snapshots = {
+        row.id: row
+        for row in (
+            await session.execute(
+                select(OfferSnapshot).where(
+                    OfferSnapshot.organization_id == org,
+                    OfferSnapshot.id.in_({line.offer_snapshot_id for line in lines}),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    }
+    supplier_rows = {
+        row.id: row
+        for row in (
+            await session.execute(
+                select(Supplier).where(
+                    Supplier.organization_id == org,
+                    Supplier.id.in_({line.supplier_id for line in lines}),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    }
+    allocs = await _allocations_by_line(session, org, [line.id for line in lines])
+    latest = await _latest_offers(
+        session, org, list({line.trade_item_id for line in lines}), now=now
+    )
+
+    offenders = [
+        str(line.id)
+        for line in lines
+        if line.quantity_unit != snapshots[line.offer_snapshot_id].sale_unit
+        or not _currency_ok(snapshots[line.offer_snapshot_id].currency)
+    ]
+    if offenders:
+        raise DomainError(
+            "QUOTE_LINES_NOT_QUOTABLE",
+            "Hay líneas cuya cantidad no coincide con la unidad de venta de su oferta elegida.",
+            status_code=409,
+            details={"line_ids": offenders},
+        )
+    currencies = {snapshots[line.offer_snapshot_id].currency for line in lines}
+    if len(currencies) > 1:
+        raise DomainError(
+            "QUOTE_CURRENCY_MISMATCH",
+            "Las ofertas elegidas usan monedas distintas: no hay un total sumable.",
+            status_code=409,
+            details={"currencies": sorted(currencies)},
+        )
+    currency = next(iter(currencies))
+
+    items: list[dict] = []
+    supplier_totals: dict[uuid.UUID, Decimal] = {}
+    total = ZERO
+    warnings: list[dict] = []
+    for line in lines:
+        chosen = snapshots[line.offer_snapshot_id]
+        subtotal = chosen.price_amount * line.quantity
+        total += subtotal
+        supplier_totals[line.supplier_id] = (
+            supplier_totals.get(line.supplier_id, ZERO) + subtotal
+        )
+        current = next(
+            (o for o in latest.get(line.trade_item_id, []) if o.source_id == chosen.source_id),
+            None,
+        )
+        state, causes = _price_state(chosen, current, now)
+        if state != "current":
+            warnings.append({"line_id": str(line.id), "price_state": state, "causes": causes})
+        items.append(
+            {
+                "line_id": str(line.id),
+                "supplier_id": str(line.supplier_id),
+                "supplier_name": supplier_rows[line.supplier_id].name
+                if line.supplier_id in supplier_rows
+                else None,
+                "product": _product_payload(chosen),
+                "trade_item_id": str(line.trade_item_id),
+                "quantity": {"value": _qty(line.quantity), "unit": line.quantity_unit},
+                "unit_price": _unit_price(chosen),
+                "subtotal": _money(subtotal, currency),
+                "price_state": state,
+                "causes": causes,
+                "demand_allocations": [
+                    {
+                        "demand_item_id": str(alloc.demand_item_id),
+                        "quantity": _qty(alloc.quantity),
+                    }
+                    for alloc in allocs.get(line.id, [])
+                ],
+            }
+        )
+
+    suppliers_payload = [
+        {
+            "supplier_id": str(supplier_id),
+            "supplier_name": supplier_rows[supplier_id].name
+            if supplier_id in supplier_rows
+            else None,
+            "line_count": sum(1 for line in lines if line.supplier_id == supplier_id),
+            "subtotal": _money(amount, currency),
+        }
+        for supplier_id, amount in sorted(
+            supplier_totals.items(),
+            key=lambda kv: (
+                supplier_rows[kv[0]].name if kv[0] in supplier_rows else "",
+                str(kv[0]),
+            ),
+        )
+    ]
+
+    await events.advisory_lock(session, f"quote-number:{org}")
+    number = (
+        await session.execute(
+            select(func.coalesce(func.max(Quote.report_number), 0)).where(
+                Quote.organization_id == org
+            )
+        )
+    ).scalar_one() + 1
+    label = f"COT-{number:06d}"
+
+    # Liberación: solo faltantes activos cubiertos por completo en ESTA cotización. No es una
+    # compra ni un cumplimiento; la fila conserva su historial y sus asignaciones.
+    allocated: dict[uuid.UUID, Decimal] = {}
+    for line in lines:
+        for alloc in allocs.get(line.id, []):
+            allocated[alloc.demand_item_id] = (
+                allocated.get(alloc.demand_item_id, ZERO) + alloc.quantity
+            )
+    released: list[dict] = []
+    pending: list[dict] = []
+    if allocated:
+        # La cobertura que libera es la de cotizaciones que YA tienen informe (esta incluida por
+        # sus asignaciones). Otra cotización en borrador todavía no compromete nada.
+        other_quotes = (
+            await session.execute(
+                select(
+                    QuoteLineAllocation.demand_item_id,
+                    func.sum(QuoteLineAllocation.quantity),
+                )
+                .join(QuoteLine, QuoteLine.id == QuoteLineAllocation.quote_line_id)
+                .join(QuoteCart, QuoteCart.id == QuoteLine.quote_cart_id)
+                .join(Quote, Quote.id == QuoteCart.quote_id)
+                .where(
+                    QuoteLineAllocation.organization_id == org,
+                    QuoteLineAllocation.demand_item_id.in_(set(allocated)),
+                    QuoteLine.status == "active",
+                    QuoteCart.status == "active",
+                    Quote.finalized_at.is_not(None),
+                    Quote.id != quote.id,
+                )
+                .group_by(QuoteLineAllocation.demand_item_id)
+            )
+        ).all()
+        for demand_id, quantity in other_quotes:
+            allocated[demand_id] = allocated.get(demand_id, ZERO) + quantity
+        demands = (
+            (
+                await session.execute(
+                    select(DemandItem)
+                    .where(
+                        DemandItem.organization_id == org,
+                        DemandItem.id.in_(set(allocated)),
+                    )
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        by_id = {demand.id: demand for demand in demands}
+        for demand_id in sorted(allocated, key=str):
+            demand = by_id.get(demand_id)
+            if demand is None or demand.status != "active":
+                continue
+            covered = allocated[demand_id]
+            if demand.target_quantity is None:
+                pending.append(
+                    {"demand_item_id": str(demand.id), "reason": "quantity_unknown"}
+                )
+                continue
+            if covered >= demand.target_quantity:
+                demand.status = "released"
+                demand.released_at = now
+                demand.released_by = actor.id
+                demand.released_quote_id = quote.id
+                demand.updated_at = now
+                demand.version += 1
+                released.append(
+                    {
+                        "demand_item_id": str(demand.id),
+                        "quantity": _qty(demand.target_quantity),
+                        "quantity_unit": demand.quantity_unit,
+                    }
+                )
+                _emit(
+                    session,
+                    org_id=org,
+                    actor_id=actor.id,
+                    action="demand_item.release",
+                    entity_type="demand_item",
+                    entity_id=demand.id,
+                    event_type="demand.item.released",
+                    aggregate_version=demand.version,
+                    payload={
+                        "demand_item_id": str(demand.id),
+                        "quote_id": str(quote.id),
+                        "report_label": label,
+                        "quantity": _qty(demand.target_quantity),
+                        "quantity_unit": demand.quantity_unit,
+                    },
+                    before={"status": "active"},
+                    after={"status": "released"},
+                )
+            else:
+                pending.append(
+                    {
+                        "demand_item_id": str(demand.id),
+                        "reason": "coverage_incomplete",
+                        "allocated_quantity": _qty(covered),
+                        "target_quantity": _qty(demand.target_quantity),
+                    }
+                )
+
+    release_payload = {"released": released, "pending": pending}
+    report = {
+        **_report_quote_info(quote, number, label, now),
+        "finalized_by": str(actor.id),
+        "currency": currency,
+        "suppliers": suppliers_payload,
+        "items": items,
+        "total": _money(total, currency),
+        "warnings": warnings,
+        "release": release_payload,
+        "note": (
+            "El total suma los precios publicados de las ofertas elegidas; no incluye flete ni "
+            "impuestos que la fuente no haya informado."
+        ),
+    }
+
+    before = _quote_summary(quote)
+    quote.report_number = number
+    quote.report_label = label
+    quote.finalized_at = now
+    quote.finalized_by = actor.id
+    quote.report = _json_safe(report)
+    quote.finalize_key = idempotency_key
+    quote.finalize_hash = request_hash
+    quote.status = "closed"
+    quote.closed_by = actor.id
+    quote.closed_at = now
+    _touch_quote(quote, now)
+    _emit(
+        session,
+        org_id=org,
+        actor_id=actor.id,
+        action="quote.finalize",
+        entity_type="quote",
+        entity_id=quote.id,
+        event_type="quote.finalized",
+        aggregate_version=quote.version,
+        payload={
+            "quote_id": str(quote.id),
+            "report_label": label,
+            "total": _money(total, currency),
+            "released": [row["demand_item_id"] for row in released],
+            "pending": [row["demand_item_id"] for row in pending],
+        },
+        before=before,
+        after=_quote_summary(quote),
+    )
+    return {
+        "quote": _quote_summary(quote),
+        "report": quote.report,
+        "released": released,
+        "pending": pending,
+        "deduplicated": False,
+    }
+
+
+async def quote_report(session: AsyncSession, actor: Actor, quote_id: uuid.UUID) -> dict:
+    """Informe congelado de una cotización finalizada; nunca se recalcula al leerlo."""
+    require_admin(actor.roles)
+    quote = await _quote(session, actor.organization_id, quote_id)
+    if quote.report is None:
+        raise DomainError(
+            "QUOTE_NOT_FINALIZED",
+            "La cotización todavía no generó su informe.",
+            status_code=409,
+        )
+    return {
+        "quote_id": quote.id,
+        "report_number": quote.report_number,
+        "report_label": quote.report_label,
+        "finalized_at": quote.finalized_at,
+        "finalized_by": quote.finalized_by,
+        "report": quote.report,
+    }
 
 
 # --------------------------------------------------------------------------- E13 / O1: observaciones
