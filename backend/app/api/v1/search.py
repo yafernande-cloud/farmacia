@@ -144,7 +144,8 @@ class PricePerBaseUnitOut(MoneyOut):
 
 
 class SaleUnitOut(BaseModel):
-    code: str
+    # NULL = la fuente no declaró unidad de venta (FarmaLoop); nunca se supone caja ni unidad.
+    code: str | None
     original_text: str | None
 
 

@@ -89,6 +89,7 @@ async def farm(sessions):
         ]
         s.add_all(suppliers)
         await s.flush()
+        ids["suppliers"] = [sup.id for sup in suppliers]
         sources = [
             Source(
                 organization_id=org.id,
@@ -459,6 +460,31 @@ async def test_e3_detalle_con_ofertas_y_cadenas_no_configuradas(api):
 
     missing = await api.get(f"/api/v1/articles/{uuid.uuid4()}", headers=H(api))
     assert missing.status_code == 404
+
+
+async def test_e3_serializa_una_oferta_sin_unidad_ni_base_del_precio(api, sessions):
+    """Una observación de FarmaLoop sin unidad ni base viaja como `null`, no rompe la respuesta."""
+    async with sessions() as s, s.begin():
+        s.add(
+            OfferSnapshot(
+                organization_id=api.farm["org"],
+                supplier_id=api.farm["suppliers"][0],
+                source_id=api.farm["sources"][0],
+                trade_item_id=api.farm["items"]["a"],
+                external_id="FL-107581",
+                price_amount="2990.00",
+                currency="CLP",
+                stock_status="unknown",
+                observed_at=datetime.now(UTC),
+                data_origin="simulated",
+            )
+        )
+
+    r = await api.get(f"/api/v1/articles/{api.farm['items']['a']}", headers=H(api))
+    assert r.status_code == 200, r.text
+    oferta = next(o for o in r.json()["offers"] if o["external_id"] == "FL-107581")
+    assert oferta["price"]["basis"] is None
+    assert oferta["sale_unit"] == {"code": None, "original_text": None}
 
 
 async def test_e3_articulo_de_otra_organizacion_no_se_expone(api):

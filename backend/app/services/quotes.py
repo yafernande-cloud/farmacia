@@ -91,6 +91,14 @@ def _unit(raw: Any) -> str:
     return raw
 
 
+def _term(raw: Any) -> str | None:
+    """Término comercial declarado por una fuente: un texto en blanco no es una declaración."""
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    return text or None
+
+
 def _qty(value: Decimal | None) -> str | None:
     return None if value is None else format(value.normalize(), "f")
 
@@ -1085,13 +1093,15 @@ def _live_offer_terms(
     """
     amount = _dec(offer.price_amount)
     currency = (offer.currency or "").strip()
+    basis = _term(offer.price_basis)
+    sale_unit = _term(offer.sale_unit)
     if amount is None or amount < 0 or not _currency_ok(currency):
         raise DomainError(
             "OFFER_WITHOUT_PRICE",
             "La oferta no trae un precio y una moneda válidos; no se puede cotizar.",
             status_code=422,
         )
-    if offer.price_basis is not None and offer.price_basis not in (
+    if basis is not None and basis not in (
         "per_commercial_unit",
         "per_base_unit",
     ):
@@ -1100,20 +1110,20 @@ def _live_offer_terms(
             "La base del precio informada por la oferta no es válida.",
             status_code=422,
         )
-    if offer.sale_unit is not None and offer.sale_unit not in UNITS:
+    if sale_unit is not None and sale_unit not in UNITS:
         raise DomainError(
             "OFFER_SALE_UNIT_UNKNOWN",
             "La unidad de venta informada por la oferta no es válida.",
             status_code=422,
         )
     if not allow_unknown_terms:
-        if offer.price_basis is None:
+        if basis is None:
             raise DomainError(
                 "OFFER_PRICE_BASIS_UNKNOWN",
                 "La base del precio de la oferta no está confirmada.",
                 status_code=422,
             )
-        if offer.sale_unit is None:
+        if sale_unit is None:
             raise DomainError(
                 "OFFER_SALE_UNIT_UNKNOWN",
                 "La unidad de venta de la oferta no está confirmada.",
@@ -1162,6 +1172,8 @@ async def _live_offer_snapshot(
     """
     org = actor.organization_id
     amount, currency = _live_offer_terms(offer, allow_unknown_terms=allow_unknown_terms)
+    basis = _term(offer.price_basis)
+    declared_unit = _term(offer.sale_unit)
     external_id = offer.external_id.strip()
     latest = (
         (
@@ -1184,8 +1196,8 @@ async def _live_offer_snapshot(
         if (
             row.price_amount == amount
             and row.currency == currency
-            and row.price_basis == offer.price_basis
-            and row.sale_unit == offer.sale_unit
+            and row.price_basis == basis
+            and row.sale_unit == declared_unit
         ):
             return row
 
@@ -1209,8 +1221,8 @@ async def _live_offer_snapshot(
         brand_as_published=offer.brand,
         price_amount=amount,
         currency=currency,
-        price_basis=offer.price_basis,
-        sale_unit=offer.sale_unit,
+        price_basis=basis,
+        sale_unit=declared_unit,
         stock_status="known" if stock_known else "unknown",
         stock_quantity=stock_quantity if stock_known else None,
         stock_unit=stock_unit if stock_known else None,
@@ -1268,9 +1280,11 @@ async def add_line(
     quote = await _quote(session, org, quote_id)
     _ensure_draft(quote)
     value = _quantity(quantity)
-    # La unidad es obligatoria solo si se declara: una oferta viva puede no informarla y entonces
+    # La unidad que envía el cliente es solo una pista, no la fuente de verdad: la unidad
+    # comercial de la línea se toma de la oferta. Una oferta viva puede no declararla y entonces
     # la cantidad se cuenta en ofertas seleccionadas, sin inventar caja, envase ni unidad.
-    unit = None if quantity_unit is None else _unit(quantity_unit)
+    unit_hint = _term(quantity_unit)
+    unit: str | None = None
     if offer_context is not None and offer_snapshot_id is not None:
         raise DomainError(
             "OFFER_CONFLICT",
@@ -1312,11 +1326,13 @@ async def add_line(
         # cotizar sin unidad de venta ni base del precio.
         allow_unknown_terms = await _allows_unknown_terms(session, org, source.id)
         _live_offer_terms(offer_context, allow_unknown_terms=allow_unknown_terms)
-        # Si la fuente sí declara la unidad de venta, la línea la adopta: la unidad nunca se
-        # supone, se toma del dato publicado.
-        if unit is None and offer_context.sale_unit is not None:
-            unit = _unit(offer_context.sale_unit)
+        # La unidad de la línea sale de lo que publicó el proveedor, también cuando el cliente
+        # repite otra unidad: si la fuente declara «box», la línea la adopta; si no declara
+        # ninguna (FarmaLoop) la línea queda sin unidad. La unidad nunca se inventa.
+        declared_unit = _term(offer_context.sale_unit)
+        unit = _unit(declared_unit) if declared_unit is not None else None
     else:
+        unit = _unit(unit_hint) if unit_hint is not None else None
         snapshot = await _offer(session, org, offer_snapshot_id)
         if snapshot.supplier_id != supplier_id:
             raise DomainError(
@@ -1527,7 +1543,10 @@ async def patch_line(
     _require_version(expected_version, line.version)
     _ensure_draft(quote)
     value = _quantity(quantity)
-    unit = _unit(quantity_unit) if quantity_unit is not None else line.quantity_unit
+    # Igual que al agregar: un texto en blanco no declara unidad; sin unidad se conserva la de la
+    # línea (que para una oferta sin unidad declarada es desconocida).
+    unit_hint = _term(quantity_unit)
+    unit = _unit(unit_hint) if unit_hint is not None else line.quantity_unit
     if unit != line.quantity_unit and await _allocations_by_line(session, org, [line.id]):
         raise DomainError(
             "UNIT_MISMATCH",
@@ -1696,7 +1715,8 @@ async def move_line(
     source, source_cart = await _line(session, org, quote, line_id)
     _ensure_draft(quote)
     value = _quantity(quantity)
-    unit = _unit(quantity_unit) if quantity_unit is not None else source.quantity_unit
+    unit_hint = _term(quantity_unit)
+    unit = _unit(unit_hint) if unit_hint is not None else source.quantity_unit
     target = await _offer(session, org, target_offer_snapshot_id)
     if target.trade_item_id != source.trade_item_id:
         raise DomainError(

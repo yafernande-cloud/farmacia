@@ -1787,6 +1787,136 @@ async def test_farmaloop_cotiza_sin_unidad_de_venta_ni_base_del_precio(api, sess
     assert item["subtotal"] == {"amount": "3400.00", "currency": "CLP"}
 
 
+async def test_farmaloop_agrega_un_faltante_sin_cantidad_ni_unidad_al_carrito(api, sessions):
+    """Escenario real: faltante reportado sin cantidad ni unidad (Julio) y oferta FarmaLoop.
+
+    «Cantidad a cotizar: sin definir» no impide agregar: se respeta la cantidad por defecto 1 y
+    la línea queda persistida en el carrito sin inventar unidad ni base del precio. Agregar no
+    libera el faltante.
+    """
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    quote_id = await _quote(api)
+    oferta = _live_offer(
+        api,
+        external="107581",
+        name="Salonpas x 10 parches",
+        price="2990.00",
+        sale_unit=None,
+        price_basis=None,
+        stock_status="known",
+        stock_quantity="5",
+        stock_unit="box",
+    )
+    body = {
+        "supplier_id": str(api.shop["suppliers"]["uno"]),
+        "offer": oferta,
+        "quantity": {"value": "1", "unit": None},
+    }
+    r = await api.post(f"/api/v1/quotes/{quote_id}/lines", json=body, headers=H(api))
+    assert r.status_code == 201, r.text
+    line = r.json()["line"]
+    assert line["quantity"] == {"value": "1", "unit": None}
+    assert line["unit_price"] == {
+        "amount": "2990.00",
+        "currency": "CLP",
+        "basis": None,
+        "sale_unit": None,
+    }
+    assert line["subtotal"] == {"amount": "2990.00", "currency": "CLP"}
+    # El faltante no tiene cantidad pedida ni unidad: no se inventa un vínculo ni una asignación.
+    assert line["demand_item_id"] is None
+    assert line["demand_allocations"] == []
+
+    # El producto queda en el carrito: el detalle lo devuelve desde la base.
+    r = await api.get(f"/api/v1/quotes/{quote_id}", headers=H(api))
+    assert r.status_code == 200, r.text
+    carts = r.json()["carts"]
+    assert [cart["supplier_id"] for cart in carts] == [str(api.shop["suppliers"]["uno"])]
+    assert [fila["line_id"] for fila in carts[0]["lines"]] == [line["line_id"]]
+    assert carts[0]["lines"][0]["subtotal"] == {"amount": "2990.00", "currency": "CLP"}
+    # La evaluación E5 del carrito ya no rechaza la línea por no declarar unidad.
+    assert carts[0]["evaluation"] is not None
+
+    async with sessions() as s:
+        row = (
+            await s.execute(select(QuoteLine).where(QuoteLine.id == uuid.UUID(line["line_id"])))
+        ).scalars().one()
+        assert row.quantity == Decimal("1")
+        assert row.quantity_unit is None
+        snapshot = await s.get(OfferSnapshot, row.offer_snapshot_id)
+        assert snapshot.external_id == "107581"
+        assert snapshot.price_amount == Decimal("2990.00")
+        assert snapshot.sale_unit is None
+        assert snapshot.price_basis is None
+        # Agregar a la cotización no libera el faltante.
+        faltante = await s.get(DemandItem, api.shop["demands"]["desconocida"])
+        assert faltante.status == "active"
+
+
+async def test_farmaloop_ignora_la_unidad_que_repite_el_cliente(api, sessions):
+    """La unidad comercial la declara la oferta, no el eco del cliente.
+
+    FarmaLoop no publica unidad de venta: repetir «unidad», un texto en blanco o cualquier otro
+    valor no la inventa ni rechaza la selección. Si la oferta sí declara unidad, manda la oferta.
+    """
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    for eco in ("unidad", "", {"code": "box"}):
+        quote_id = await _quote(api)
+        r = await api.post(
+            f"/api/v1/quotes/{quote_id}/lines",
+            json={
+                "supplier_id": str(api.shop["suppliers"]["uno"]),
+                "offer": _live_offer(api, external="107581", sale_unit=None, price_basis=None),
+                "quantity": {"value": "1", "unit": eco},
+            },
+            headers=H(api),
+        )
+        assert r.status_code == 201, (eco, r.text)
+        assert r.json()["line"]["quantity"] == {"value": "1", "unit": None}
+
+    quote_id = await _quote(api)
+    r = await api.post(
+        f"/api/v1/quotes/{quote_id}/lines",
+        json={
+            "supplier_id": str(api.shop["suppliers"]["uno"]),
+            "offer": _live_offer(api, external="FL-BOX", sale_unit="box"),
+            "quantity": {"value": "1", "unit": "unit"},
+        },
+        headers=H(api),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["line"]["quantity"] == {"value": "1", "unit": "box"}
+
+
+async def test_farmaloop_con_unidad_confirmada_finaliza_y_libera_el_faltante(api, sessions):
+    """Con unidad comercial confirmada la cotización viva sigue cubriendo, finalizando y liberando."""
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    quote_id = await _quote(api)
+    r = await api.post(
+        f"/api/v1/quotes/{quote_id}/lines",
+        json={
+            "supplier_id": str(api.shop["suppliers"]["uno"]),
+            "offer": _live_offer(api, external="FL-CAJA", sale_unit="box"),
+            "quantity": {"value": "10", "unit": "box"},
+            "demand_allocations": _alloc(api, ("exacta", 10)),
+        },
+        headers=H(api),
+    )
+    assert r.status_code == 201, r.text
+    r = await _finalize(api, quote_id, key="finalize-farmaloop-caja")
+    assert r.status_code == 200, r.text
+    assert r.json()["pending"] == []
+    assert r.json()["released"] == [
+        {
+            "demand_item_id": str(api.shop["demands"]["exacta"]),
+            "quantity": "10",
+            "quantity_unit": "box",
+        }
+    ]
+    async with sessions() as s:
+        assert (await s.get(DemandItem, api.shop["demands"]["exacta"])).status == "released"
+
+
 async def test_sin_el_perfil_de_farmaloop_los_atributos_siguen_siendo_obligatorios(api, sessions):
     """Un conector con otra identidad no hereda la excepción aunque su mecanismo sea Algolia."""
     await _perfil_conector(

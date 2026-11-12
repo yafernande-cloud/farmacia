@@ -240,8 +240,9 @@ class OfferOut(BaseModel):
     trade_item_name: str
     price_amount: str
     currency: str
-    price_basis: str
-    sale_unit: str
+    # NULL = la fuente no declaró base del precio ni unidad de venta (FarmaLoop). No se inventan.
+    price_basis: str | None
+    sale_unit: str | None
     sale_unit_text: str | None
     pack_units_per_commercial_unit: str | None
     pack_base_unit: str | None

@@ -803,10 +803,19 @@ async def run_comparison(
                 "La cantidad debe ser un entero mayor que cero.",
                 status_code=422,
             )
-        if line.unit not in UNITS_SET:
+        # Una línea puede declarar la unidad desconocida: la oferta elegida (FarmaLoop) no la
+        # publica y entonces solo coincide con otra unidad desconocida. Nunca se equipara a una
+        # unidad concreta. Una comparación guardada exige unidades confirmadas.
+        if line.unit is not None and line.unit not in UNITS_SET:
             raise DomainError(
                 "INVALID_QUANTITY", "La unidad de la cantidad no es válida.", status_code=422
             )
+    if persist and any(line.unit is None for line in lines):
+        raise DomainError(
+            "INVALID_QUANTITY",
+            "No se puede guardar una comparación con una unidad desconocida.",
+            status_code=422,
+        )
     article_ids = list(dict.fromkeys(line.article_id for line in lines))
     items = {
         i.id: i
