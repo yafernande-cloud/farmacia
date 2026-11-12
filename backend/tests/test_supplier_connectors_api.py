@@ -81,7 +81,7 @@ class FakeStrategy:
     def __init__(self):
         self.calls = 0
         self.error: Exception | None = None
-        self.fingerprint = "huella-1"
+        self.fingerprint = "v2:huella-1"
         self.offers = [offer()]
         self.published = []
 
@@ -307,7 +307,7 @@ async def test_busqueda_exitosa_no_persiste_ofertas(api, sessions, fake):
     assert row.last_success_at is not None
     assert row.last_error is None
     assert row.last_error_kind is None
-    assert row.schema_fingerprint == "huella-1"
+    assert row.schema_fingerprint == "v2:huella-1"
     assert await count(sessions, OfferSnapshot) == 0
 
 
@@ -526,7 +526,7 @@ async def test_un_cambio_de_estructura_pide_revision_pero_devuelve_lo_que_valido
     assert (await put(api)).status_code == 200
     assert (await search(api, query="predual")).json()["state"] == "connected"
 
-    fake.fingerprint = "huella-2"
+    fake.fingerprint = "v2:huella-2"
     drift = await search(api, query="predual 30")
     body = drift.json()
     assert body["state"] == "requires_intervention"
@@ -537,6 +537,68 @@ async def test_un_cambio_de_estructura_pide_revision_pero_devuelve_lo_que_valido
     # La huella nueva ya quedó registrada: la siguiente consulta no vuelve a alertar.
     again = await search(api, query="predual 30")
     assert again.json()["state"] == "connected"
+
+
+async def test_una_busqueda_exitosa_limpia_un_schema_changed_persistido(api, sessions, fake):
+    """La recuperación no depende de reiniciar el proceso: el propio perfil guarda el error.
+
+    Se simula el estado que deja una intervención anterior y se comprueba que la siguiente
+    respuesta válida, con la huella ya conocida, devuelve «conectado» y limpia el error persistido.
+    """
+
+    assert (await put(api)).status_code == 200
+    assert (await search(api, query="predual")).json()["state"] == "connected"
+    row = await profile_row(sessions)
+    assert row is not None
+
+    async with sessions() as s, s.begin():
+        await s.execute(
+            update(SupplierConnectorProfile)
+            .where(SupplierConnectorProfile.id == row.id)
+            .values(last_error="schema_changed", last_error_kind="intervention")
+        )
+
+    before = (await api.get(url(api), headers=H(api))).json()
+    assert before["profile"]["state"] == "requires_intervention"
+    assert before["profile"]["reason"] == "schema_changed"
+
+    # La huella es la misma que ya conocía el perfil: no hay deriva y la búsqueda recupera.
+    after = await search(api, query="otra consulta")
+    assert after.json()["state"] == "connected"
+    assert after.json()["reason"] is None
+    row = await profile_row(sessions)
+    assert row is not None
+    assert row.last_error is None
+    assert row.last_error_kind is None
+    assert row.schema_fingerprint == "v2:huella-1"
+
+
+async def test_una_respuesta_vacia_es_sin_resultados_no_un_fallo(api, fake):
+    assert (await put(api)).status_code == 200
+    fake.offers = []
+    fake.published = []
+    fake.fingerprint = "v2" + "c" * 62
+    body = (await search(api, query="producto sin coincidencias")).json()
+    assert body["state"] == "connected"
+    assert body["reason"] is None
+    assert body["outcome"] == "no_matches"
+    assert body["offers"] == [] and body["published"] == []
+
+
+async def test_una_huella_de_formato_anterior_se_reemplaza_sin_alerta(api, sessions, fake):
+    """La huella vieja se calculó sobre los productos, no sobre el sobre: no es comparable."""
+
+    assert (await put(api)).status_code == 200
+    fake.fingerprint = "a" * 64
+    first = await search(api, query="predual")
+    assert first.json()["state"] == "connected"
+    assert (await profile_row(sessions)).schema_fingerprint == "a" * 64
+
+    fake.fingerprint = "v2" + "b" * 62
+    second = await search(api, query="amoxicilina 500 mg")
+    assert second.json()["state"] == "connected"
+    assert second.json()["reason"] is None
+    assert (await profile_row(sessions)).schema_fingerprint == "v2" + "b" * 62
 
 
 async def test_el_orden_entre_articulos_llega_a_la_busqueda_en_vivo(api, sessions, fake):

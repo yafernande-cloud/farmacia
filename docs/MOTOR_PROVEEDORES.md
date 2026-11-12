@@ -116,9 +116,15 @@ Reglas:
 - Un secreto faltante es `not_configured`, no un error del proveedor.
 - Una respuesta con ítems pero sin ofertas válidas es `requires_intervention`
   (`field_mapping_failed`), nunca «sin resultados».
-- Un cambio de huella devuelve las ofertas que sí validaron, pero deja el estado en
+- La huella describe la **estructura del sobre** de la respuesta (claves y tipos, con la lista de
+  resultados vacía), no el contenido de cada producto. Campos opcionales ausentes, lotes vacíos o
+  metadatos de coincidencia como `_highlightResult` cambian entre consultas sin que cambie el
+  contrato del proveedor, y no deben marcar «requiere revisión». Un cambio real en los campos
+  mapeados se detecta al normalizar (`field_mapping_failed`) y, si `item_path` deja de ser una
+  lista, como `schema_changed`.
+- Un cambio de huella del sobre devuelve las ofertas que sí validaron, pero deja el estado en
   `requires_intervention` (`schema_changed`) y registra la huella nueva para no alertar dos veces por
-  el mismo cambio.
+  el mismo cambio. Las huellas guardadas antes de esta corrección (`v2`) se reemplazan sin alertar.
 - «Sin resultados» solo significa que la fuente respondió correctamente y no había coincidencias.
 
 ## 4. Coincidencia textual y condiciones comerciales

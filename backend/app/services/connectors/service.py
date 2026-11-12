@@ -41,6 +41,7 @@ from app.services.connectors.base import (
     ConnectorResult,
     PublishedProduct,
     SupplierOffer,
+    fingerprints_comparable,
 )
 from app.services.connectors.commercial import cart_blockers, published_blockers
 from app.services.connectors.config import validate_profile
@@ -791,10 +792,10 @@ async def search_live(
         )
     else:
         previous = profile.schema_fingerprint
+        # Solo se comparan huellas del mismo formato: una guardada antes de la corrección se
+        # reemplaza sin alertar, porque describía los datos de los productos, no el sobre.
         drift = (
-            previous is not None
-            and result.fingerprint is not None
-            and previous != result.fingerprint
+            fingerprints_comparable(previous, result.fingerprint) and previous != result.fingerprint
         )
         _record_success(profile, result.fingerprint)
         warnings = list(result.warnings)

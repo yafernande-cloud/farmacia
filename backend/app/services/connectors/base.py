@@ -128,6 +128,28 @@ class SupplierStrategy(Protocol):
     ) -> ConnectorResult: ...
 
 
+# La huella del sobre lleva un prefijo propio. Las huellas guardadas antes de esta corrección se
+# calcularon sobre el contenido de los productos y describen otra cosa: no se comparan con las
+# nuevas, se reemplazan en la primera respuesta sin alertar. El formato conserva los 64 caracteres
+# de la columna `supplier_connector_profile.schema_fingerprint`.
+FINGERPRINT_VERSION = "v2"
+
+
+def versioned_fingerprint(digest: str) -> str:
+    """Prefija una huella sin exceder los 64 caracteres de la columna."""
+    return FINGERPRINT_VERSION + digest[len(FINGERPRINT_VERSION) :]
+
+
+def fingerprints_comparable(previous: str | None, current: str | None) -> bool:
+    """Dos huellas solo se comparan si ambas usan el formato vigente."""
+    return bool(
+        previous
+        and current
+        and previous.startswith(FINGERPRINT_VERSION)
+        and current.startswith(FINGERPRINT_VERSION)
+    )
+
+
 def schema_fingerprint(items: list[Any], *, sample: int = 3) -> str | None:
     """Huella de la forma de la respuesta (rutas y tipos), no de sus valores.
 

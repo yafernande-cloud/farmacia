@@ -72,6 +72,49 @@ def resolve_one(root: Any, path: str) -> Any:
     return None
 
 
+def replace_at(root: Any, path: str, replacement: Any) -> Any:
+    """Copia de `root` con el valor resuelto por `path` reemplazado.
+
+    No muta la entrada. Se usa para describir la estructura de un sobre sin mirar el contenido de
+    los resultados: el resto de las claves se conserva tal como llegó.
+    """
+    try:
+        tokens = _tokens(path)
+    except ValueError:
+        return root
+    if not tokens:
+        return replacement
+
+    def walk(node: Any, position: int) -> Any:
+        name, is_array, index = tokens[position]
+        if not isinstance(node, dict) or name not in node:
+            return node
+        copied = dict(node)
+        child = node[name]
+        last = position == len(tokens) - 1
+        if last and is_array:
+            if isinstance(child, list):
+                copied[name] = [replacement for _ in child]
+        elif last and index is not None:
+            if isinstance(child, list) and 0 <= index < len(child):
+                values = list(child)
+                values[index] = replacement
+                copied[name] = values
+        elif last:
+            copied[name] = replacement
+        elif is_array and isinstance(child, list):
+            copied[name] = [walk(item, position + 1) for item in child]
+        elif index is not None and isinstance(child, list) and 0 <= index < len(child):
+            values = list(child)
+            values[index] = walk(values[index], position + 1)
+            copied[name] = values
+        else:
+            copied[name] = walk(child, position + 1)
+        return copied
+
+    return walk(root, 0)
+
+
 def apply_transform(values: list[Any], transform: str) -> Any:
     if transform == "join":
         texts = [v for v in values if isinstance(v, str) and v.strip()]

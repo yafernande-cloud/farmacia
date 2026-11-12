@@ -13,9 +13,11 @@ import pytest
 from app.core.errors import DomainError
 from app.services.connectors.algolia import AlgoliaStrategy
 from app.services.connectors.base import (
+    FINGERPRINT_VERSION,
     ConnectorError,
     ConnectorIntervention,
     ConnectorNotConfigured,
+    fingerprints_comparable,
 )
 from app.services.connectors.config import validate_profile
 from app.services.connectors.presets import preset
@@ -292,28 +294,77 @@ async def test_algolia_url_de_ficha_invalida_no_se_inventa():
     assert result.offers[0].product_url is None
 
 
-async def test_algolia_la_huella_cambia_con_la_estructura_no_con_el_precio():
-    async def handler(request: httpx.Request):
-        item = farmaloop_hit()
-        if b"15990" in request.content:
-            item = farmaloop_hit(bestPrice=13990)
+async def test_la_huella_no_cambia_entre_consultas_con_productos_distintos():
+    """El contenido de cada producto no es estructura: no puede marcar «requiere revisión».
+
+    Productos de otra consulta pueden traer campos opcionales ausentes, lotes vacíos o metadatos
+    de coincidencia distintos. El sobre de la respuesta sigue siendo el mismo.
+    """
+
+    async def completa(_: httpx.Request):
+        return response([farmaloop_hit()])
+
+    async def dispersa(_: httpx.Request):
+        item = farmaloop_hit(presentation=None, ean=None, batchs=[])
+        item["_highlightResult"] = {
+            "fullName": {
+                "value": "<em>Predual</em> 30 mg",
+                "matchLevel": "full",
+                "matchedWords": ["predual"],
+            }
+        }
         return response([item])
 
-    first = await search(handler)
-    # Mismo esquema, precio distinto: la huella no cambia.
-    async def same_shape(_: httpx.Request):
-        return response([farmaloop_hit(bestPrice=13990)])
+    primera = await search(completa, query="predual")
+    segunda = await search(dispersa, query="amoxicilina 500 mg")
 
-    second = await search(same_shape)
-    assert first.fingerprint == second.fingerprint
+    assert primera.fingerprint == segunda.fingerprint
+    assert primera.fingerprint is not None
+    assert primera.fingerprint.startswith(FINGERPRINT_VERSION)
+    assert len(primera.fingerprint) == 64  # cabe en la columna sin migración
+    # El precio sí cambia entre consultas; la huella no.
 
-    async def changed_shape(_: httpx.Request):
-        item = farmaloop_hit()
-        item["bestPrice"] = "13990"
-        return response([item])
+    async def otro_precio(_: httpx.Request):
+        return response([farmaloop_hit(bestPrice=9990)])
 
-    third = await search(changed_shape)
-    assert third.fingerprint != first.fingerprint
+    tercera = await search(otro_precio, query="ibuprofeno 400 mg")
+    assert tercera.fingerprint == primera.fingerprint
+
+
+async def test_la_huella_cambia_si_cambia_el_sobre_de_la_respuesta():
+    async def normal(_: httpx.Request):
+        return response([farmaloop_hit()])
+
+    async def con_sobre_nuevo(_: httpx.Request):
+        return httpx.Response(
+            200,
+            json={
+                "hits": [farmaloop_hit()],
+                "renderingContent": {"facetOrdering": {}},
+            },
+        )
+
+    primera = await search(normal)
+    segunda = await search(con_sobre_nuevo, query="otra consulta")
+    assert primera.fingerprint != segunda.fingerprint
+
+
+async def test_una_lista_vacia_es_sin_resultados_con_sobre_valido():
+    async def vacia(_: httpx.Request):
+        return response([])
+
+    result = await search(vacia, query="producto sin coincidencias")
+    assert result.offers == [] and result.published == []
+    assert result.fingerprint is not None
+    assert any("no devolvió resultados" in w.lower() for w in result.warnings)
+
+
+def test_una_huella_de_contenido_anterior_no_se_compara_con_la_del_sobre():
+    """Al desplegar la corrección, la huella vieja se reemplaza sin una falsa alarma."""
+
+    assert fingerprints_comparable("v2" + "a" * 62, "v2" + "b" * 62)
+    assert not fingerprints_comparable("a" * 64, "v2" + "b" * 62)
+    assert not fingerprints_comparable(None, "v2" + "b" * 62)
 
 
 def test_el_preset_de_farmaloop_declara_sus_limites():

@@ -29,6 +29,7 @@ from app.services.connectors.base import (
     PublishedProduct,
     SupplierOffer,
     schema_fingerprint,
+    versioned_fingerprint,
 )
 from app.services.connectors.config import CURRENCY, AlgoliaConfig, FieldSpec
 from app.services.connectors.paths import (
@@ -38,6 +39,7 @@ from app.services.connectors.paths import (
     as_text,
     as_url,
     render_template,
+    replace_at,
     resolve_all,
 )
 
@@ -212,6 +214,22 @@ def _published(
     )
 
 
+def response_fingerprint(data: dict[str, Any], item_path: str) -> str | None:
+    """Huella de la **estructura del sobre**, no de los datos de cada producto.
+
+    Los resultados cambian entre consultas sin que el proveedor cambie su contrato: un producto
+    puede no traer un campo opcional, la lista de lotes puede estar vacía o los metadatos de
+    coincidencia (`_highlightResult`) describen palabras distintas. Nada de eso es un cambio de
+    estructura. Por eso se reemplaza el contenido de la lista de resultados antes de calcular la
+    huella; sí se vigilan las claves y tipos del sobre y que `item_path` siga siendo una lista.
+
+    Un cambio real en los campos mapeados se detecta al normalizar: si ningún ítem se puede leer,
+    la búsqueda falla con `field_mapping_failed` y pide revisión.
+    """
+    digest = schema_fingerprint([replace_at(data, item_path, [])])
+    return versioned_fingerprint(digest) if digest else None
+
+
 async def _read_bounded(response: httpx.Response, limit: int) -> bytes:
     chunks: list[bytes] = []
     total = 0
@@ -362,7 +380,7 @@ class AlgoliaStrategy:
         return ConnectorResult(
             offers=offers,
             observed_at=datetime.now(UTC),
-            fingerprint=schema_fingerprint(raw_items),
+            fingerprint=response_fingerprint(data, cfg.item_path),
             discarded=discarded,
             published=published,
             warnings=warnings,
