@@ -1765,3 +1765,145 @@ async def test_tras_liberar_la_misma_persona_puede_reportar_de_nuevo(api, sessio
             )
         ).scalars().all()
         assert len(observations) == 1
+
+
+# ------------------------------------------------------- listado de Telegram (§12.7.4, D-154)
+
+
+async def _telegram_list(sessions, org) -> str:
+    """«📋 Ver listado de Faltantes» con la cobertura real de la base, sin dobles."""
+    from app.services.channel import KEYBOARD, ChannelConfig, _list_reply
+
+    async with sessions() as s:
+        reply = await _list_reply(s, org, 0, ChannelConfig(), KEYBOARD)
+    assert reply.parse_mode == "HTML"
+    return reply.text
+
+
+async def _active_ids(api) -> set[str]:
+    r = await api.get("/api/v1/demand-items", headers=H(api))
+    assert r.status_code == 200, r.text
+    return {row["id"] for row in r.json()["items"]}
+
+
+async def test_telegram_lista_un_faltante_pendiente_sin_tachar(api, sessions):
+    text = await _telegram_list(sessions, api.shop["org"])
+
+    # Dos reportes del fixture comparten nombre (admin y auxiliar): ambos visibles, sin tachar.
+    assert text.count("<b>Ibuprofeno 400 mg x 20 comprimidos</b>") == 2
+    assert "<s>" not in text
+    assert "Estado: Pendiente de compra" in text
+    assert str(api.shop["demands"]["exacta"]) in await _active_ids(api)
+
+
+async def test_telegram_tacha_el_faltante_agregado_al_carrito(api, sessions):
+    quote_id = await _quote(api)
+    r = await _add(api, quote_id, value="4", allocations=_alloc(api, ("exacta", 4)))
+    assert r.status_code == 201, r.text
+
+    text = await _telegram_list(sessions, api.shop["org"])
+
+    # Solo el nombre se tacha; la fila sigue visible con cantidad, autor y estado.
+    assert text.count("<s><b>Ibuprofeno 400 mg x 20 comprimidos</b></s>") == 1
+    assert text.count("<b>Ibuprofeno 400 mg x 20 comprimidos</b>") == 2
+    assert "Cantidad: 10 cajas" in text
+    assert "Estado: 🛒 En carrito" in text
+    # Sigue activo: las reglas de duplicados y cantidades continúan aplicándose.
+    row = await _demand_row(api, "exacta")
+    assert row["replenishment_state"] == "in_quote" and row["is_pending"] is True
+    assert str(api.shop["demands"]["exacta"]) in await _active_ids(api)
+
+
+async def test_telegram_destacha_al_retirar_del_carrito(api, sessions):
+    quote_id = await _quote(api)
+    alta = await _add(api, quote_id, value="4", allocations=_alloc(api, ("exacta", 4)))
+    assert alta.status_code == 201, alta.text
+    assert "<s>" in await _telegram_list(sessions, api.shop["org"])
+
+    r = await api.delete(
+        f"/api/v1/quotes/{quote_id}/lines/{alta.json()['line']['line_id']}", headers=H(api)
+    )
+    assert r.status_code == 200, r.text
+
+    text = await _telegram_list(sessions, api.shop["org"])
+    assert "<s>" not in text
+    assert text.count("<b>Ibuprofeno 400 mg x 20 comprimidos</b>") == 2
+    assert "Estado: Pendiente de compra" in text
+    assert (await _demand_row(api, "exacta"))["quoted_quantity"] == "0"
+    assert str(api.shop["demands"]["exacta"]) in await _active_ids(api)
+
+
+async def test_telegram_mantiene_pendiente_la_cobertura_incompleta(api, sessions):
+    # 4 de 10 cajas: la cotización se finaliza, pero el faltante no cumple la condición de
+    # liberación y debe seguir visible como pendiente, sin tachar.
+    quote_id = await _quote(api)
+    r = await _add(api, quote_id, value="4", allocations=_alloc(api, ("exacta", 4)))
+    assert r.status_code == 201, r.text
+    r = await _finalize(api, quote_id, key="finalize-telegram-parcial-1")
+    assert r.status_code == 200, r.text
+    assert r.json()["released"] == []
+    assert r.json()["pending"][0]["reason"] == "coverage_incomplete"
+
+    text = await _telegram_list(sessions, api.shop["org"])
+    assert "<s>" not in text
+    assert text.count("<b>Ibuprofeno 400 mg x 20 comprimidos</b>") == 2
+    assert "Ibuprofeno sin cantidad" in text  # cantidad desconocida: también sigue pendiente
+    assert str(api.shop["demands"]["exacta"]) in await _active_ids(api)
+
+
+async def test_telegram_oculta_el_faltante_liberado_y_admite_un_nuevo_reporte(api, sessions):
+    from app.services.actors import load_actor
+    from app.services.demand import record_observation
+
+    demand_id = api.shop["demands"]["otra"]  # 4 cajas, nombre único en el fixture
+    quote_id = await _quote(api)
+    r = await _add(api, quote_id, value="4", allocations=_alloc(api, ("otra", 4)))
+    assert r.status_code == 201, r.text
+    assert "<s><b>Ibuprofeno 400 mg x 30 comprimidos</b></s>" in await _telegram_list(
+        sessions, api.shop["org"]
+    )
+
+    # Agregar al carrito no libera: hacerlo requiere finalizar correctamente el informe.
+    assert str(demand_id) in await _active_ids(api)
+    r = await _finalize(api, quote_id, key="finalize-telegram-lista-1")
+    assert r.status_code == 200, r.text
+    assert [row["demand_item_id"] for row in r.json()["released"]] == [str(demand_id)]
+
+    text = await _telegram_list(sessions, api.shop["org"])
+    assert "Ibuprofeno 400 mg x 30 comprimidos" not in text
+    assert str(demand_id) not in await _active_ids(api)
+
+    # La misma persona vuelve a reportar el producto: es un faltante nuevo e independiente.
+    async with sessions() as s, s.begin():
+        persona = AppUser(
+            organization_id=api.shop["org"],
+            display_name="Auxiliar Telegram",
+            roles=["auxiliary"],
+        )
+        s.add(persona)
+        await s.flush()
+        persona_id = persona.id
+    async with sessions() as s, s.begin():
+        actor = await load_actor(s, persona_id)
+        nuevo = await record_observation(
+            s,
+            actor,
+            text="falta ibuprofeno 400 mg x 30 comprimidos",
+            idempotency_key="telegram-lista-despues-1",
+            declared_quantity=Decimal("4"),
+            declared_unit="box",
+        )
+        assert nuevo.outcome == "created_item"
+        assert nuevo.item.id != demand_id and nuevo.item.status == "active"
+        nuevo_id, nombre = nuevo.item.id, nuevo.item.display_name
+
+    text = await _telegram_list(sessions, api.shop["org"])
+    assert f"<b>{nombre}</b>" in text
+    assert "<s>" not in text  # todavía no está en ningún carrito
+    assert str(nuevo_id) in await _active_ids(api)
+    assert str(demand_id) not in await _active_ids(api)
+
+    # El reporte liberado conserva su historial y su vínculo con la cotización finalizada.
+    r = await api.get("/api/v1/demand-items?status=released", headers=H(api))
+    respaldo = next(row for row in r.json()["items"] if row["id"] == str(demand_id))
+    assert respaldo["replenishment_state"] == "released"
