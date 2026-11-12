@@ -109,6 +109,16 @@ con `status='rejected'`, no crea preferencias ficticias ni copia sujetos. `rejec
 interna conserva las clases retiradas en `preference_order_trace.retired_subject_kinds`; esa información no se expone
 en la API pública.
 
+**Corrección de la tolerancia de preferencias (2026-11-11; D-152):** precisa §8.4.6 punto 6 y **sustituye el sentido
+de la tolerancia** aprobado en la revisión 10-A6. Una preferencia `prefer` de laboratorio, marca o proveedor con
+tolerancia **protege a la oferta preferida**, no a las ofertas que no cumplen: la preferida conserva el primer lugar
+mientras su precio más bajo no supere el margen relativo o absoluto sobre la **alternativa comparable más barata**
+(misma moneda y base de precio); si lo supera, pasa primero la alternativa más económica y la preferida queda después.
+La regla se aplica por igual a **todas las ofertas del mismo `trade_item_id`**, con independencia del proveedor, en
+todos los caminos que comparten el motor (detalle E3, comparación E5 y proveedores en vivo). Sin alternativa
+comparable en la misma moneda y base, la tolerancia no se evalúa y rige la preferencia simple. No cambia qué ofertas
+se muestran, sus precios, stock, cantidades, descuentos, impuestos, totales ni elegibilidad.
+
 **Corrección de interfaz de Telegram (2026-11-05; D-147):** precisa §10.5 y §12.7 sin cambiar compras ni D-139. El
 mismo auxiliar corrige su **cantidad solicitada** únicamente por **texto libre** (`5`, `5 cajas más`,
 `en total 15 cajas`): la conversación de corrección no usa botones inline en ninguna etapa; una cifra sola se pregunta
@@ -1294,9 +1304,11 @@ cotización.
    `offer_id`), de modo que el resultado es reproducible.
 5. **Todas las ofertas siguen visibles**; el orden no cambia el conjunto, los precios, el stock, las cantidades, los
    descuentos, los impuestos, los totales ni la elegibilidad.
-6. **Tolerancia.** Una preferencia de laboratorio, marca o proveedor puede llevar una tolerancia relativa (porcentaje)
-   o absoluta (monto en la moneda de la oferta). Sirve para decidir si una oferta que **no** cumple la preferencia
-   puede quedar por delante cuando la diferencia de precio es pequeña. Sin tolerancia, el grupo que cumple va primero.
+6. **Tolerancia (D-152, 2026-11-11).** Una preferencia de laboratorio, marca o proveedor puede llevar una tolerancia
+   relativa (porcentaje) o absoluta (monto en la moneda de la oferta). Sirve para decidir si la **oferta preferida**
+   sigue primero pese a ser algo más cara: conserva el primer lugar mientras su precio más bajo no supere el margen
+   sobre la alternativa comparable más barata; si lo supera, pasa primero la alternativa más económica. Sin tolerancia,
+   el grupo que cumple va primero. La regla aplica a todas las ofertas del mismo artículo, sea cual sea el proveedor.
    La comparación usa la misma base de precio, la misma moneda y valores equivalentes; nunca compara precio unitario
    con total de línea.
 7. **Precio.** `acceptable` y `maximum` se aplican sobre la base declarada (`per_base_unit`, `per_commercial_unit` o

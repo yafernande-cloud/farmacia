@@ -15,9 +15,11 @@ Reglas aplicadas (§8.4 del contrato rev10-A6):
   la clase; no se infiere de una ausencia ni se simula con preferencias ficticias.
 * Orden lexicográfico: precio → proveedor → laboratorio → marca → disponibilidad. Dentro de cada
   clase el grupo que cumple va primero; los empates conservan el orden determinista anterior.
-* Tolerancia (solo laboratorio, marca y proveedor con `prefer`): una oferta que no cumple puede
-  quedar en el grupo que cumple si su precio está dentro de la tolerancia relativa o absoluta,
-  comparado con la oferta más barata que sí cumple, en la misma moneda y base de precio.
+* Tolerancia (solo laboratorio, marca y proveedor con `prefer`): la oferta preferida conserva el
+  primer lugar mientras su precio no supere el margen relativo o absoluto sobre la alternativa
+  comparable más barata, en la misma moneda y base de precio; si lo supera, la más económica pasa
+  primero. La preferencia ordena por igual a todas las ofertas del mismo artículo, sea cual sea
+  el proveedor.
 * `maximum`/`acceptable` solo ordenan: un precio que excede la referencia queda después, nunca
   se oculta ni se vuelve inelegible.
 * La traza (`preference_order_trace`) es interna: no se devuelve en la API pública.
@@ -581,61 +583,73 @@ def _in_stock(view: OfferView) -> bool:
     return view.stock_unit is None or view.stock_unit == view.sale_unit
 
 
-def _within_tolerance(
-    pref: CommercialPreference,
-    view: OfferView,
-    baselines: dict[tuple[str, str], Decimal],
-) -> bool:
-    """¿Una oferta que no cumple está lo bastante cerca del cumplimiento más barato?"""
-    if pref.effect != "prefer" or pref.tolerance_kind == "none":
-        return False
-    baseline = baselines.get((view.currency, view.price_basis))
-    if baseline is None:
-        return False
-    if pref.tolerance_kind == "relative_percent" and pref.tolerance_percent is not None:
-        limit = baseline * (Decimal("1") + pref.tolerance_percent / HUNDRED)
-        return view.price_amount <= limit
-    if (
-        pref.tolerance_kind == "absolute_amount"
-        and pref.tolerance_amount is not None
-        and pref.tolerance_currency == view.currency
-    ):
-        return view.price_amount <= baseline + pref.tolerance_amount
-    return False
-
-
-def _tolerance_baselines(
-    group: Sequence[CommercialPreference], views: Sequence[OfferView]
-) -> dict[tuple[str, str], Decimal]:
-    """Precio más bajo que cumple, por moneda y base. Solo con tolerancia que lo necesite."""
-    needs = any(p.effect == "prefer" and p.tolerance_kind != "none" for p in group)
-    if not needs:
-        return {}
-    baselines: dict[tuple[str, str], Decimal] = {}
-    for view in views:
-        if not any(_matches(pref, view) for pref in group):
-            continue
-        key = (view.currency, view.price_basis)
-        current = baselines.get(key)
-        if current is None or view.price_amount < current:
-            baselines[key] = view.price_amount
-    return baselines
+def _margin_limit(
+    baseline: Decimal, tolerance: Sequence[CommercialPreference], currency: str
+) -> Decimal | None:
+    """Precio máximo de la oferta preferida frente a la alternativa más barata."""
+    limits: list[Decimal] = []
+    for pref in tolerance:
+        if pref.tolerance_kind == "relative_percent" and pref.tolerance_percent is not None:
+            limits.append(baseline * (Decimal("1") + pref.tolerance_percent / HUNDRED))
+        elif (
+            pref.tolerance_kind == "absolute_amount"
+            and pref.tolerance_amount is not None
+            and pref.tolerance_currency == currency
+        ):
+            limits.append(baseline + pref.tolerance_amount)
+    return max(limits) if limits else None
 
 
 def _attribute_rank(
     group: Sequence[CommercialPreference], views: Sequence[OfferView]
 ) -> dict[uuid.UUID, int]:
+    """Orden de la clase de laboratorio, marca o proveedor.
+
+    * `deprioritize`: el grupo que cumple queda al final (sin tolerancia).
+    * `prefer` sin tolerancia: el grupo que cumple va primero.
+    * `prefer` con tolerancia: el grupo preferido conserva el primer lugar mientras su precio
+      más bajo no supere el margen sobre la alternativa comparable más barata, en la misma
+      moneda y base de precio. Si lo supera, la alternativa más económica pasa primero.
+
+    La comparación nunca mezcla monedas ni bases: sin alternativa comparable en la misma moneda
+    y base, la tolerancia no se evalúa y rige la preferencia simple (la preferida va primero).
+    """
     prefer = [p for p in group if p.effect == "prefer"]
-    baselines = _tolerance_baselines(group, views)
+    if not prefer:
+        return {v.offer_id: 1 if any(_matches(p, v) for p in group) else 0 for v in views}
+    tolerance = [p for p in prefer if p.tolerance_kind != "none"]
+    if not tolerance:
+        return {v.offer_id: 0 if any(_matches(p, v) for p in prefer) else 1 for v in views}
+
+    preferred = {v.offer_id for v in views if any(_matches(p, v) for p in prefer)}
+    buckets: dict[tuple[str, str], list[OfferView]] = {}
+    for view in views:
+        buckets.setdefault((view.currency, view.price_basis), []).append(view)
+
+    leads: dict[tuple[str, str], bool] = {}
+    cheapest_alternative: dict[tuple[str, str], Decimal] = {}
+    for key, bucket in buckets.items():
+        preferred_prices = [v.price_amount for v in bucket if v.offer_id in preferred]
+        alternative_prices = [v.price_amount for v in bucket if v.offer_id not in preferred]
+        if not preferred_prices or not alternative_prices:
+            leads[key] = True
+            continue
+        baseline = min(alternative_prices)
+        limit = _margin_limit(baseline, tolerance, key[0])
+        cheapest_alternative[key] = baseline
+        leads[key] = limit is not None and min(preferred_prices) <= limit
+
     ranks: dict[uuid.UUID, int] = {}
     for view in views:
-        if prefer:
-            satisfied = any(
-                _matches(pref, view) or _within_tolerance(pref, view, baselines) for pref in prefer
-            )
-            ranks[view.offer_id] = 0 if satisfied else 1
+        key = (view.currency, view.price_basis)
+        if leads.get(key, True):
+            ranks[view.offer_id] = 0 if view.offer_id in preferred else 1
+        elif view.offer_id in preferred:
+            ranks[view.offer_id] = 1
         else:
-            ranks[view.offer_id] = 1 if any(_matches(p, view) for p in group) else 0
+            ranks[view.offer_id] = (
+                0 if view.price_amount == cheapest_alternative.get(key) else 1
+            )
     return ranks
 
 

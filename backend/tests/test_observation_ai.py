@@ -416,24 +416,52 @@ async def test_laboratorio_con_tolerancia_implicita_y_motor(sessions, ai_farm):
     assert pref.tolerance_origin == "implicit_default"
 
     ranks = await _ranks(sessions, ai_farm)
-    # Laboratorio Chile (Norte y Centro) va antes que Andino (Sur); 2.250 > 2.000 × 1,10.
+    # La preferida más barata (2.000) no supera 2.250 × 1,10 = 2.475: Laboratorio Chile va primero.
     assert ranks["A-N"][3] == 0 and ranks["A-C"][3] == 0
     assert ranks["A-S"][3] == 1
 
 
-async def test_tolerancia_explicita_incluye_la_oferta_cercana(sessions, ai_farm):
+async def test_tolerancia_explicita_prioriza_la_preferida_mas_cara_dentro_del_margen(
+    sessions, ai_farm
+):
     obs = await _observation(
-        sessions, ai_farm, "Prefiero Laboratorio Chile hasta un 15 % más caro."
+        sessions, ai_farm, "Prefiero Laboratorio Andino hasta un 15 % más caro."
     )
     await _run(
         sessions,
         ai_farm,
         obs,
-        FakeModel(_response([_op(tol=_tolerance("relative_percent", percent="15"))])),
+        FakeModel(
+            _response(
+                [
+                    _op(
+                        label="Laboratorio Andino",
+                        tol=_tolerance("relative_percent", percent="15"),
+                    )
+                ]
+            )
+        ),
     )
     ranks = await _ranks(sessions, ai_farm)
-    # 2.250 ≤ 2.000 × 1,15: la oferta Andino queda dentro de la tolerancia.
+    # La preferida (2.250) no supera 2.000 × 1,15 = 2.300: Andino va primero.
     assert ranks["A-S"][3] == 0
+    assert ranks["A-N"][3] == 1 and ranks["A-C"][3] == 1
+
+
+async def test_tolerancia_implicita_fuera_del_margen_prioriza_la_mas_barata(sessions, ai_farm):
+    obs = await _observation(
+        sessions, ai_farm, "Prefiero Laboratorio Andino, aunque sea un poco más caro."
+    )
+    await _run(
+        sessions,
+        ai_farm,
+        obs,
+        FakeModel(_response([_op(label="Laboratorio Andino", tol=_tolerance("implicit"))])),
+    )
+    ranks = await _ranks(sessions, ai_farm)
+    # La preferida (2.250) supera 2.000 × 1,10 = 2.200: pasa primero la más económica.
+    assert ranks["A-N"][3] == 0
+    assert ranks["A-S"][3] == 1 and ranks["A-C"][3] == 1
 
 
 async def test_precio_maximo_ordena_pero_no_oculta(sessions, ai_farm):

@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -603,26 +604,27 @@ async def test_e3_precedencia_precio_antes_que_proveedor(sessions, api):
 
 
 async def test_e3_tolerancia_implicita_y_explicita(sessions, api):
-    baseline = await _article(api, "a")
-    sur = str(api.farm["offers"]["A-S"])
+    norte = str(api.farm["offers"]["A-N"])  # Laboratorio Chile, 2000
+    sur = str(api.farm["offers"]["A-S"])  # Laboratorio Andino, 2250
 
-    # 10 % implícito: 2250 vs 2000 = 12,5 % → no alcanza, Sur queda al final.
+    # Andino prefiere, pero cuesta 2250 frente a la alternativa más barata de 2000: 12,5 %.
+    # Con 10 % implícito supera el margen y manda la más económica.
     await _interpret(
         sessions,
         api.farm,
         "a",
         preferences=[
             _lab(
-                "laboratorio chile",
+                "laboratorio andino",
                 tolerance="relative_percent",
                 tolerance_percent="10",
                 tolerance_origin="implicit_default",
             )
         ],
     )
-    assert (await _article(api, "a"))[-1] == sur
+    assert (await _article(api, "a"))[0] == norte
 
-    # 15 % explícito reemplaza al anterior: 2250 sí entra y se conserva el orden previo.
+    # 15 % explícito reemplaza al anterior: 2250 queda dentro de 2000 × 1,15 y Andino va primero.
     await _interpret(
         sessions,
         api.farm,
@@ -630,14 +632,14 @@ async def test_e3_tolerancia_implicita_y_explicita(sessions, api):
         created_at=BASE_TIME + timedelta(hours=1),
         preferences=[
             _lab(
-                "laboratorio chile",
+                "laboratorio andino",
                 tolerance="relative_percent",
                 tolerance_percent="15",
                 tolerance_origin="explicit",
             )
         ],
     )
-    assert await _article(api, "a") == baseline
+    assert (await _article(api, "a"))[0] == sur
 
     # Monto absoluto en CLP: 250 de diferencia; 300 alcanza y 200 no.
     await _interpret(
@@ -647,14 +649,14 @@ async def test_e3_tolerancia_implicita_y_explicita(sessions, api):
         created_at=BASE_TIME + timedelta(hours=2),
         preferences=[
             _lab(
-                "laboratorio chile",
+                "laboratorio andino",
                 tolerance="absolute_amount",
                 tolerance_amount="200",
                 tolerance_currency="CLP",
             )
         ],
     )
-    assert (await _article(api, "a"))[-1] == sur
+    assert (await _article(api, "a"))[0] == norte
     await _interpret(
         sessions,
         api.farm,
@@ -662,14 +664,120 @@ async def test_e3_tolerancia_implicita_y_explicita(sessions, api):
         created_at=BASE_TIME + timedelta(hours=3),
         preferences=[
             _lab(
-                "laboratorio chile",
+                "laboratorio andino",
                 tolerance="absolute_amount",
                 tolerance_amount="300",
                 tolerance_currency="CLP",
             )
         ],
     )
-    assert await _article(api, "a") == baseline
+    assert (await _article(api, "a"))[0] == sur
+
+
+def _pref_lab(
+    key: str,
+    *,
+    tolerance: str = "relative_percent",
+    percent: str | None = "10",
+    amount: str | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        subject_kind="laboratory",
+        subject_key=key,
+        subject_supplier_id=None,
+        effect="prefer",
+        tolerance_kind=tolerance,
+        tolerance_percent=Decimal(percent) if percent is not None else None,
+        tolerance_amount=Decimal(amount) if amount is not None else None,
+        tolerance_currency="CLP" if amount is not None else None,
+    )
+
+
+def _vista(
+    laboratorio: str,
+    precio: str,
+    *,
+    base: str = "per_commercial_unit",
+) -> preferences_svc.OfferView:
+    return preferences_svc.OfferView(
+        offer_id=uuid.uuid4(),
+        supplier_id=uuid.uuid4(),
+        laboratory=laboratorio,
+        brand=None,
+        currency="CLP",
+        price_amount=Decimal(precio),
+        price_basis=base,
+        pack_units_per_commercial_unit=None,
+        stock_status="unknown",
+        stock_quantity=None,
+        stock_unit=None,
+        sale_unit="box",
+    )
+
+
+def _claves(prefs: Sequence[SimpleNamespace], views: Sequence[preferences_svc.OfferView]):
+    item = preferences_svc.ItemPreferences(
+        trade_item_id=uuid.uuid4(), applicable=tuple(prefs)  # type: ignore[arg-type]
+    )
+    return preferences_svc.rank_offers(item, views)
+
+
+def test_la_tolerancia_prioriza_la_preferida_hasta_el_margen():
+    ascend = _vista("Ascend Laboratories Spa", "2200")
+    otra = _vista("Laboratorio Chile", "2000")
+    claves = _claves([_pref_lab("ascend laboratories spa")], [ascend, otra])
+    assert claves[ascend.offer_id] < claves[otra.offer_id]
+
+    # Un peso más supera el 10 %: la más económica toma el primer lugar.
+    ascend_caro = _vista("Ascend Laboratories Spa", "2201")
+    claves = _claves([_pref_lab("ascend laboratories spa")], [ascend_caro, otra])
+    assert claves[otra.offer_id] < claves[ascend_caro.offer_id]
+
+
+def test_la_preferida_mas_barata_va_primero_sin_importar_el_margen():
+    ascend = _vista("Ascend Laboratories Spa", "1900")
+    otra = _vista("Laboratorio Chile", "2000")
+    claves = _claves([_pref_lab("ascend laboratories spa")], [ascend, otra])
+    assert claves[ascend.offer_id] < claves[otra.offer_id]
+
+
+def test_fuera_del_margen_manda_la_alternativa_mas_economica():
+    ascend = _vista("Ascend Laboratories Spa", "3000")
+    barata = _vista("Laboratorio Chile", "2000")
+    media = _vista("Laboratorio Andino", "2500")
+    claves = _claves([_pref_lab("ascend laboratories spa")], [ascend, barata, media])
+    assert claves[barata.offer_id] < claves[media.offer_id]
+    assert claves[barata.offer_id] < claves[ascend.offer_id]
+
+
+def test_sin_alternativa_comparable_rige_la_preferencia_simple():
+    # La tolerancia nunca mezcla bases: por caja no se compara con precio unitario.
+    ascend = _vista("Ascend Laboratories Spa", "3000")
+    otra = _vista("Laboratorio Chile", "120", base="per_base_unit")
+    claves = _claves([_pref_lab("ascend laboratories spa")], [ascend, otra])
+    laboratorio = preferences_svc.CLASS_ORDER.index("laboratory")
+    assert claves[ascend.offer_id][laboratorio] == 0
+    assert claves[otra.offer_id][laboratorio] == 1
+
+
+def test_la_tolerancia_absoluta_solo_compara_en_la_misma_moneda():
+    ascend = _vista("Ascend Laboratories Spa", "2250")
+    otra = _vista("Laboratorio Chile", "2000")
+    prefs = [
+        _pref_lab(
+            "ascend laboratories spa", tolerance="absolute_amount", percent=None, amount="250"
+        )
+    ]
+    claves = _claves(prefs, [ascend, otra])
+    assert claves[ascend.offer_id] < claves[otra.offer_id]
+
+    prefs = [
+        _pref_lab(
+            "ascend laboratories spa", tolerance="absolute_amount", percent=None, amount="249"
+        )
+    ]
+    claves = _claves(prefs, [ascend, otra])
+    assert claves[otra.offer_id] < claves[ascend.offer_id]
 
 
 async def test_e3_interpretacion_rechazada_no_reactiva_la_anterior(sessions, api):

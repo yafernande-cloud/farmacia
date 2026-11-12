@@ -2623,3 +2623,48 @@ pregunta de confirmación en la revisión previa, `formatearCantidad`, tarjetas 
 `tests/test_price_format.py` (28 sin base de datos), `tests/test_import_current_list.py` (6 con base de datos),
 `tests/test_import_check_api.py` y suite completa de backend con `REQUIRE_DB=1`; frontend: pruebas de precios, stock,
 etiquetas y del flujo de confirmación, además de `tsc --noEmit`, `eslint` y `npm run build`.
+
+### D-152 — Tolerancia de preferencias: la oferta preferida va primera hasta el margen sobre la alternativa más barata (2026-11-11)
+
+**Contexto.** En la prueba real de «Enseñar a la IA», FarmaLoop seguía mostrando ASCEND en segundo lugar pese a la
+preferencia de laboratorio ASCEND con tolerancia del 10 %. El motor vigente (D-142, precisado por D-143) usaba la
+tolerancia para permitir que una oferta que **no** cumplía entrara al grupo que cumplía, tomando como base la oferta
+más barata que ya cumplía; así, los competidores más baratos empataban con el laboratorio preferido y el empate
+conservaba el orden previo. El usuario aprobó funcionalmente la regla definitiva: la preferencia debe proteger a la
+oferta preferida mientras su precio sea hasta el margen superior al de la alternativa comparable más económica; si lo
+supera, priorizar la más barata, en todas las ofertas del mismo artículo y para todos sus proveedores. Esta decisión
+sustituye el sentido que la revisión 10-A6 daba a la tolerancia (§8.4.6 punto 6), que permitía a una oferta que no
+cumplía quedar por delante; el contrato queda corregido en la misma fecha.
+
+1. **Regla.** Una preferencia `prefer` de laboratorio, marca o proveedor con tolerancia conserva el primer lugar
+   mientras el precio más bajo de las ofertas preferidas no supere el margen sobre la alternativa comparable más
+   barata: `preferida ≤ alternativa × (1 + porcentaje/100)` para tolerancia relativa, o
+   `preferida ≤ alternativa + monto` para tolerancia absoluta en la misma moneda. Si lo supera, pasa primero la
+   alternativa más económica (todas las que empatan en ese precio) y la preferida queda después. Una preferida más
+   barata va primera sin evaluar el margen.
+2. **Comparabilidad.** La comparación nunca mezcla monedas ni bases de precio: se evalúa por separado en cada
+   combinación de moneda y `price_basis`. La tolerancia absoluta solo aplica en su moneda. Sin alternativa comparable
+   en la misma moneda y base, la tolerancia no se evalúa y rige la preferencia simple (la preferida va primero).
+3. **Alcance.** La regla se aplica a **todas las ofertas del mismo `trade_item_id`**, sea cual sea el proveedor, y en
+   todos los caminos que comparten el motor: detalle E3, comparación E5 y búsqueda de proveedores en vivo. Las
+   preferencias siguen siendo del producto específico y no se propagan a otros productos del mismo laboratorio, marca
+   o proveedor (D-138). No cambia qué ofertas se muestran, sus precios, stock, cantidades, descuentos, impuestos,
+   totales ni elegibilidad; un empate conserva el desempate determinista vigente.
+4. **Alcance de la implementación.** Sin migración y sin cambios de esquema ni de la API pública; no corrige datos ni
+   asociaciones existentes. Que la preferencia ordene las ofertas en vivo de un proveedor exige que sus SKU resuelvan
+   al artículo canónico (vínculo explícito, EAN único o identidad enseñada); los vínculos de FarmaLoop 91280 y 15391
+   siguen pendientes y se abordan por separado.
+
+**Estado.** Implementada en código y probada el 2026-11-11: `app/services/preferences.py` (`_margin_limit` nuevo y
+`_attribute_rank` reescrito; se retiran `_within_tolerance` y `_tolerance_baselines`) y
+`tests/test_preference_engine.py` (`test_e3_tolerancia_implicita_y_explicita` reescrita en el nuevo sentido: 2.250
+frente a 2.000 con 10 % prioriza la más barata, con 15 % prioriza la preferida, absoluta 200 prioriza la más barata y
+300 la preferida; cinco pruebas unitarias nuevas para borde del margen, preferida más barata, exceso de margen, base
+de precio no comparable y moneda de la tolerancia absoluta) y `tests/test_observation_ai.py` (la prueba que afirmaba
+el sentido anterior —la oferta que no cumple quedaba dentro— se reescribió: con 15 % la preferida más cara (2.250
+frente a 2.000) va primera, y se agregó la prueba complementaria con 10 % implícito, donde la preferida supera el
+margen y pasa primero la más económica). `tests/test_preference_engine.py`: **44 aprobadas**;
+suites relacionadas (`test_article_preferences`, `test_import_identity_adoption`, `test_offer_identity_teaching`,
+`test_import_current_list`, `test_search_api`, `test_comparison_api`): **72 aprobadas**; suite completa de backend con
+`REQUIRE_DB=1`: **1.236 aprobadas, 8 omitidas, 0 fallos**; `ruff check` limpio. Sin commit, push, despliegue ni Lovable
+Publish al implementarse.
