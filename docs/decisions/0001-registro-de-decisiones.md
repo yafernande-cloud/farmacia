@@ -2775,3 +2775,43 @@ liberación completa/parcial, altas de ofertas vivas, deduplicación y re-report
 `src/test/cotizacion-api.test.ts` (nuevo), `src/test/historial.test.tsx` (nuevo) y actualización de
 `src/test/main-screen.test.tsx`, `src/test/flujo-proveedores-en-vivo.test.tsx` y `src/test/precios-listas-ensenar.test.tsx`.
 Sin commit, push, despliegue ni Lovable Publish.
+
+### D-155 — La cantidad operativa sigue al producto entre el faltante y el carrito (2026-11-12)
+
+**Contexto.** D-154 dejó el carrito en el servidor y D-147 fijó la cantidad predeterminada en 1 cuando nadie la
+declaró. En el recorrido real, el auxiliar reporta (por ejemplo, 1 unidad), la administración agrega el producto al
+carrito y luego ajusta la cantidad a 3. Hasta ahora `quote_line.quantity` cambiaba sola: la asignación
+(`quote_line_allocation`) y la cantidad operativa del faltante (`demand_item.target_quantity`) quedaban en 1, de modo
+que al retirar la línea el faltante reaparecía con 1 y al finalizar se liberaba con 1 aunque el informe mostrara 3.
+La cantidad declarada por el auxiliar es un dato histórico y no debe imponerse sobre la decisión operativa de la
+administración.
+
+1. **Sincronización en la relación 1:1.** Cuando la línea tiene una única asignación y ese reporte no tiene ninguna
+   otra asignación vigente (misma noción de vigencia que la cobertura: línea activa en carrito activo), cambiar la
+   cantidad de la línea cambia también la asignación y, con un `SET` auditado, la `target_quantity` del faltante. Vale
+   al aumentar y al disminuir: el carrito manda siempre. La unidad del `SET` es la unidad vigente del reporte (en
+   FarmaLoop sigue siendo `unit`; nunca se supone caja, paquete ni botella). El orden es asignación primero y cantidad
+   pedida después, para respetar D-137 (`target >= asignado`).
+2. **Cobertura múltiple sin reparto automático.** Con dos o más líneas o asignaciones al mismo reporte no se toca la
+   cantidad operativa ni las asignaciones ajenas: la administración ajusta explícitamente con `SET` o con
+   `demand_allocations` en el `PATCH`. Bajar una línea por debajo de sus asignaciones sigue respondiendo
+   `409 ALLOCATION_EXCEEDS_LINE`; la cobertura parcial sigue quedando `coverage_incomplete` al finalizar y nunca libera.
+   Un `PATCH` con `demand_allocations` explícitas tampoco sincroniza la cantidad pedida: esa lista es una decisión de
+   cobertura y el backend no la reinterpreta.
+3. **Alta sin reescritura.** Agregar la línea no modifica la cantidad operativa: la asociación conserva lo definido y
+   la cobertura parcial es posible (4 de 10). La sincronización ocurre al cambiar la cantidad en el carrito.
+4. **Retiro y finalización.** Retirar la línea del carrito no altera la cantidad operativa: el faltante reaparece en
+   «Faltantes por cotizar» con la última cantidad registrada. Al finalizar se conserva la cantidad seleccionada en el
+   informe (`items[].quantity`, `demand_allocations`) y la liberación usa esa misma cantidad operativa.
+5. **Historial intacto.** La cantidad originalmente reportada sigue viviendo en `demand_observation.declared_quantity`
+   y se expone como `declared_quantity`/`requested_quantity`; no se reescribe ni se toma como valor operativo.
+6. **Interfaz.** La bandeja de «Faltantes por cotizar» se vuelve a leer después de modificar una cantidad en el
+   carrito, igual que después de agregar, quitar, vaciar o finalizar.
+
+**Estado.** Implementada en código el 2026-11-12. Backend: `app/services/quotes.py` (`_follow_line_quantity` y el
+reordenamiento de `_assert_allocations_fit` en `patch_line`). Frontend: `src/routes/index.tsx` (refresco de la bandeja
+al cambiar cantidades). Pruebas: `tests/test_quotes_api.py` (1 → 3 → retirar reaparece con 3; 1 → 3 → finalizar libera
+con 3 y conserva el informe; bajar en 1:1 sincroniza; varias asignaciones siguen bloqueadas y no tocan la cantidad
+pedida; cantidad declarada intacta) y `src/test/carrito-cotizador.test.tsx` (refresco de la bandeja). Sin migración:
+no hay tablas ni columnas nuevas. Sin commit, push, despliegue ni Lovable Publish en esta pasada. Las reglas D-135,
+D-137, D-147 y D-154 se mantienen.

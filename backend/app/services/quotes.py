@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import DomainError, not_found
 from app.core.permissions import require_admin
 from app.domain.matching import classify, identity_from_item, identity_from_query
+from app.domain.quantities import QuantityOp, QuantityUnit
 from app.models import (
     AuditEvent,
     CommercialObservation,
@@ -50,6 +51,7 @@ from app.services import coverage as coverage_svc
 from app.services import demand as demand_svc
 from app.services import events
 from app.services import offer_identities as offer_svc
+from app.services import quantities as quantities_svc
 from app.services.actors import Actor
 from app.services.connectors import presets
 from app.services.observation_views import observation_view
@@ -1056,6 +1058,85 @@ async def _replace_allocations(
     )
 
 
+async def _follow_line_quantity(
+    session: AsyncSession,
+    actor: Actor,
+    org: uuid.UUID,
+    line: QuoteLine,
+    quantity: Decimal,
+) -> DemandItem | None:
+    """D-155: en una relación 1:1 la cantidad operativa del faltante sigue a la línea.
+
+    Solo actúa cuando la línea tiene una única asignación y ese reporte no tiene ninguna otra
+    asignación vigente (la misma noción de vigencia que la cobertura). Con varias líneas o varias
+    asignaciones no se reparte ni se reescribe nada: la administración lo ajusta explícitamente.
+
+    La cantidad declarada por quien reportó no se toca —vive en las observaciones—; lo que cambia
+    es la cantidad operativa (`target_quantity`), siempre con un `SET` auditado y con la unidad
+    vigente del reporte (en FarmaLoop sigue siendo `unit`, nunca una caja supuesta).
+    """
+    rows = (await _allocations_by_line(session, org, [line.id])).get(line.id, [])
+    if len(rows) != 1:
+        return None
+    allocation = rows[0]
+    demand = (
+        await session.execute(
+            select(DemandItem)
+            .where(
+                DemandItem.id == allocation.demand_item_id,
+                DemandItem.organization_id == org,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if demand is None or demand.status != "active" or demand.quantity_unit is None:
+        return None
+    coverage = await demand_svc.active_allocations_for_item(session, org, demand.id)
+    if len(coverage) != 1 or coverage[0]["quote_line_id"] != line.id:
+        return None
+
+    before_allocation = allocation.quantity
+    before_target = demand.target_quantity
+    allocation_changed = before_allocation != quantity
+    if allocation_changed:
+        allocation.quantity = quantity
+        await session.flush()
+    target_changed = before_target != quantity
+    if target_changed:
+        # El `SET` corre después de ajustar la asignación: D-137 exige target >= asignado.
+        await quantities_svc.apply_quantity_command(
+            session,
+            actor,
+            demand.id,
+            operation=QuantityOp.SET,
+            value=quantity,
+            unit=QuantityUnit(demand.quantity_unit),
+            reason="La cantidad del carrito actualizó la cantidad operativa del faltante (D-155).",
+            idempotency_key=f"cart-line:{line.id}-{uuid.uuid4().hex}",
+            expected_version=demand.version,
+            web_admin=True,
+        )
+    if not (allocation_changed or target_changed):
+        return None
+    _emit(
+        session,
+        org_id=org,
+        actor_id=actor.id,
+        action="quote.line.allocate",
+        entity_type="quote_line",
+        entity_id=line.id,
+        event_type="quote.line.allocation_synced",
+        aggregate_version=line.version,
+        payload={"quote_line_id": str(line.id), "demand_item_id": str(demand.id)},
+        before={
+            "allocation_quantity": _qty(before_allocation),
+            "target_quantity": _qty(before_target),
+        },
+        after={"allocation_quantity": _qty(quantity), "target_quantity": _qty(quantity)},
+    )
+    return demand
+
+
 async def _prior_add(
     session: AsyncSession, org: uuid.UUID, key: str
 ) -> AuditEvent | None:
@@ -1592,7 +1673,6 @@ async def patch_line(
     line.version += 1
     line.updated_at = now
     await session.flush()
-    await _assert_allocations_fit(session, org, line, value)
     if demand_allocations is not None:
         item = (
             await session.execute(
@@ -1604,6 +1684,12 @@ async def patch_line(
         if item is None:
             raise not_found("El artículo")
         await _replace_allocations(session, actor, org, line, item, demand_allocations)
+    else:
+        # D-155: cambiar la cantidad de una línea 1:1 cambia la cantidad operativa del faltante.
+        await _follow_line_quantity(session, actor, org, line, value)
+    # Se verifica al final: con asignaciones explícitas la lista ya reemplazada debe caber en la
+    # línea, y en el caso 1:1 la asignación bajó con ella antes de tocar la cantidad pedida.
+    await _assert_allocations_fit(session, org, line, value)
     _touch_cart(cart, now)
     _touch_quote(quote, now)
     _emit(

@@ -897,14 +897,151 @@ async def test_patch_reemplaza_las_asignaciones_sin_tocar_el_resto(api):
     assert (await _demand_row(api, "exacta"))["quoted_quantity"] == "0"
     assert (await _demand_row(api, "exacta_aux"))["quoted_quantity"] == "6"
 
-    # Bajar la cantidad de la línea por debajo de lo asignado se rechaza.
+    # D-155: con una sola asignación vigente la relación es 1:1 y la cantidad operativa sigue a la
+    # línea; bajar 8 → 4 ajusta la asignación y la cantidad pedida, sin inventar repartos.
     r = await api.patch(
         f"/api/v1/quotes/{quote_id}/lines/{line_id}",
         json={"version": r.json()["line"]["version"], "quantity": _q(value="4")},
         headers=H(api),
     )
+    assert r.status_code == 200, r.text
+    assert _alloc_pairs(r.json()["line"]["demand_allocations"]) == [
+        (str(api.shop["demands"]["exacta_aux"]), "4")
+    ]
+    assert (await _demand_row(api, "exacta_aux"))["target_quantity"] == "4"
+    assert (await _demand_row(api, "exacta"))["target_quantity"] == "10"
+
+
+async def test_bajar_una_linea_con_varias_asignaciones_sigue_bloqueado(api):
+    quote_id = await _quote(api)
+    r = await _add(
+        api, quote_id, value="8", allocations=_alloc(api, ("exacta", 5), ("exacta_aux", 3))
+    )
+    assert r.status_code == 201, r.text
+    line_id = r.json()["line"]["line_id"]
+
+    # Varias asignaciones: no hay una relación 1:1 que seguir, así que se mantiene la validación.
+    r = await api.patch(
+        f"/api/v1/quotes/{quote_id}/lines/{line_id}",
+        json={"version": 1, "quantity": _q(value="4")},
+        headers=H(api),
+    )
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "ALLOCATION_EXCEEDS_LINE"
+
+    # La administración ajusta explícitamente: la cantidad pedida no se toca sola (D-155 #3).
+    r = await api.patch(
+        f"/api/v1/quotes/{quote_id}/lines/{line_id}",
+        json={
+            "version": 1,
+            "quantity": _q(value="4"),
+            "demand_allocations": _alloc(api, ("exacta", 2), ("exacta_aux", 2)),
+        },
+        headers=H(api),
+    )
+    assert r.status_code == 200, r.text
+    assert sorted(_alloc_pairs(r.json()["line"]["demand_allocations"])) == sorted(
+        [
+            (str(api.shop["demands"]["exacta"]), "2"),
+            (str(api.shop["demands"]["exacta_aux"]), "2"),
+        ]
+    )
+    assert (await _demand_row(api, "exacta"))["target_quantity"] == "10"
+    assert (await _demand_row(api, "exacta_aux"))["target_quantity"] == "6"
+
+
+async def test_la_cantidad_del_carrito_sigue_al_faltante_al_retirar_la_linea(api):
+    quote_id = await _quote(api)
+    r = await _add(api, quote_id, value="1", demand="exacta")
+    assert r.status_code == 201, r.text
+    line = r.json()["line"]
+    assert _alloc_pairs(line["demand_allocations"]) == [
+        (str(api.shop["demands"]["exacta"]), "1")
+    ]
+    # El alta no reescribe la cantidad pedida; la sigue el cambio de cantidad en el carrito.
+    assert (await _demand_row(api, "exacta"))["target_quantity"] == "10"
+
+    r = await api.patch(
+        f"/api/v1/quotes/{quote_id}/lines/{line['line_id']}",
+        json={"version": line["version"], "quantity": _q(value="3")},
+        headers=H(api),
+    )
+    assert r.status_code == 200, r.text
+    assert _alloc_pairs(r.json()["line"]["demand_allocations"]) == [
+        (str(api.shop["demands"]["exacta"]), "3")
+    ]
+    row = await _demand_row(api, "exacta")
+    assert (row["target_quantity"], row["quoted_quantity"]) == ("3", "3")
+
+    # Al retirar la línea el faltante vuelve a la bandeja con la última cantidad operativa.
+    assert (
+        await api.delete(f"/api/v1/quotes/{quote_id}/lines/{line['line_id']}", headers=H(api))
+    ).status_code == 200
+    row = await _demand_row(api, "exacta")
+    assert row["target_quantity"] == "3"
+    assert row["quoted_quantity"] == "0"
+    assert row["pending_quantity"] == "3"
+    assert row["replenishment_state"] == "pending"
+
+
+async def test_finalizar_conserva_la_cantidad_del_carrito_y_libera_el_faltante(api, sessions):
+    from app.services.actors import load_actor
+    from app.services.demand import record_observation
+
+    async with sessions() as s, s.begin():
+        persona = AppUser(
+            organization_id=api.shop["org"], display_name="Auxiliar D-155", roles=["auxiliary"]
+        )
+        s.add(persona)
+        await s.flush()
+        persona_id = persona.id
+    async with sessions() as s, s.begin():
+        actor = await load_actor(s, persona_id)
+        first = await record_observation(
+            s,
+            actor,
+            text="falta ibuprofeno 400 mg x 20 comprimidos",
+            idempotency_key="d155-reporte-1",
+            declared_quantity=Decimal("1"),
+            declared_unit="box",
+        )
+        assert first.outcome == "created_item"
+        demand_id = first.item.id
+        version = first.item.version
+    assert (await _set_quantity(api, demand_id, version, value="1")).status_code == 200
+
+    quote_id = await _quote(api)
+    r = await _add(
+        api, quote_id, value="1", allocations=[{"demand_item_id": str(demand_id), "quantity": 1}]
+    )
+    assert r.status_code == 201, r.text
+    line = r.json()["line"]
+    r = await api.patch(
+        f"/api/v1/quotes/{quote_id}/lines/{line['line_id']}",
+        json={"version": line["version"], "quantity": _q(value="3")},
+        headers=H(api),
+    )
+    assert r.status_code == 200, r.text
+
+    data = await _finalize(api, quote_id, key="finalize-d155-1")
+    assert data.status_code == 200, data.text
+    assert data.json()["released"] == [
+        {"demand_item_id": str(demand_id), "quantity": "3", "quantity_unit": "box"}
+    ]
+    assert data.json()["pending"] == []
+    item = data.json()["report"]["items"][0]
+    assert item["quantity"] == {"value": "3", "unit": "box"}
+    assert _alloc_pairs(item["demand_allocations"]) == [(str(demand_id), "3")]
+    # La cantidad reportada por el auxiliar sigue intacta en el historial.
+    async with sessions() as s:
+        declared = (
+            await s.execute(
+                select(DemandObservation.declared_quantity).where(
+                    DemandObservation.demand_item_id == demand_id
+                )
+            )
+        ).scalar_one()
+    assert declared == Decimal("1")
 
 
 # --------------------------------------------------------------------------- cancelación (D-135)
