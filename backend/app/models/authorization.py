@@ -289,3 +289,46 @@ class WebAccessRequest(Base):
     data_origin: Mapped[str] = mapped_column(String(12), server_default="unclassified")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
+
+
+class WebAccessGrant(Base):
+    """Autorización WEB vigente de una persona (D-158).
+
+    Separada de `app_user` a propósito: la persona (identidad, `auth_subject`, roles e historial)
+    se conserva siempre, mientras que esta fila es la autorización que se puede **eliminar**.
+    Sin fila no hay acceso web, aunque el JWT de Google siga vigente y la persona conserve el rol
+    `admin`. `expires_at` conserva el vencimiento programable; `NULL` = sin vencimiento.
+
+    Una sola autorización por persona (`app_user_id` es la PK). El historial de otorgamientos y
+    eliminaciones vive en `web_access_request` y en la auditoría (`events.emit`), no aquí.
+    """
+
+    __tablename__ = "web_access_grant"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id"], ["organization.id"]),
+        ForeignKeyConstraint(
+            ["app_user_id", "organization_id"],
+            ["app_user.id", "app_user.organization_id"],
+            name="fk_web_access_grant_app_user",
+        ),
+        ForeignKeyConstraint(
+            ["granted_by", "organization_id"],
+            ["app_user.id", "app_user.organization_id"],
+            name="fk_web_access_grant_granted_by",
+        ),
+        ForeignKeyConstraint(
+            ["request_id", "organization_id"],
+            ["web_access_request.id", "web_access_request.organization_id"],
+            name="fk_web_access_grant_request",
+        ),
+        CheckConstraint(
+            "expires_at IS NULL OR expires_at > granted_at", name="vigencia_coherente"
+        ),
+        Index("ix_web_access_grant_org", "organization_id"),
+    )
+    app_user_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column()
+    request_id: Mapped[uuid.UUID | None] = mapped_column()
+    granted_by: Mapped[uuid.UUID | None] = mapped_column()
+    granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), **_NOW)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

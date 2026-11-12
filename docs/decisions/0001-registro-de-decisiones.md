@@ -2890,3 +2890,63 @@ aislamiento por organización y 403 fuera de `admin`). Frontend: `src/lib/cotiza
 relectura ante `QUOTE_CLOSED`, limpieza del faltante), con pruebas en `src/test/cotizacion-api.test.ts`,
 `carrito-cotizador.test.tsx`, `flujo-proveedores-en-vivo.test.tsx` y `main-screen.test.tsx`. Sin migración: no hay
 tablas ni columnas nuevas. Sin despliegue ni Lovable Publish en esta pasada.
+
+### D-158 — La autorización web es un registro independiente: eliminar el acceso lo borra de verdad (2026-11-12)
+
+**Contexto.** Hasta ahora la autorización web vivía en columnas de `app_user` (`web_access_expires_at`,
+`web_access_granted_at`, `web_access_granted_by`). «Eliminar acceso» solo podía simularse escribiendo una fecha pasada:
+la fila de la persona conservaba una autorización y no existía una forma limpia de distinguir «nunca aprobada»,
+«autorización vencida» y «autorización eliminada». Tampoco había una pantalla de «Gestión de usuarios» con el listado
+real de personas autorizadas de la farmacia. El requisito era que la eliminación fuera del registro que concede el
+acceso, sin tocar identidad, historial ni Telegram.
+
+1. **Fuente de verdad única.** `web_access_grant` (`app_user_id`, `organization_id`, `requested_at`, `granted_at`,
+   `expires_at`, `granted_by`, `request_id`) concede el acceso web. La fila **existente y vigente** de la organización
+   de la persona es la única condición de autorización web. `app_user` conserva identidad, `auth_subject`, roles,
+   cuenta de Telegram e historial. El `UNIQUE (app_user_id)` impide dos autorizaciones simultáneas y la clave foránea
+   compuesta `(app_user_id, organization_id)` impide cruzar organizaciones.
+2. **Eliminación real.** `DELETE /api/v1/admin/users/{user_id}/web-access` borra la fila de `web_access_grant` dentro de
+   la transacción, con `pg_advisory_xact_lock` por organización y auditoría `web_access.removed` en la misma operación.
+   No se toca `app_user`, no se borra historial ni Telegram y no hay borrado en cascada. Es idempotente: sin autorización
+   vigente responde `removed: false`.
+3. **Corte inmediato aunque el JWT siga siendo válido.** Cada solicitud autenticada vuelve a leer la autorización
+   (`app/api/deps.py`, `app/services/actors.py`): sin fila responde `403 WEB_ACCESS_REQUIRED`; con `expires_at`
+   pasado, `403 WEB_ACCESS_EXPIRED`. Un JWT válido de Google identificado en `app_user.auth_subject` no concede nada por
+   sí solo. El flujo OAuth no se modifica.
+4. **Estados.** `none`, `pending`, `rejected`, `approved` (autorización vigente), `removed` (persona con identidad y sin
+   autorización) y `expired` (autorización vencida). `removed` y `expired` nunca vuelven a solicitar solas: la persona
+   reencuentra la pantalla y pide «Volver a solicitar acceso» explícitamente; la nueva aprobación crea una autorización
+   nueva y **no** restaura el acceso por sí misma.
+5. **Reaprobación sin duplicar identidad.** Aprobar una solicitud cuya identidad ya existe reutiliza la misma
+   `app_user` (por `auth_subject`), conserva sus roles y solo crea la autorización. Si esa identidad existe pero no tiene
+   rol `admin`, se responde `403 WEB_ADMIN_ROLE_REQUIRED` y no se otorga nada: aprobar nunca asciende permisos de
+   Telegram de rebote.
+6. **Protecciones de eliminación, aplicadas en el backend.** No se elimina a una superadministradora
+   (`403 SUPERADMIN_PROTECTED`), ni el propio acceso (`409 CANNOT_REMOVE_SELF`), ni la última administradora web de la
+   organización (`409 LAST_WEB_ADMIN`), ni a alguien de otra organización (`404`). La interfaz muestra el motivo, pero
+   no es la autoridad.
+7. **Atribución honesta entre organizaciones.** `granted_by` y `audit_event.actor_id` exigen un actor de la misma
+   organización (clave foránea compuesta). Un `superadmin` que otorga o revoca en otra organización deja la atribución
+   en `NULL` en lugar de inventar un actor: la operación queda auditada, pero sin un responsable falso.
+8. **Migración `0031` con relleno.** Crea la tabla y rellena una autorización vigente por cada persona activa con
+   `auth_subject` y vencimiento heredado nulo o futuro, conservando el vencimiento existente. Las columnas heredadas se
+   mantienen con doble escritura (`_mirror_legacy_columns`) solo como red de seguridad de reversión: **el código nuevo
+   nunca las lee para conceder acceso**. Personas con vencimiento pasado, inactivas o sin identidad no reciben
+   autorización.
+9. **Interfaz.** La campanita muestra las solicitudes pendientes reales de la organización (nombre, correo, fecha,
+   estado pendiente, aprobar y rechazar con bloqueo de doble envío y refresco), y «Gestión de usuarios» lista solo
+   autorizaciones vigentes con el aviso de protección y la confirmación de eliminación («¿Estás segura de eliminar este
+   usuario?», «Cancelar», «Confirmar eliminación»).
+
+**Estado.** Implementada en código y probada el 2026-11-12, **sin commit, push, despliegue, migración en producción ni
+cambios en Google/Supabase Auth**. Backend: `app/models/authorization.py`, `app/services/web_access.py`,
+`app/services/identity.py`, `app/services/actors.py`, `app/api/deps.py`, `app/api/v1/web_access.py`, migración
+`0031_autorizacion_web_independiente.py`, y 33 pruebas focalizadas en `tests/test_web_access_api.py` (incluidas las
+categorías: eliminación real con identidad intacta/doble eliminación, re-solicitud y reaprobación sin duplicar, corte de
+JWT válido, vencimiento, protecciones de superadmin/cuenta propia/última admin/cross-org, campanita acotada a la
+organización, listado de accesos vigentes, atribución cross-org y relleno `0031` con `upgrade`/`downgrade`). Frontend:
+`src/lib/web-access-api.ts`, `src/lib/use-solicitud-acceso.ts`, `src/components/SolicitudesAcceso.tsx`,
+`src/components/AuthGate.tsx`, `src/components/MenuPrincipal.tsx`, `src/components/AppSidebar.tsx`,
+`src/routes/usuarios.tsx`, con pruebas en `src/test/web-access-api.test.ts`, `src/test/campanita-solicitudes.test.tsx`,
+`src/test/gestion-usuarios.test.tsx` y `src/test/acceso-web-estados.test.tsx`. D-130 sigue rigiendo el significado del
+acceso web; esta decisión precisa dónde vive la autorización y cómo se elimina.

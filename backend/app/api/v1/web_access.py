@@ -1,11 +1,16 @@
 """Acceso web del Cotizador (G1): solicitud pública, campanita y decisiones.
 
-Flujo (D-130):
-  1. Google/Supabase identifica a la persona, pero el Cotizador responde `403 USER_NOT_PROVISIONED`.
+Flujo (D-130, precisado por D-158):
+  1. Google/Supabase identifica a la persona, pero no concede acceso. La autorización web es una
+     fila de `web_access_grant`, separada de la identidad: sin fila, los endpoints protegidos
+     responden 403 aunque el JWT siga vigente y la persona conserve el rol `admin`.
   2. `POST /api/v1/web-access-requests` registra una solicitud `pending` con la organización
      configurada en el servidor. La solicitud **no otorga nada**.
-  3. Cualquier `admin` ve las pendientes en la campanita y aprueba o rechaza.
-  4. Aprobar crea la persona con `roles = ['admin']`, `active` y `auth_subject` en el mismo paso.
+  3. Cualquier `admin` ve las pendientes de su organización en la campanita y aprueba o rechaza.
+  4. Aprobar una identidad nueva crea la persona con `roles = ['admin']` y su autorización; aprobar
+     una identidad existente solo crea o renueva la autorización, sin duplicarla ni cambiar roles.
+  5. «Eliminar acceso» borra la autorización: la persona, su `auth_subject`, Telegram y el
+     historial se conservan, y puede volver a solicitar acceso.
 
 El endpoint público responde siempre `202 {"received": true}`: no revela si la cuenta ya existía ni
 a qué organización pertenece. La respuesta es idempotente por `(organización, auth_subject)`.
@@ -73,12 +78,40 @@ class RejectedOut(BaseModel):
     status: Literal["rejected"] = "rejected"
 
 
+class StatusOut(BaseModel):
+    status: Literal["none", "pending", "rejected", "approved", "removed", "expired"]
+    requested_at: datetime | None = None
+    decided_at: datetime | None = None
+
+
 class UserAccessOut(BaseModel):
     user_id: uuid.UUID
     display_name: str
     roles: list[str]
     active: bool
     web_access_expires_at: datetime | None
+
+
+class WebUserOut(BaseModel):
+    user_id: uuid.UUID
+    display_name: str
+    email: str | None
+    roles: list[str]
+    is_superadmin: bool
+    is_self: bool = Field(description="La propia cuenta: no se puede eliminar a sí misma")
+    web_access_expires_at: datetime | None
+    granted_at: datetime
+
+
+class WebUsersOut(BaseModel):
+    total: int
+    items: list[WebUserOut]
+
+
+class RemovedOut(BaseModel):
+    user_id: uuid.UUID
+    display_name: str
+    removed: bool = Field(description="False si ya no tenía autorización (idempotente)")
 
 
 class GrantIn(BaseModel):
@@ -130,6 +163,30 @@ async def request_access(
     async with transaction(session):
         await web_access.request_access(session, claims, organization_id=organization_id)
     return ReceivedOut()
+
+
+@router.get(
+    "/web-access-requests/status",
+    response_model=StatusOut,
+    responses=ERRORS,
+    summary="Estado de la propia solicitud (no otorga acceso ni crea nada)",
+)
+async def request_status(claims: IdentityClaims, session: Session) -> StatusOut:
+    organization_id = get_settings().web_access_organization_id
+    if organization_id is None:
+        raise DomainError(
+            "ACCESS_NOT_CONFIGURED",
+            "El acceso web no está configurado en este entorno.",
+            status_code=503,
+        )
+    result = await web_access.status_for_identity(
+        session, claims, organization_id=organization_id
+    )
+    return StatusOut(
+        status=result.status,
+        requested_at=result.requested_at,
+        decided_at=result.decided_at,
+    )
 
 
 @router.get(
@@ -223,3 +280,45 @@ async def revoke_access(
     async with transaction(session):
         user = await web_access.revoke_web_access(session, actor, user_id)
     return _user_out(user)
+
+
+@router.get(
+    "/admin/users",
+    response_model=WebUsersOut,
+    responses=ERRORS,
+    summary="Gestión de usuarios: autorizaciones web vigentes de la organización",
+)
+async def list_users(session: Session, actor: StrongActor) -> WebUsersOut:
+    rows = await web_access.list_web_users(session, actor)
+    items = [
+        WebUserOut(
+            user_id=row.user.id,
+            display_name=row.user.display_name,
+            email=row.user.email,
+            roles=list(row.user.roles),
+            is_superadmin=row.user.is_superadmin,
+            is_self=row.user.id == actor.id,
+            web_access_expires_at=row.grant.expires_at,
+            granted_at=row.grant.granted_at,
+        )
+        for row in rows
+    ]
+    return WebUsersOut(total=len(items), items=items)
+
+
+@router.delete(
+    "/admin/users/{user_id}/web-access",
+    response_model=RemovedOut,
+    responses=ERRORS,
+    summary="Eliminar la autorización web (conserva identidad, Telegram e historial)",
+)
+async def remove_access(
+    user_id: uuid.UUID, session: Session, actor: StrongActor
+) -> RemovedOut:
+    async with transaction(session):
+        result = await web_access.remove_web_access(session, actor, user_id)
+    return RemovedOut(
+        user_id=result.user.id,
+        display_name=result.user.display_name,
+        removed=result.removed,
+    )

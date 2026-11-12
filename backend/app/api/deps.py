@@ -10,7 +10,7 @@ from app.core.config import get_settings
 from app.core.errors import DomainError
 from app.core.supabase_auth import JwtClaims, verify_supabase_jwt, verify_supabase_jwt_claims
 from app.db.session import get_session
-from app.models import AppUser
+from app.models import AppUser, WebAccessGrant
 from app.services.actors import Actor, load_actor
 from app.services.provenance import OrgKind, org_kind
 
@@ -49,7 +49,24 @@ async def _actor_from_jwt(session: AsyncSession, authorization: str | None) -> A
             "La cuenta autenticada no está habilitada en esta farmacia.",
             status_code=403,
         )
-    if user.web_access_expires_at is not None and user.web_access_expires_at <= datetime.now(UTC):
+    # La autorización web es su propia fila (`web_access_grant`), no la identidad. Sin fila no hay
+    # acceso aunque el JWT siga vigente y la persona conserve el rol `admin`: así «eliminar acceso»
+    # es una eliminación real y no un vencimiento simulado.
+    grant = (
+        await session.execute(
+            select(WebAccessGrant.expires_at).where(
+                WebAccessGrant.app_user_id == user.id
+            )
+        )
+    ).first()
+    if grant is None:
+        raise DomainError(
+            "WEB_ACCESS_REQUIRED",
+            "Tu cuenta no tiene una autorización web vigente. Puedes solicitar acceso nuevamente.",
+            status_code=403,
+        )
+    expires_at = grant[0]
+    if expires_at is not None and expires_at <= datetime.now(UTC):
         raise DomainError(
             "WEB_ACCESS_EXPIRED",
             "Tu acceso web venció. Pide a una administradora que lo renueve.",

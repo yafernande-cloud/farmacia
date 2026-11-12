@@ -39,6 +39,7 @@ from app.models import (
     TelegramAccessRequest,
     TelegramAccount,
     TelegramAccountAuxiliary,
+    WebAccessGrant,
 )
 from app.services import access, staff
 from app.services.actors import Actor
@@ -92,6 +93,16 @@ async def real_farm(sessions):
             s.add(u)
             await s.flush()
             ids[key] = u.id
+            if subject is not None:
+                # Estado tras la migración 0031: identidad enlazada conserva su autorización web.
+                s.add(
+                    WebAccessGrant(
+                        app_user_id=u.id,
+                        organization_id=org.id,
+                        granted_at=datetime.now(UTC),
+                        expires_at=None,
+                    )
+                )
         s.add(PurchaseCycle(organization_id=org.id, name="Ciclo real de prueba"))
     return ids
 

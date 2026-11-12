@@ -1,18 +1,22 @@
 """G1 — acceso web: solicitud, campanita, aprobación con rol `admin`, superadministración.
 
-Reglas que estas pruebas fijan (D-130):
+Reglas que estas pruebas fijan (D-130, precisada por D-158):
   * Google/Supabase identifica, pero no concede acceso.
+  * La autorización web es la fila `web_access_grant`, separada de la identidad.
   * La solicitud no otorga nada; solo la aprobación de un `admin` habilita.
   * Aprobar crea la persona con `roles = ['admin']`, `active` y `auth_subject`, sin vencimiento.
+  * «Eliminar acceso» borra la autorización: la persona, su `auth_subject`, Telegram y el historial
+    se conservan, y sin fila el JWT válido ya no abre la puerta.
   * Una persona aprobada entra al Cotizador; Telegram sigue siendo un plano aparte.
-  * La superadministradora es control técnico: ve todas las solicitudes, pero no aprueba ajenas.
+  * La superadministradora es control técnico: tampoco ve ni aprueba solicitudes de otra farmacia.
 """
 
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from alembic import command
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import func, select
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.api import deps
@@ -20,9 +24,17 @@ from app.core.config import get_settings
 from app.core.errors import DomainError
 from app.db.session import get_session
 from app.main import create_app
-from app.models import AppUser, AuditEvent, Organization, OutboxEvent, WebAccessRequest
+from app.models import (
+    AppUser,
+    AuditEvent,
+    Organization,
+    OutboxEvent,
+    WebAccessGrant,
+    WebAccessRequest,
+)
 from app.services import web_access
 from app.services.actors import load_actor
+from tests.conftest import alembic_config
 
 pytestmark = pytest.mark.db
 
@@ -46,6 +58,18 @@ async def farm(sessions):
             s.add(u)
             await s.flush()
             ids[key] = u.id
+            if "auth_subject" in extra:
+                # Estado tras la migración 0031: quien ya tenía identidad enlazada conserva su
+                # autorización web vigente (sin vencimiento).
+                s.add(
+                    WebAccessGrant(
+                        app_user_id=u.id,
+                        organization_id=o.id,
+                        granted_at=datetime.now(UTC),
+                        expires_at=None,
+                    )
+                )
+        await s.flush()
     return ids
 
 
@@ -94,6 +118,10 @@ async def ask(api, **kw):
     return await api.post("/api/v1/web-access-requests", json={}, headers=R(**kw))
 
 
+async def state(api, **kw):
+    return await api.get("/api/v1/web-access-requests/status", headers=R(**kw))
+
+
 async def pending_id(api, who="admin") -> str:
     body = (await api.get("/api/v1/web-access-requests", headers=H(api, who))).json()
     return body["items"][0]["id"]
@@ -139,6 +167,64 @@ async def test_identidad_ya_vinculada_no_crea_solicitud(api, sessions):
     assert r.status_code == 202
     assert r.json() == {"received": True}
     assert await count(sessions, WebAccessRequest) == 0
+
+
+async def test_estado_nuevo_no_crea_solicitud_ni_revela_datos(api, sessions):
+    body = (await state(api)).json()
+    assert body == {"status": "none", "requested_at": None, "decided_at": None}
+    assert await count(sessions, WebAccessRequest) == 0
+
+
+async def test_estado_pendiente_sin_duplicar_la_solicitud(api, sessions):
+    await ask(api)
+    body = (await state(api)).json()
+    assert body["status"] == "pending" and body["requested_at"] is not None
+    assert body["decided_at"] is None
+
+    await ask(api)
+    assert await count(sessions, WebAccessRequest) == 1
+
+
+async def test_estado_rechazado_y_nueva_solicitud_conserva_el_historial(api, sessions):
+    await ask(api)
+    rid = await pending_id(api)
+    rejected = await api.post(
+        f"/api/v1/web-access-requests/{rid}/reject", json={}, headers=H(api)
+    )
+    assert rejected.status_code == 200
+    body = (await state(api)).json()
+    assert body["status"] == "rejected" and body["decided_at"] is not None
+
+    # Volver a solicitar es una acción explícita: crea una nueva pendiente y conserva la anterior.
+    assert (await ask(api)).status_code == 202
+    async with sessions() as s:
+        rows = (await s.execute(select(WebAccessRequest))).scalars().all()
+    assert len(rows) == 2
+    assert sorted(row.status for row in rows) == ["pending", "rejected"]
+    assert (await state(api)).json()["status"] == "pending"
+
+
+async def test_estado_no_revela_la_solicitud_de_otra_identidad(api):
+    await ask(api)
+    other = await state(api, subject="sub-otro", email="otro@example.test", name="Otra")
+    assert other.json() == {"status": "none", "requested_at": None, "decided_at": None}
+
+
+async def test_estado_de_identidad_ya_vinculada_no_ofrece_solicitud(api, sessions):
+    body = (
+        await state(api, subject="sub-admin", email="admin@example.test", name="Admin")
+    ).json()
+    assert body["status"] == "approved"
+    assert await count(sessions, WebAccessRequest) == 0
+
+
+async def test_estado_sin_organizacion_configurada(api, monkeypatch):
+    monkeypatch.delenv("WEB_ACCESS_ORGANIZATION_ID", raising=False)
+    get_settings.cache_clear()
+    r = await state(api)
+    assert r.status_code == 503
+    assert r.json()["error"]["code"] == "ACCESS_NOT_CONFIGURED"
+    get_settings.cache_clear()
 
 
 async def test_campanita_solo_para_admin_y_acotada_a_su_organizacion(api, sessions):
@@ -258,7 +344,7 @@ async def test_otra_organizacion_no_puede_aprobar(api, sessions):
     assert r.status_code == 404
 
 
-async def test_superadmin_ve_todas_las_organizaciones_pero_no_aprueba_ajenas(api, sessions):
+async def test_superadmin_no_ve_ni_aprueba_solicitudes_de_otra_organizacion(api, sessions):
     async with sessions() as s, s.begin():
         other_request = WebAccessRequest(
             organization_id=api.farm["other_org"],
@@ -273,16 +359,23 @@ async def test_superadmin_ve_todas_las_organizaciones_pero_no_aprueba_ajenas(api
         await s.flush()
         other_id = other_request.id
 
+    # La campanita está siempre acotada a la organización de quien administra, también para la
+    # superadministración técnica (D-158): no se mezclan universos separados.
     body = (
         await api.get("/api/v1/web-access-requests", headers=H(api, "superadmin"))
     ).json()
-    assert body["pending_count"] == 1
-    assert body["items"][0]["organization"] == "Otra acceso"
+    assert body == {"pending_count": 0, "items": []}
+
+    # Una solicitud propia de su organización sí la ve.
+    await ask(api)
+    own = (await api.get("/api/v1/web-access-requests", headers=H(api, "superadmin"))).json()
+    assert own["pending_count"] == 1
+    assert own["items"][0]["organization"] is None
 
     r = await api.post(
         f"/api/v1/web-access-requests/{other_id}/approve", headers=H(api, "superadmin")
     )
-    assert r.status_code == 404  # no aprueba en nombre de una farmacia
+    assert r.status_code == 404  # no aprueba en nombre de una farmacia ajena
 
     own = await api.post(f"/api/v1/web-access-requests/{other_id}/approve", headers=H(api))
     assert own.status_code == 404  # tampoco la administradora de la otra organización
@@ -332,8 +425,13 @@ async def test_revocar_y_ajustar_es_solo_superadministracion(api, sessions):
 
 async def test_acceso_vencido_se_rechaza_al_autenticar(api, sessions, monkeypatch):
     async with sessions() as s, s.begin():
-        user = (await s.execute(select(AppUser).where(AppUser.id == api.farm["admin"]))).scalar_one()
-        user.web_access_expires_at = datetime.now(UTC) - timedelta(minutes=1)
+        grant = (
+            await s.execute(
+                select(WebAccessGrant).where(WebAccessGrant.app_user_id == api.farm["admin"])
+            )
+        ).scalar_one()
+        grant.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+        grant.granted_at = datetime.now(UTC) - timedelta(days=1)
 
     async def fake_subject(token, settings):
         return "sub-admin"
@@ -343,6 +441,360 @@ async def test_acceso_vencido_se_rechaza_al_autenticar(api, sessions, monkeypatc
         with pytest.raises(DomainError) as e:
             await deps._actor_from_jwt(s, "Bearer token")
     assert (e.value.code, e.value.status_code) == ("WEB_ACCESS_EXPIRED", 403)
+
+
+async def test_jwt_valido_sin_autorizacion_web_es_denegado(api, sessions, monkeypatch):
+    """Eliminar la autorización bloquea la siguiente petición aunque el JWT siga vigente."""
+    async with sessions() as s, s.begin():
+        grant = (
+            await s.execute(
+                select(WebAccessGrant).where(WebAccessGrant.app_user_id == api.farm["admin"])
+            )
+        ).scalar_one()
+        await s.delete(grant)
+
+    async def fake_subject(token, settings):
+        return "sub-admin"
+
+    monkeypatch.setattr(deps, "verify_supabase_jwt", fake_subject)
+    async with sessions() as s:
+        with pytest.raises(DomainError) as e:
+            await deps._actor_from_jwt(s, "Bearer token")
+    assert (e.value.code, e.value.status_code) == ("WEB_ACCESS_REQUIRED", 403)
+
+
+async def test_admin_con_autorizacion_entra_con_jwt(api, sessions, monkeypatch):
+    """Compatibilidad con el login Google existente: identidad + autorización vigente = acceso."""
+
+    async def fake_subject(token, settings):
+        return "sub-admin"
+
+    monkeypatch.setattr(deps, "verify_supabase_jwt", fake_subject)
+    async with sessions() as s:
+        actor = await deps._actor_from_jwt(s, "Bearer token")
+    assert actor.id == api.farm["admin"]
+    assert actor.organization_id == api.farm["org"]
+    assert actor.roles == ["admin"]
+
+
+async def _linked_person(api, sessions, *, subject="sub-linked", name="Persona vinculada",
+                         roles=("admin",), expires_at=None):  # fmt: skip
+    async with sessions() as s, s.begin():
+        person = AppUser(
+            organization_id=api.farm["org"],
+            display_name=name,
+            roles=list(roles),
+            auth_subject=subject,
+            active=True,
+        )
+        s.add(person)
+        await s.flush()
+        s.add(
+            WebAccessGrant(
+                app_user_id=person.id,
+                organization_id=api.farm["org"],
+                granted_at=datetime.now(UTC),
+                expires_at=expires_at,
+            )
+        )
+        await s.flush()
+        person_id = person.id
+    return person_id
+
+
+async def test_eliminar_acceso_borra_la_autorizacion_y_conserva_la_identidad(api, sessions):
+    uid = await _linked_person(api, sessions)
+
+    r = await api.delete(f"/api/v1/admin/users/{uid}/web-access", headers=H(api))
+    assert r.status_code == 200, r.text
+    assert r.json() == {
+        "user_id": str(uid),
+        "display_name": "Persona vinculada",
+        "removed": True,
+    }
+
+    async with sessions() as s:
+        # La autorización se eliminó de verdad: no queda fila, ni vencida.
+        assert (
+            await s.execute(select(WebAccessGrant).where(WebAccessGrant.app_user_id == uid))
+        ).first() is None
+        person = (await s.execute(select(AppUser).where(AppUser.id == uid))).scalar_one()
+        # La identidad y sus permisos se conservan: reconocerá su cuenta si vuelve con Google.
+        assert person.auth_subject == "sub-linked"
+        assert person.active and person.roles == ["admin"]
+        # Respaldo de rollback: columnas antiguas con un vencimiento pasado, nunca vigente.
+        assert person.web_access_expires_at is not None
+        assert person.web_access_expires_at < datetime.now(UTC)
+        assert (
+            await s.execute(
+                select(func.count())
+                .select_from(AuditEvent)
+                .where(AuditEvent.action == "web_access.removed")
+            )
+        ).scalar_one() == 1
+
+    # Idempotente: sin autorización no se audita un borrado inexistente.
+    again = await api.delete(f"/api/v1/admin/users/{uid}/web-access", headers=H(api))
+    assert again.status_code == 200
+    assert again.json()["removed"] is False
+
+
+async def test_estado_removed_y_nueva_solicitud_tras_eliminar(api, sessions):
+    uid = await _linked_person(api, sessions)
+    assert (
+        await api.delete(f"/api/v1/admin/users/{uid}/web-access", headers=H(api))
+    ).status_code == 200
+
+    body = (
+        await state(
+            api, subject="sub-linked", email="linked@example.test", name="Persona vinculada"
+        )
+    ).json()
+    assert body["status"] == "removed"
+
+    # Volver a solicitar es una acción explícita, no una restauración automática.
+    assert (
+        await ask(api, subject="sub-linked", email="linked@example.test", name="Persona vinculada")
+    ).status_code == 202
+    assert (
+        await state(
+            api, subject="sub-linked", email="linked@example.test", name="Persona vinculada"
+        )
+    ).json()["status"] == "pending"
+
+
+async def test_reaprobacion_sobre_la_misma_identidad_no_duplica_la_persona(api, sessions):
+    uid = await _linked_person(api, sessions)
+    await api.delete(f"/api/v1/admin/users/{uid}/web-access", headers=H(api))
+    await ask(api, subject="sub-linked", email="linked@example.test", name="Persona vinculada")
+    rid = await pending_id(api)
+
+    approved = await api.post(f"/api/v1/web-access-requests/{rid}/approve", headers=H(api))
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["user_id"] == str(uid)  # misma persona, sin duplicar
+    async with sessions() as s:
+        people = (
+            await s.execute(select(AppUser).where(AppUser.auth_subject == "sub-linked"))
+        ).scalars().all()
+        assert len(people) == 1
+        assert people[0].roles == ["admin"]  # aprobar la web no cambia roles
+        grant = (
+            await s.execute(select(WebAccessGrant).where(WebAccessGrant.app_user_id == uid))
+        ).scalar_one()
+        assert grant.expires_at is None
+        request = (
+            await s.execute(select(WebAccessRequest).where(WebAccessRequest.id == rid))
+        ).scalar_one()
+        assert request.status == "approved" and str(grant.request_id) == rid
+
+
+async def test_reaprobar_identidad_existente_sin_admin_no_cambia_sus_roles(api, sessions):
+    """Los roles se comparten con Telegram: aprobar no debe dar `admin` como efecto colateral."""
+    async with sessions() as s, s.begin():
+        person = AppUser(
+            organization_id=api.farm["org"],
+            display_name="Auxiliar vinculada",
+            roles=["auxiliary"],
+            auth_subject="sub-aux-linked",
+            active=True,
+        )
+        s.add(person)
+        await s.flush()
+        uid = person.id
+    await ask(api, subject="sub-aux-linked", email="aux@example.test", name="Auxiliar vinculada")
+    rid = await pending_id(api)
+
+    r = await api.post(f"/api/v1/web-access-requests/{rid}/approve", headers=H(api))
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "WEB_ADMIN_ROLE_REQUIRED"
+    async with sessions() as s:
+        person = (await s.execute(select(AppUser).where(AppUser.id == uid))).scalar_one()
+        assert person.roles == ["auxiliary"]  # sin cambios
+        assert (
+            await s.execute(select(WebAccessGrant).where(WebAccessGrant.app_user_id == uid))
+        ).first() is None
+        request = (
+            await s.execute(select(WebAccessRequest).where(WebAccessRequest.id == rid))
+        ).scalar_one()
+        assert request.status == "pending"
+
+
+async def test_protecciones_de_eliminacion(api, sessions):
+    # Nadie elimina a la superadministradora.
+    r = await api.delete(
+        f"/api/v1/admin/users/{api.farm['superadmin']}/web-access", headers=H(api)
+    )
+    assert (r.status_code, r.json()["error"]["code"]) == (403, "SUPERADMIN_PROTECTED")
+
+    # Nadie elimina su propio acceso.
+    r = await api.delete(f"/api/v1/admin/users/{api.farm['admin']}/web-access", headers=H(api))
+    assert (r.status_code, r.json()["error"]["code"]) == (409, "CANNOT_REMOVE_SELF")
+
+    # No se cruza de organización (ni siquiera se revela que la persona existe).
+    r = await api.delete(
+        f"/api/v1/admin/users/{api.farm['outsider']}/web-access", headers=H(api)
+    )
+    assert r.status_code == 404
+
+
+async def test_no_puede_eliminar_a_la_ultima_admin_web(api, sessions):
+    async with sessions() as s, s.begin():
+        other_admin = AppUser(
+            organization_id=api.farm["org"], display_name="Admin Dos", roles=["admin"]
+        )
+        s.add(other_admin)
+        await s.flush()
+        actor_id = other_admin.id  # administradora sin autorización web propia
+
+    r = await api.delete(
+        f"/api/v1/admin/users/{api.farm['admin']}/web-access",
+        headers={"X-Demo-User-Id": str(actor_id)},
+    )
+    assert (r.status_code, r.json()["error"]["code"]) == (409, "LAST_WEB_ADMIN")
+    async with sessions() as s:
+        assert (
+            await s.execute(
+                select(WebAccessGrant).where(WebAccessGrant.app_user_id == api.farm["admin"])
+            )
+        ).first() is not None
+
+
+async def test_gestion_de_usuarios_lista_solo_autorizaciones_vigentes(api, sessions):
+    async with sessions() as s, s.begin():
+        # Autorización vencida: no se lista aunque exista la fila.
+        expired = AppUser(
+            organization_id=api.farm["org"], display_name="Vencida", roles=["admin"]
+        )
+        s.add(expired)
+        await s.flush()
+        s.add(
+            WebAccessGrant(
+                app_user_id=expired.id,
+                organization_id=api.farm["org"],
+                granted_at=datetime.now(UTC) - timedelta(days=10),
+                expires_at=datetime.now(UTC) - timedelta(days=1),
+            )
+        )
+        await s.flush()
+
+    body = (await api.get("/api/v1/admin/users", headers=H(api))).json()
+    assert body["total"] == 1
+    row = body["items"][0]
+    assert row["display_name"] == "Admin"
+    assert row["user_id"] == str(api.farm["admin"])
+    assert row["roles"] == ["admin"]
+    assert row["is_self"] is True and row["is_superadmin"] is False
+    assert row["web_access_expires_at"] is None and row["granted_at"] is not None
+
+    # Los auxiliares de Telegram sin autorización web no se mezclan en este listado.
+    assert (await api.get("/api/v1/admin/users", headers=H(api, "aux"))).status_code == 403
+    # Otra organización ve solo lo suyo.
+    other = (await api.get("/api/v1/admin/users", headers=H(api, "outsider"))).json()
+    assert [item["display_name"] for item in other["items"]] == ["Externo"]
+
+
+def test_migracion_0031_rellena_autorizaciones_vigentes(db_url):
+    """El relleno conserva el acceso de quienes ya lo tenían y no inventa autorizaciones."""
+    cfg = alembic_config(db_url)
+    command.downgrade(cfg, "0030")
+    eng = create_engine(db_url)
+    try:
+        with eng.begin() as c:
+            org_id = c.execute(text("SELECT gen_random_uuid()")).scalar_one()
+            c.execute(
+                text("INSERT INTO organization (id, name, kind) VALUES (:o, 'Migración 0031', 'simulation')"),
+                {"o": org_id},
+            )
+            rows = {
+                "vigente": (True, "sub-vigente", None),
+                "futuro": (True, "sub-futuro", "now() + interval '30 days'"),
+                "vencido": (True, "sub-vencido", "now() - interval '1 day'"),
+                "inactivo": (False, "sub-inactivo", None),
+                "sin_identidad": (True, None, None),
+            }
+            for name, (active, subject, expiry) in rows.items():
+                expiry_sql = expiry or "NULL"
+                c.execute(
+                    text(
+                        "INSERT INTO app_user (organization_id, display_name, roles, active,"
+                        " auth_subject, web_access_expires_at) VALUES (:o, :n, ARRAY['admin'],"
+                        f" :a, :s, {expiry_sql})"
+                    ),
+                    {"o": org_id, "n": name, "a": active, "s": subject},
+                )
+
+        command.upgrade(cfg, "head")
+
+        with eng.connect() as c:
+            granted = c.execute(
+                text(
+                    "SELECT u.display_name FROM web_access_grant g"
+                    " JOIN app_user u ON u.id = g.app_user_id"
+                    " WHERE u.organization_id = :o ORDER BY u.display_name"
+                ),
+                {"o": org_id},
+            ).scalars().all()
+            expiry = c.execute(
+                text(
+                    "SELECT g.expires_at FROM web_access_grant g JOIN app_user u"
+                    " ON u.id = g.app_user_id WHERE u.display_name = 'futuro'"
+                )
+            ).scalar_one()
+            legacy = c.execute(
+                text(
+                    "SELECT count(*) FROM web_access_grant g JOIN app_user u"
+                    " ON u.id = g.app_user_id WHERE u.display_name = 'vigente'"
+                )
+            ).scalar_one()
+        # Solo las personas activas, con identidad y acceso vigente reciben autorización.
+        assert granted == ["futuro", "vigente"]
+        assert legacy == 1
+        assert expiry is not None  # el vencimiento futuro se conserva
+    finally:
+        eng.dispose()
+
+
+async def test_superadmin_otorga_en_otra_organizacion_sin_romper_la_trazabilidad(api, sessions):
+    async with sessions() as s, s.begin():
+        persona = AppUser(
+            organization_id=api.farm["other_org"],
+            display_name="Otra persona",
+            roles=["admin"],
+        )
+        s.add(persona)
+        await s.flush()
+        uid = persona.id
+
+    r = await api.post(
+        f"/api/v1/admin/users/{uid}/web-access", json={}, headers=H(api, "superadmin")
+    )
+    assert r.status_code == 200, r.text
+    async with sessions() as s:
+        grant = (
+            await s.execute(select(WebAccessGrant).where(WebAccessGrant.app_user_id == uid))
+        ).scalar_one()
+        # `granted_by` referencia a una persona de la misma organización; si no la hay, queda nula.
+        assert grant.granted_by is None
+        persona = (await s.execute(select(AppUser).where(AppUser.id == uid))).scalar_one()
+        assert persona.web_access_granted_by is None
+        audit = (
+            await s.execute(
+                select(AuditEvent)
+                .where(AuditEvent.action == "web_access.granted")
+                .order_by(AuditEvent.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one()
+        assert audit.actor_id is None  # trazabilidad sin atribuir a otra organización
+
+    revocado = await api.post(
+        f"/api/v1/admin/users/{uid}/web-access/revoke", headers=H(api, "superadmin")
+    )
+    assert revocado.status_code == 200, revocado.text
+    async with sessions() as s:
+        assert (
+            await s.execute(select(WebAccessGrant).where(WebAccessGrant.app_user_id == uid))
+        ).first() is None
 
 
 async def test_set_superadmin_es_unico_y_auditado(api, sessions):

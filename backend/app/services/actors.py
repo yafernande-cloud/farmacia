@@ -5,7 +5,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AppUser
+from app.models import AppUser, WebAccessGrant
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,13 @@ async def load_actor(session: AsyncSession, user_id: uuid.UUID) -> Actor | None:
     ).scalar_one_or_none()
     if u is None:
         return None
+    # La vigencia informativa sale de la autorización, no de la columna antigua de `app_user`.
+    # `None` también significa «sin fila»; quien necesite distinguirlo consulta la tabla.
+    grant = (
+        await session.execute(
+            select(WebAccessGrant.expires_at).where(WebAccessGrant.app_user_id == u.id)
+        )
+    ).first()
     return Actor(
         u.id,
         u.organization_id,
@@ -36,5 +43,5 @@ async def load_actor(session: AsyncSession, user_id: uuid.UUID) -> Actor | None:
         list(u.roles),
         u.available,
         u.is_superadmin,
-        u.web_access_expires_at,
+        grant[0] if grant is not None else None,
     )

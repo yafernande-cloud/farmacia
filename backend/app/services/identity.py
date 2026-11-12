@@ -12,13 +12,14 @@
 """
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import DomainError, not_found
 from app.core.permissions import Permission, require
-from app.models import AppUser
+from app.models import AppUser, WebAccessGrant
 from app.services.actors import Actor
 from app.services.events import advisory_lock, emit
 
@@ -91,6 +92,10 @@ async def link_auth_subject(
 
     person.auth_subject = clean
     await session.flush()
+    # Enlazar la identidad es el acto explícito de habilitar el acceso web de esa persona
+    # (comportamiento previo: `auth_subject` + sin vencimiento = acceso). Ahora se refleja en la
+    # autorización, que es la única fuente de verdad del acceso.
+    await _sync_web_grant(session, actor, person, grant=True)
     emit(session, org_id=actor.organization_id, actor_id=actor.id,
          action="auth_subject.linked", entity_type="app_user", entity_id=person.id,
          event_type="identity.linked", aggregate_version=None,
@@ -120,6 +125,10 @@ async def unlink_auth_subject(
     previous = person.auth_subject
     person.auth_subject = None
     await session.flush()
+    # Desvincular quita el acceso web (hasta reenlazar), igual que antes: sin identidad no hay
+    # forma de entrar. La autorización se elimina para no dejar una fila huérfana que pudiera
+    # reactivar el acceso al volver a enlazar sin una decisión explícita.
+    await _sync_web_grant(session, actor, person, grant=False)
     emit(session, org_id=actor.organization_id, actor_id=actor.id,
          action="auth_subject.unlinked", entity_type="app_user", entity_id=person.id,
          event_type="identity.unlinked", aggregate_version=None,
@@ -127,6 +136,64 @@ async def unlink_auth_subject(
          before={"auth_subject": previous}, after={"auth_subject": None})  # fmt: skip
     return {"user_id": person.id, "display_name": person.display_name, "auth_subject": None,
             "changed": True}  # fmt: skip
+
+
+async def _sync_web_grant(
+    session: AsyncSession, actor: Actor, person: AppUser, *, grant: bool
+) -> None:
+    """Crea o elimina la autorización web al enlazar o desvincular la identidad.
+
+    Mantiene las columnas antiguas como espejo de transición (rollback); el acceso real se decide
+    solo por `web_access_grant`. Se audita en la misma transacción del llamador.
+    """
+    now = datetime.now(UTC)
+    existing = (
+        await session.execute(
+            select(WebAccessGrant)
+            .where(WebAccessGrant.app_user_id == person.id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if grant:
+        if existing is None:
+            session.add(
+                WebAccessGrant(
+                    app_user_id=person.id,
+                    organization_id=person.organization_id,
+                    granted_by=actor.id,
+                    granted_at=now,
+                    expires_at=None,
+                )
+            )
+        else:
+            existing.granted_by = actor.id
+            existing.granted_at = now
+            existing.expires_at = None
+        person.web_access_expires_at = None
+        person.web_access_granted_by = actor.id
+        person.web_access_granted_at = now
+        action, event_type = "web_access.granted", "web_access.granted"
+    else:
+        if existing is not None:
+            await session.delete(existing)
+        # Vencimiento pasado como respaldo: si se revierte el código, sigue sin acceso.
+        person.web_access_expires_at = now
+        person.web_access_granted_by = None
+        person.web_access_granted_at = None
+        action, event_type = "web_access.revoked", "web_access.revoked"
+    person.updated_at = now
+    await session.flush()
+    emit(
+        session,
+        org_id=person.organization_id,
+        actor_id=actor.id,
+        action=action,
+        entity_type="app_user",
+        entity_id=person.id,
+        event_type=event_type,
+        aggregate_version=None,
+        payload={"user_id": str(person.id)},
+    )
 
 
 async def list_auth_subjects(session: AsyncSession, actor: Actor) -> list[dict]:
