@@ -84,11 +84,15 @@ async def test_nombre_largo_se_expone_en_dos_niveles_sin_perder_informacion(api)
     assert parts["details"] == ["37.5 mg", "325 mg", "comprimido", "x 30"]
     assert " ".join([parts["name"], *parts["details"]]) == item["display_name"]
     assert item["search_query"] == "Tramadol clorhidrato paracetamol 37.5 mg 325 mg"
+    assert item["search_query_full"] == (
+        "Tramadol clorhidrato paracetamol 37.5 mg 325 mg comprimido 30"
+    )
     assert item["photo_url"] is None  # aviso de texto: no hay fotografía que mostrar
 
     row = next(i for i in (await lst(api))["items"] if i["id"] == item["id"])
     assert row["display_parts"] == parts and row["display_name"] == item["display_name"]
     assert row["search_query"] == item["search_query"]
+    assert row["search_query_full"] == item["search_query_full"]
 
 
 async def test_busqueda_usa_el_nombre_comercial_corto_no_la_descripcion_completa(api):
@@ -96,15 +100,18 @@ async def test_busqueda_usa_el_nombre_comercial_corto_no_la_descripcion_completa
     item = (await report(api, "ana", "falta paracetamol 500 mg marca Genfar")).json()["item"]
     assert item["display_name"] == "Genfar 500 mg"
     assert item["search_query"] == "Genfar"
+    assert item["search_query_full"] == "Genfar 500 mg"
 
     row = next(i for i in (await lst(api))["items"] if i["id"] == item["id"])
     assert row["search_query"] == "Genfar"
+    assert row["search_query_full"] == "Genfar 500 mg"
 
 
 async def test_busqueda_sin_nombre_comercial_usa_principio_y_dosis_sin_inventar(api):
     item = (await report(api, "ana", "falta ibuprofeno 400 mg")).json()["item"]
     assert item["display_name"] == "Ibuprofeno 400 mg"
     assert item["search_query"] == "Ibuprofeno 400 mg"
+    assert item["search_query_full"] == "Ibuprofeno 400 mg"
 
 
 async def test_bandeja_expone_la_sucursal_real_y_la_conserva_en_el_historico(api, sessions):

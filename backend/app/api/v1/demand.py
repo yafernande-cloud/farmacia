@@ -101,6 +101,7 @@ def item_out(
         id=i.id, display_name=" ".join([name, *details]),
         display_parts=s.DisplayPartsOut(name=name, details=details),
         ingredient=i.ingredient, search_query=parsed.search_query, attributes=attrs,
+        search_query_full=parsed.search_query_full,
         identity_complete=attrs.identity_complete, pending_validation=attrs.pending_validation,
         target_quantity=i.target_quantity, quantity_unit=i.quantity_unit,
         quantity_status="unknown" if i.target_quantity is None else "defined",

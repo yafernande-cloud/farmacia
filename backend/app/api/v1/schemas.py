@@ -208,6 +208,10 @@ class DemandItemOut(BaseModel):
         description="Consulta corta para las cadenas: nombre comercial si existe; si no, la "
         "información disponible (principio activo, dosis y contenido). No altera la identidad."
     )
+    search_query_full: str = Field(
+        description="Consulta ampliada para el buscador: nombre más concentración, forma, "
+        "liberación y contenido registrados. No inventa atributos ausentes."
+    )
     attributes: AttributesOut
     identity_complete: bool
     pending_validation: list[PendingOut]

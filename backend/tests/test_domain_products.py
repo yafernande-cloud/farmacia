@@ -392,6 +392,47 @@ def test_sin_nombre_comercial_la_busqueda_usa_lo_disponible_sin_inventar():
     assert presentacion.search_query == "Crema de manos 50 ml"
 
 
+def test_consulta_ampliada_suma_lo_registrado_sin_inventar():
+    """La consulta ampliada usa solo atributos registrados; la corta no cambia."""
+    prod = p("ibuprofeno 400 mg comprimidos")
+    assert prod.search_query == "Ibuprofeno 400 mg"
+    assert prod.search_query_full == "Ibuprofeno 400 mg comprimido"
+
+    escueto = p("falta algo")
+    assert escueto.search_query_full == escueto.search_query == "Algo"
+
+
+def test_consulta_ampliada_usa_nombre_comercial_y_no_copia_anotaciones():
+    prod = replace(
+        p("paracetamol mefenamina comprimido x 10"),
+        product_name=Attr("Predual", Basis.INFERRED, "image"),
+        brand=Attr("Predual", Basis.INFERRED, "image"),
+        variant=Attr("ANALGÉSICO FEMENINO", Basis.INFERRED, "image"),
+    )
+    assert prod.search_query == "Predual"
+    assert prod.search_query_full == "Predual comprimido 10"
+    assert "ANALGÉSICO" not in prod.search_query_full
+
+
+def test_consulta_ampliada_conserva_unidades_y_concentraciones():
+    assert p("crema de manos 50 ml").search_query_full == "Crema de manos 50 ml"
+    assert p("paracetamol 500 mg marca Genfar").search_query_full == "Genfar 500 mg"
+
+
+def test_consulta_ampliada_conserva_cada_concentracion_con_su_unidad():
+    """Dos potencias con «mg» dicen «mg» dos veces: deduplicar palabras sueltas las rompería."""
+    prod = p("tramadol clorhidrato paracetamol 37,5 mg 325 mg x 30 comprimidos")
+    assert prod.search_query_full == (
+        "Tramadol clorhidrato paracetamol 37.5 mg 325 mg comprimido 30"
+    )
+
+
+def test_consulta_ampliada_se_serializa_y_vuelve():
+    prod = p("ibuprofeno 400 mg comprimidos")
+    vuelto = ParsedProduct.from_dict(prod.to_dict())
+    assert vuelto.search_query_full == prod.search_query_full
+
+
 def test_registro_historico_con_marca_se_muestra_y_busca_corregido_sin_migrar():
     guardado = p("paracetamol mefenamina comprimido x 10").to_dict()
     guardado["brand"] = {"value": "Predual", "basis": "inferred", "origin": "image"}

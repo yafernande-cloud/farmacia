@@ -376,6 +376,40 @@ class ParsedProduct:
             parts.append(self.content.measure.label)
         return " ".join(p for p in parts if p).strip()
 
+    @property
+    def search_query_full(self) -> str:
+        """Consulta ampliada con lo que el reporte sí registró.
+
+        Suma al nombre la concentración, la forma farmacéutica, la liberación y el contenido
+        (p. ej. «30»), y descarta tramos repetidos completos: nunca deja «325» sin su «mg»
+        recortando palabras sueltas. Nunca completa atributos que nadie informó ni usa
+        anotaciones de revisión: si falta un dato, simplemente no aparece. `search_query` sigue
+        siendo la consulta corta de respaldo.
+        """
+        name = (
+            self.commercial_name.value
+            if self.commercial_name is not None
+            else _display_heading(self.ingredient)
+        )
+        parts: list[str] = [name, *(s.measure.label for s in self.strengths)]
+        if self.form is not None:
+            parts.append(self.form.value)
+        if self.release is not None:
+            parts.append(self.release.value)
+        if self.content is not None:
+            measure = self.content.measure
+            parts.append(fmt(measure.value) + ("" if measure.unit == "un" else f" {measure.unit}"))
+        vistos: set[str] = set()
+        elegidos: list[str] = []
+        for part in parts:
+            tramo = " ".join(part.split())
+            clave = tramo.casefold()
+            if not clave or clave in vistos:
+                continue
+            vistos.add(clave)
+            elegidos.append(tramo)
+        return " ".join(elegidos)
+
     def display_parts(self) -> tuple[str, list[str]]:
         """Nombre para mostrar, separado en encabezado y detalles (dosis, forma, contenido).
 

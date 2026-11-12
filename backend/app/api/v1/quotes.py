@@ -233,6 +233,19 @@ class QuoteOut(BaseModel):
     advice: None = None
 
 
+class QuantityTotalOut(BaseModel):
+    """Cantidad solicitada sumada dentro de una sola unidad comercial."""
+
+    unit: str | None = Field(
+        default=None,
+        description="Unidad comercial de las líneas sumadas; null = no informada. "
+        "Unidades distintas nunca se suman entre sí.",
+    )
+    quantity: str = Field(
+        description="Suma de las líneas con esa unidad; nunca inventa una unidad."
+    )
+
+
 class QuoteListItemOut(BaseModel):
     quote_id: uuid.UUID
     title: str | None
@@ -250,7 +263,17 @@ class QuoteListItemOut(BaseModel):
     data_origin: str
     supplier_ids: list[uuid.UUID] = []
     supplier_count: int = 0
-    line_count: int = 0
+    line_count: int = Field(
+        default=0, description="Referencias cotizadas (líneas activas), no unidades."
+    )
+    distinct_product_count: int = Field(
+        default=0,
+        description="Artículos distintos entre las líneas activas: el mismo producto en dos "
+        "proveedores cuenta una sola vez.",
+    )
+    quantity_totals: list[QuantityTotalOut] = Field(
+        default=[], description="Cantidades solicitadas, agrupadas por unidad comercial."
+    )
 
 
 class QuoteListOut(BaseModel):
@@ -271,6 +294,13 @@ class QuoteSummaryOut(BaseModel):
     derived_state: str
     suppliers: list[dict[str, Any]]
     estimated_total: dict[str, Any]
+    distinct_product_count: int = Field(
+        default=0,
+        description="Artículos distintos entre las líneas activas de carritos activos.",
+    )
+    quantity_totals: list[QuantityTotalOut] = Field(
+        default=[], description="Cantidades solicitadas, agrupadas por unidad comercial."
+    )
 
 
 class QuoteFinalizeOut(BaseModel):

@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import DomainError, not_found
 from app.core.permissions import require_admin
 from app.domain.matching import classify, identity_from_item, identity_from_query
-from app.domain.quantities import QuantityOp, QuantityUnit
+from app.domain.quantities import QuantityOp, QuantityUnit, fmt_qty
 from app.models import (
     AuditEvent,
     CommercialObservation,
@@ -556,9 +556,37 @@ async def list_quotes(
     items = []
     for quote in rows:
         item = _quote_summary(quote)
-        item.update(stats.get(quote.id, {"supplier_ids": [], "supplier_count": 0, "line_count": 0}))
+        item.update(
+            stats.get(
+                quote.id,
+                {
+                    "supplier_ids": [],
+                    "supplier_count": 0,
+                    "line_count": 0,
+                    "distinct_product_count": 0,
+                    "quantity_totals": [],
+                },
+            )
+        )
         items.append(item)
     return items, nxt
+
+
+def _quantity_totals(lines: list[QuoteLine]) -> list[dict]:
+    """Total solicitado por unidad comercial, sin inventar ni mezclar unidades.
+
+    Agrupa por `quantity_unit`; la unidad desconocida (`None`) queda como su propio grupo y
+    nunca se suma con las conocidas. Con unidades heterogéneas hay un grupo por unidad: sumar
+    todas daría una cifra falsa.
+    """
+    totals: dict[str | None, Decimal] = {}
+    for line in lines:
+        unit = line.quantity_unit
+        totals[unit] = totals.get(unit, Decimal(0)) + line.quantity
+    ordered: list[str | None] = sorted(unit for unit in totals if unit is not None)
+    if None in totals:
+        ordered.append(None)
+    return [{"unit": unit, "quantity": fmt_qty(totals[unit])} for unit in ordered]
 
 
 async def _list_stats(
@@ -590,15 +618,55 @@ async def _list_stats(
             .group_by(QuoteCart.quote_id)
         )
     ).all()
+    # Productos distintos: el mismo artículo asociado a varios proveedores cuenta una sola vez.
+    product_rows = (
+        await session.execute(
+            select(QuoteCart.quote_id, func.count(func.distinct(QuoteLine.trade_item_id)))
+            .join(QuoteLine, QuoteLine.quote_cart_id == QuoteCart.id)
+            .where(
+                QuoteCart.organization_id == org,
+                QuoteCart.quote_id.in_(quote_ids),
+                QuoteCart.status == "active",
+                QuoteLine.status == "active",
+            )
+            .group_by(QuoteCart.quote_id)
+        )
+    ).all()
+    # Cantidades por unidad comercial: nunca se suman unidades distintas ni NULL con conocidas.
+    quantity_rows = (
+        await session.execute(
+            select(
+                QuoteCart.quote_id,
+                QuoteLine.quantity_unit,
+                func.sum(QuoteLine.quantity),
+            )
+            .join(QuoteLine, QuoteLine.quote_cart_id == QuoteCart.id)
+            .where(
+                QuoteCart.organization_id == org,
+                QuoteCart.quote_id.in_(quote_ids),
+                QuoteCart.status == "active",
+                QuoteLine.status == "active",
+            )
+            .group_by(QuoteCart.quote_id, QuoteLine.quantity_unit)
+        )
+    ).all()
     suppliers: dict[uuid.UUID, list[uuid.UUID]] = {}
     for quote_id, supplier_id in supplier_rows:
         suppliers.setdefault(quote_id, []).append(supplier_id)
     lines = {quote_id: count for quote_id, count in line_rows}
+    products = {quote_id: count for quote_id, count in product_rows}
+    quantities: dict[uuid.UUID, list[dict]] = {}
+    for quote_id, unit, total in quantity_rows:
+        quantities.setdefault(quote_id, []).append({"unit": unit, "quantity": fmt_qty(total)})
+    for totals in quantities.values():
+        totals.sort(key=lambda row: (row["unit"] is None, row["unit"] or ""))
     return {
         quote_id: {
             "supplier_ids": suppliers.get(quote_id, []),
             "supplier_count": len(suppliers.get(quote_id, [])),
             "line_count": lines.get(quote_id, 0),
+            "distinct_product_count": products.get(quote_id, 0),
+            "quantity_totals": quantities.get(quote_id, []),
         }
         for quote_id in quote_ids
     }
@@ -652,7 +720,7 @@ async def update_quote(
                 # Reabrir borraría el cierre que sostiene el informe ya generado.
                 raise DomainError(
                     "QUOTE_FINALIZED",
-                    "La cotización ya generó su informe y no se reabre.",
+                    "La cotización ya generó su orden de compra y no se reabre.",
                     status_code=409,
                     details={"report_label": quote.report_label},
                 )
@@ -2492,10 +2560,16 @@ async def quote_summary(session: AsyncSession, actor: Actor, quote_id: uuid.UUID
                 "causes": sorted(set(causes)),
             }
         )
+    active_cart_ids = {cart.id for cart in carts if cart.status == "active"}
+    active_lines = [
+        line for line in lines if line.status == "active" and line.quote_cart_id in active_cart_ids
+    ]
     result = _quote_summary(quote)
     result.update(
         {
             "derived_state": _derived_quote_state(quote),
+            "distinct_product_count": len({line.trade_item_id for line in active_lines}),
+            "quantity_totals": _quantity_totals(active_lines),
             "suppliers": rows,
             "estimated_total": _estimated_total(
                 entries, empty_supplier_ids=empty_supplier_ids, now=now
@@ -2561,7 +2635,7 @@ async def finalize_quote(
             }
         raise DomainError(
             "QUOTE_ALREADY_FINALIZED",
-            "La cotización ya generó su informe.",
+            "La cotización ya generó su orden de compra.",
             status_code=409,
             details={"report_label": quote.report_label},
         )
@@ -2929,7 +3003,7 @@ async def quote_report(session: AsyncSession, actor: Actor, quote_id: uuid.UUID)
     if quote.report is None:
         raise DomainError(
             "QUOTE_NOT_FINALIZED",
-            "La cotización todavía no generó su informe.",
+            "La cotización todavía no generó su orden de compra.",
             status_code=409,
         )
     return {
