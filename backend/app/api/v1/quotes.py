@@ -409,6 +409,15 @@ async def list_quotes(
         bool | None,
         Query(description="`true` = solo cotizaciones con informe (historial)."),
     ] = None,
+    active: Annotated[
+        bool,
+        Query(
+            description=(
+                "`true` = solo el carrito activo (un único borrador vigente). "
+                "Ignora `status` y `finalized`."
+            )
+        ),
+    ] = False,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     cursor: str | None = None,
 ):
@@ -420,10 +429,28 @@ async def list_quotes(
         updated_to=updated_to,
         q=q,
         finalized=finalized,
+        active=active,
         limit=limit,
         cursor=cursor,
     )
     return {"quotes": items, "next_cursor": nxt}
+
+
+@router.post(
+    "/quotes/active",
+    response_model=QuoteOut,
+    responses=ERRORS,
+    summary="Recuperar o crear el carrito activo (un solo borrador vigente)",
+)
+async def create_active_quote(session: Session, actor: StrongActor):
+    """Idempotente: devuelve el borrador vigente o crea uno.
+
+    Serializa por organización con un bloqueo de asesoría para que dos pestañas no creen dos
+    borradores. No se llama al cargar la página: solo al agregar el primer artículo.
+    """
+    async with transaction(session):
+        quote = await quote_svc.create_active_quote(session, actor)
+        return await quote_svc.quote_detail(session, actor, quote.id)
 
 
 @router.get(

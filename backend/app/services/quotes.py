@@ -3,6 +3,9 @@
 Reglas que este módulo hace cumplir:
 
   * todas las operaciones son de `admin`; la organización sale del `Actor`, nunca del cuerpo;
+  * el carrito activo es **un solo borrador vigente**: el creado después del último cierre. Un
+    borrador anterior se conserva intacto y accesible por id, pero no se recupera automáticamente
+    (`active_quote` / `create_active_quote`);
   * la cotización cerrada no se edita: `409 QUOTE_CLOSED`;
   * el carrito nace con la primera línea y uno `dismissed` no se resucita en silencio;
   * repetir la misma petición **no suma**: deduplicación natural y `Idempotency-Key`;
@@ -439,6 +442,55 @@ async def create_quote(session: AsyncSession, actor: Actor, *, title: str | None
     return quote
 
 
+async def _active_draft_query(session: AsyncSession, org: uuid.UUID):
+    """Borrador que representa el carrito activo de la organización.
+
+    Un borrador creado **antes** del último cierre pertenece a una generación anterior del
+    carrito: se conserva intacto y sigue accesible por id, pero no se recupera automáticamente.
+    Así, tras finalizar una cotización, el carrito no se rellena con un borrador huérfano. Un
+    borrador creado después del cierre sí es el carrito vigente y se recupera con normalidad.
+    """
+    stmt = select(Quote).where(
+        Quote.organization_id == org,
+        Quote.status == "draft",
+        Quote.finalized_at.is_(None),
+    )
+    last_finalized = (
+        await session.execute(
+            select(func.max(Quote.finalized_at)).where(Quote.organization_id == org)
+        )
+    ).scalar_one()
+    if last_finalized is not None:
+        stmt = stmt.where(Quote.created_at > last_finalized)
+    return stmt
+
+
+async def active_quote(session: AsyncSession, actor: Actor) -> Quote | None:
+    require_admin(actor.roles)
+    stmt = (
+        (await _active_draft_query(session, actor.organization_id))
+        .order_by(Quote.updated_at.desc(), Quote.id.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def create_active_quote(session: AsyncSession, actor: Actor) -> Quote:
+    """Devuelve el carrito activo o crea uno nuevo, serializado por organización.
+
+    El bloqueo cubre la comprobación y la creación: dos pestañas que agreguen a la vez obtienen
+    el mismo borrador en vez de crear dos. El carrito vacío se crea recién al primer alta, igual
+    que antes; esta operación no se llama al cargar la página.
+    """
+    require_admin(actor.roles)
+    org = actor.organization_id
+    await events.advisory_lock(session, f"quote-active:{org}")
+    current = await active_quote(session, actor)
+    if current is not None:
+        return current
+    return await create_quote(session, actor, title=None)
+
+
 def _encode_cursor(updated_at: datetime, quote_id: uuid.UUID) -> str:
     import base64
 
@@ -464,19 +516,25 @@ async def list_quotes(
     updated_to: datetime | None = None,
     q: str | None = None,
     finalized: bool | None = None,
+    active: bool = False,
     limit: int = 20,
     cursor: str | None = None,
 ) -> tuple[list[dict], str | None]:
     require_admin(actor.roles)
     org = actor.organization_id
-    stmt = select(Quote).where(Quote.organization_id == org)
-    if status is not None:
-        stmt = stmt.where(Quote.status == status)
-    if finalized is True:
-        # El historial muestra exclusivamente cotizaciones que generaron su informe.
-        stmt = stmt.where(Quote.finalized_at.is_not(None))
-    elif finalized is False:
-        stmt = stmt.where(Quote.finalized_at.is_(None))
+    if active:
+        # Modo carrito activo: una sola regla, la misma que usa `active_quote`. Ignora los filtros
+        # de estado a propósito para no ofrecer dos definiciones distintas de «vigente».
+        stmt = await _active_draft_query(session, org)
+    else:
+        stmt = select(Quote).where(Quote.organization_id == org)
+        if status is not None:
+            stmt = stmt.where(Quote.status == status)
+        if finalized is True:
+            # El historial muestra exclusivamente cotizaciones que generaron su informe.
+            stmt = stmt.where(Quote.finalized_at.is_not(None))
+        elif finalized is False:
+            stmt = stmt.where(Quote.finalized_at.is_(None))
     if updated_from is not None:
         stmt = stmt.where(Quote.updated_at >= updated_from)
     if updated_to is not None:

@@ -2844,3 +2844,49 @@ lista de atributos faltantes), `tests/test_h1b_channel.py` (caso real `salonpas`
 paracetamol 500 mg sin la nota; validación interna conservada) y `tests/test_h1b_photos.py` (foto solo de marca y foto
 con detalle completo sin advertencias; Migranol, Vitamina D3 y foto parcialmente legible ajustadas a la nueva
 confirmación). Sin migración: no hay tablas ni columnas nuevas. Sin despliegue ni Lovable Publish.
+
+### D-157 — Un solo carrito activo: los borradores anteriores al último cierre no se recuperan solos (2026-11-12)
+
+**Contexto.** En producción, tras finalizar `COT-000001` (cotización `95064654…`, Salonpas ×3, finalizada a las
+14:38 UTC), el cotizador volvió a mostrar Salonpas ×1. La causa no estaba en la finalización —transaccional,
+idempotente y con el informe congelado— sino en cómo se elegía el carrito: el frontend recuperaba «el borrador más
+reciente» (`GET /quotes?finalized=false&status=draft&limit=1`). Existía un borrador anterior (`69d61525…`, 03:31 UTC,
+Salonpas ×1) que, al desaparecer la cotización finalizada de esa consulta, pasó a ser el más reciente y reapareció
+como carrito. Además, `POST /quotes` creaba un borrador por llamada, sin protección ante dos pestañas o reintentos.
+
+**Decisión.**
+
+1. **Regla única del carrito activo.** El carrito activo es el borrador (`status='draft'`, `finalized_at IS NULL`)
+   **creado después del último cierre** de la organización (`max(finalized_at)`). Se compara `created_at`, no
+   `updated_at`: editar un borrador viejo no lo convierte en vigente. Si la organización nunca finalizó nada, todos
+   los borradores siguen siendo elegibles. La regla vive en el backend (`_active_draft_query`) y la usa tanto el
+   listado (`GET /quotes?active=true`) como el recuperar-o-crear (`POST /quotes/active`); el frontend no la repite.
+2. **Borradores anteriores: ni borrados ni ocultos.** Se conservan intactos, siguen apareciendo en
+   `GET /quotes?finalized=false`, siguen accesibles por id y siguen siendo editables y finalizables si alguien los
+   retoma. Lo único que pierden es la recuperación automática como carrito. No se modificó ni eliminó ninguna
+   cotización existente.
+3. **Creación sin duplicados.** `POST /quotes/active` bloquea por organización (`pg_advisory_xact_lock`), comprueba y
+   crea o devuelve el borrador vigente en la misma transacción; el frontend comparte una sola solicitud en vuelo entre
+   altas simultáneas. El alta explícita `POST /quotes` conserva su comportamiento (varios borradores explícitos siguen
+   siendo posibles por API).
+4. **Una cotización finalizada no es un carrito editable.** Sus líneas se mantienen activas para cobertura e historial
+   (sin cambios en `coverage.py`), pero la lectura del carrito (`lineasActivas`, `carritosConLineas`) devuelve vacío si
+   la cotización no está en borrador: se lee en el informe. Si una cotización se cierra o finaliza en otra pestaña, el
+   alta reintenta leyendo el carrito activo (`QUOTE_CLOSED`).
+5. **Asociación a faltantes.** Una búsqueda iniciada desde un faltante conserva la referencia explícita; una búsqueda
+   manual desde el buscador principal la limpia, y también se limpia al finalizar, porque la asociación pertenecía a la
+   cotización cerrada. La lógica de liberación de faltantes no cambia.
+6. **Compatibilidad.** `GET /quotes` sin `active` y `POST /quotes` mantienen su contrato exacto, de modo que el
+   frontend publicado sigue funcionando; la corrección llega a la interfaz solo cuando el cliente pide `active=true`.
+   La consulta antigua conserva su comportamiento anterior (devuelve el último borrador, incluido el huérfano) y la
+   prueba de compatibilidad lo fija explícitamente.
+
+**Estado.** Implementada y probada el 2026-11-12. Backend: `app/services/quotes.py` (`_active_draft_query`,
+`active_quote`, `create_active_quote`, modo `active` en `list_quotes`), `app/api/v1/quotes.py` (parámetro `active` y
+`POST /quotes/active`) y `tests/test_quote_active_cart.py` (7 pruebas: huérfano no recuperado pero intacto y aún
+editable; recuperar-o-crear idempotente; concurrencia; finalización sin faltante; compatibilidad del cliente publicado;
+aislamiento por organización y 403 fuera de `admin`). Frontend: `src/lib/cotizacion-api.ts` (`active`,
+`crearCotizacionActiva`, `carritoEditable`, `cotizacionCerrada`) y `src/routes/index.tsx` (single-flight de creación,
+relectura ante `QUOTE_CLOSED`, limpieza del faltante), con pruebas en `src/test/cotizacion-api.test.ts`,
+`carrito-cotizador.test.tsx`, `flujo-proveedores-en-vivo.test.tsx` y `main-screen.test.tsx`. Sin migración: no hay
+tablas ni columnas nuevas. Sin despliegue ni Lovable Publish en esta pasada.
