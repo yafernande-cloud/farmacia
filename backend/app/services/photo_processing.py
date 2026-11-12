@@ -116,14 +116,9 @@ def _reply_text(
             f"ℹ️ {shown} ya está en tu lista: no lo agregué de nuevo. "
             f"Tu reporte sigue como estaba.{sim}{foot}"
         )
+    # Solo se confirma lo anotado: los atributos farmacéuticos ausentes quedan como validación
+    # interna y no se piden por el canal (el auxiliar no está obligado a informarlos).
     lead = f"✅ Anotado: {shown} — {qty}."
-    missing: list[str] = []
-    if parsed.name_anchor:
-        missing.append("el principio activo")
-    if parsed.form and not parsed.strengths and not parsed.unassigned:
-        missing.append("la dosis")
-    if missing:
-        lead += f" Falta confirmar {' y '.join(missing)}."
     if status == "needs_review":
         lead += " Quedó por confirmar lo leído de la foto."
     return lead + sim + foot

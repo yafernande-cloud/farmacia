@@ -94,12 +94,10 @@ async def test_ana_se_identifica_y_reporta_vitamina_d(chat, sessions, seed, tg_a
     assert o.actor_session_id is not None and o.channel_message_id is not None
     assert o.created_at is not None  # cuándo se declaró
     reply = tg_api.texts()[-1]
-    assert (
-        "Anotado: Vitamina D 50000 (sin unidad)" in reply
-        and "la unidad de 50000" in reply
-        and "Ana" in reply
-    )
-    assert "?" not in reply  # no pregunta: informa lo pendiente
+    assert "Anotado: Vitamina D 50000 (sin unidad)" in reply and "Ana" in reply
+    # La unidad pendiente queda como validación interna: no se pide completar atributos por el canal.
+    assert "Falta confirmar" not in reply and "la unidad de 50000" not in reply
+    assert "?" not in reply  # no pregunta
     async with sessions() as s:
         item = (await s.execute(select(DemandItem))).scalar_one()
     assert item.target_quantity is None and item.attributes["strengths"] == []  # nada supuesto
@@ -1428,12 +1426,33 @@ async def test_caso_real_falta_paracetamol_500_mg_2_cajas(chat, sessions, tg_api
     await chat.text("falta paracetamol 500 mg 2 cajas")
     reply = tg_api.texts()[-1]
     assert "✅ Anotado: Paracetamol 500 mg — 2 cajas." in reply
+    assert "Falta confirmar" not in reply
     assert "no puedo asegurar" not in reply and "revisión de compras" not in reply
     (o,) = await observations(sessions)
     assert (o.declared_quantity, o.declared_unit) == (Decimal(2), "box")
     assert o.match_status == "created_item"
     (item,) = await ctx_items(sessions)
     assert item.display_name == "Paracetamol 500 mg" and item.target_quantity is None
+
+
+async def test_caso_real_marca_sola_se_anota_sin_pedir_atributos(chat, sessions, tg_api):
+    """Pato escribe solo «salonpas»: se anota con 1 unidad, sin pedir dosis ni principio activo."""
+    await chat.pick("ana")
+    await chat.text("salonpas")
+    reply = tg_api.texts()[-1]
+    assert "✅ Anotado: Salonpas — 1 unidad." in reply
+    assert "Falta confirmar" not in reply
+    assert "dosis" not in reply and "principio activo" not in reply
+    assert "?" not in reply
+    assert "👤 Reportado por: Ana" in reply
+    (o,) = await observations(sessions)
+    assert (o.declared_quantity, o.declared_unit) == (Decimal(1), "unit")
+    assert o.match_status == "created_item"
+    # Lo extraído y lo pendiente se conservan para la revisión interna, sin exigirlo al auxiliar.
+    pend = {(p["attribute"], p["reason"]) for p in o.parsed["pending_validation"]}
+    assert ("strength", "not_stated") in pend
+    (item,) = await ctx_items(sessions)
+    assert item.display_name == "Salonpas" and item.target_quantity is None
 
 
 async def test_formas_habituales_se_interpretan_sin_pedir_aclaraciones(chat, sessions, tg_api):

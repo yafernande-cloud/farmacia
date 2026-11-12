@@ -165,7 +165,8 @@ async def test_migranol_foto_sin_texto_registra_el_faltante_sin_inventar(
     assert reply.startswith(
         "✅ Anotado: Migranol comprimido recubierto x 10 — 1 unidad."
     )
-    assert "Falta confirmar el principio activo y la dosis." in reply
+    # La dosis y el principio activo ausentes quedan como validación interna: no se piden.
+    assert "Falta confirmar" not in reply and "dosis" not in reply
     assert "lectura simulada" in reply and "?" not in reply and len(reply) < 260
     assert "👤 Reportado por: Ana" in reply
 
@@ -268,6 +269,48 @@ async def test_foto_vitamina_d3_con_texto_faltan_2_cajas(photo_chat, sessions, t
         at["form"]["value"] == "capsula"
         and "— 2 cajas." in tg_api.texts()[-1]
     )
+    assert "Falta confirmar" not in tg_api.texts()[-1]
+
+
+async def test_foto_sin_atributos_farmaceuticos_se_anota_sin_advertencias(
+    photo_chat, sessions, tg_api
+):
+    """Una foto que solo muestra la marca registra el faltante sin pedir dosis ni principio activo."""
+    brand_only = ext(("product_name", "Salonpas", .95))
+    c = photo_chat({"*": brand_only})
+    await c.pick("ana")
+    await c.send(photo_update, img(tg_api, 41))
+    reply = tg_api.texts()[-1]
+    assert reply.startswith("✅ Anotado: Salonpas — 1 unidad.")
+    assert "Falta confirmar" not in reply
+    assert "dosis" not in reply and "principio activo" not in reply
+    assert "?" not in reply
+    (o,) = await observations(sessions)
+    assert o.match_status == "created_item"
+    pend = {(p["attribute"], p["reason"]) for p in o.parsed["pending_validation"]}
+    assert ("active_ingredient", "not_stated") in pend and ("strength", "not_stated") in pend
+    assert (await item_of(sessions)).target_quantity is None
+
+
+async def test_foto_con_detalle_completo_se_anota_sin_advertencias(photo_chat, sessions, tg_api):
+    """La dosis y la presentación visibles se conservan y no disparan advertencias."""
+    full = ext(
+        ("ingredient", "ibuprofeno", .96),
+        ("strength", "400 mg", .95),
+        ("form", "comprimidos", .9),
+        ("content", "20 comprimidos", .9),
+    )
+    c = photo_chat({"*": full})
+    await c.pick("ana")
+    await c.send(photo_update, img(tg_api, 42))
+    reply = tg_api.texts()[-1]
+    assert reply.startswith("✅ Anotado:") and "— 1 unidad." in reply
+    assert "Falta confirmar" not in reply
+    (o,) = await observations(sessions)
+    assert o.match_status == "created_item"
+    item = await item_of(sessions)
+    assert item.ingredient == "ibuprofeno"
+    assert item.attributes["strengths"][0]["measure"]["value"] == "400"
 
 
 async def test_la_cantidad_visible_en_el_envase_no_es_cantidad_solicitada(photo_chat, sessions):
@@ -418,6 +461,7 @@ async def test_foto_parcialmente_legible_usa_lo_seguro_y_no_inventa_la_dosis(
     assert o.declared_quantity == 1
     reply = tg_api.texts()[-1]
     assert reply.startswith("✅ Anotado: Ibuprofeno comprimido — 1 unidad.")
+    assert "Falta confirmar" not in reply
     assert "Quedó por confirmar lo leído de la foto." in reply
     assert "👤 Reportado por: Ana" in reply
 

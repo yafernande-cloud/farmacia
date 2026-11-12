@@ -2815,3 +2815,32 @@ con 3 y conserva el informe; bajar en 1:1 sincroniza; varias asignaciones siguen
 pedida; cantidad declarada intacta) y `src/test/carrito-cotizador.test.tsx` (refresco de la bandeja). Sin migración:
 no hay tablas ni columnas nuevas. Sin commit, push, despliegue ni Lovable Publish en esta pasada. Las reglas D-135,
 D-137, D-147 y D-154 se mantienen.
+
+### D-156 — Reportar un faltante no exige atributos farmacéuticos (2026-11-12)
+
+**Contexto.** En producción, un auxiliar escribió solo `salonpas` y el bot respondió `✅ Anotado: Salonpas — 1 unidad.
+Falta confirmar la dosis.`. Esa advertencia contradecía el requisito del canal: el auxiliar reporta lo que sabe y el
+sistema registra el faltante; dosis, concentración (mg/ml), presentación, laboratorio, marca y principio activo son
+datos deseables para compras, no una condición para anotar. La frase además se leía como una solicitud de completar
+atributos que nadie pidió.
+
+1. **Confirmación sin advertencias.** Los mensajes de confirmación de Telegram —texto y fotografía— dicen solo lo
+   registrado: producto, cantidad declarada (o 1 unidad por defecto) y autor. No piden ni advierten por atributos
+   farmacéuticos ausentes: se elimina la nota «Falta confirmar el principio activo / la dosis / la unidad de …» de
+   `line_for` y de `_reply_text`.
+2. **Lo extraído se conserva.** La información leída o escrita sigue guardada internamente (`demand_observation.parsed`,
+   `pending_validation`, `interpretation` y la extracción de la foto) para la revisión de compras. Que falte un
+   atributo no impide crear el faltante ni lo deja en un estado distinto.
+3. **Reglas que no cambian.** Cantidad predeterminada 1 (`unit`, D-147), duplicados, correcciones, propuesta sin
+   `APPLY_QUANTITY`, auxiliar activo, autorización, estados de faltantes, asociación con el carrito y sincronización de
+   cantidades (D-155) siguen exactamente igual.
+4. **Fotografías que requieren revisión.** Si la foto es parcial o poco legible (`needs_review`), se mantiene la nota
+   `Quedó por confirmar lo leído de la foto.` y las ramas de conflicto texto/foto, ilegible y duplicado. Esa nota habla
+   de la lectura de la imagen, no exige atributos farmacéuticos.
+
+**Estado.** Implementada en código y probada el 2026-11-12. Backend: `app/services/channel.py` (se retiran `_PENDING`,
+`_COSMETIC_HINTS`, `_is_cosmetic` y `_pending_note`), `app/services/photo_processing.py` (`_reply_text` ya no arma la
+lista de atributos faltantes), `tests/test_h1b_channel.py` (caso real `salonpas` sin advertencias; Vitamina D y
+paracetamol 500 mg sin la nota; validación interna conservada) y `tests/test_h1b_photos.py` (foto solo de marca y foto
+con detalle completo sin advertencias; Migranol, Vitamina D3 y foto parcialmente legible ajustadas a la nueva
+confirmación). Sin migración: no hay tablas ni columnas nuevas. Sin despliegue ni Lovable Publish.

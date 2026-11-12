@@ -220,39 +220,6 @@ def _selector(
     return Reply(text, rows, kb)
 
 
-_PENDING = {
-    "active_ingredient": "el principio activo",
-    "strength": "la dosis",
-}
-
-
-_COSMETIC_HINTS = {
-    "shampoo", "champu", "crema", "jabon", "locion", "desodorante", "pasta dental",
-    "cepillo", "algodon", "panal", "toalla", "protector", "solar",
-}  # fmt: skip
-
-
-def _is_cosmetic(parsed: ParsedProduct | None) -> bool:
-    """Higiene, cuidado personal y cosmética no llevan «dosis»: no se pide algo que no aplica."""
-    if parsed is None:
-        return False
-    return any(w in _COSMETIC_HINTS for w in parsed.ingredient.split())
-
-
-def _pending_note(pending: list[dict], parsed: ParsedProduct | None = None) -> str:
-    """Solo lo AMBIGUO o ausente que importa; jamás una pregunta al auxiliar."""
-    cosmetic = _is_cosmetic(parsed)
-    notes = []
-    for p in pending:
-        if p["reason"] == "unit_not_stated":
-            notes.append(f"la unidad de {p.get('value')}")
-        elif p["attribute"] in _PENDING and p["reason"] == "not_stated":
-            if cosmetic and p["attribute"] == "strength":
-                continue  # un shampoo o una crema no tienen «dosis» que confirmar
-            notes.append(_PENDING[p["attribute"]])
-    return f" Falta confirmar {' y '.join(dict.fromkeys(notes))}." if notes else ""
-
-
 _UNIT_LABELS = {
     "box": ("caja", "cajas"),
     "package": ("paquete", "paquetes"),
@@ -299,17 +266,19 @@ def _quantity_origin(r: ObservationResult) -> str | None:
 
 
 def line_for(r: ObservationResult, raw: str) -> str:
-    note = _pending_note(r.parsed.pending_validation if r.item else [], r.parsed)
+    # La confirmación solo dice lo que se anotó. Los atributos farmacéuticos que falten quedan
+    # como validación interna: el auxiliar no está obligado a informar dosis, concentración,
+    # presentación ni principio activo, y no se le pide completarlos por el canal.
     if r.outcome == "created_item" and r.item:
-        return f"✅ Anotado: {r.item.display_name} — {_declared_text(r)}.{note}"
+        return f"✅ Anotado: {r.item.display_name} — {_declared_text(r)}."
     if r.outcome == "attached_existing" and r.item:
         if _quantity_origin(r) == "default":
-            return f"✅ Anotado: {r.item.display_name} — 1 unidad (ya estaba en tu lista).{note}"
+            return f"✅ Anotado: {r.item.display_name} — 1 unidad (ya estaba en tu lista)."
         # Repetición del mismo autor: se registra el aviso, pero NO se crea otro reporte ni cambia
         # la cantidad. Decir «Anotado» haría creer que sí se agregó de nuevo.
         return (
             f"ℹ️ {r.item.display_name} ya está en tu lista: no lo agregué de nuevo. "
-            f"Tu reporte sigue como estaba.{note}"
+            f"Tu reporte sigue como estaba."
         )
     if r.outcome == "blocked_in_cart" and r.item:
         return (
