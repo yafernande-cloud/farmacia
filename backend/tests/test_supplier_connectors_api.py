@@ -20,6 +20,7 @@ from app.models import (
     AppUser,
     CommercialArticlePreference,
     CommercialObservation,
+    CommercialPreference,
     ObservationInterpretation,
     OfferSnapshot,
     Organization,
@@ -588,3 +589,92 @@ async def test_el_orden_entre_articulos_llega_a_la_busqueda_en_vivo(api, session
     assert clave["PRE-A"][0] == 1
     # Nada de esto se guarda como oferta: la búsqueda en vivo no persiste snapshots.
     assert await count(sessions, OfferSnapshot) == 0
+
+
+async def test_la_equivalencia_farmaceutica_ordena_ofertas_sin_vincularlas(
+    api, sessions, fake
+):
+    """Una oferta de otra fuente comparte la preferencia si es el mismo producto (D-152).
+
+    La preferencia es de un artículo; la oferta de FarmaLoop no tiene vínculo exacto y aun así se
+    ordena por ser la misma presentación. El vínculo y el precio de cada oferta no cambian.
+    """
+    assert (await put(api)).status_code == 200
+    async with sessions() as s, s.begin():
+        org = api.farm["org"]
+        item = TradeItem(
+            organization_id=org,
+            display_name="Ibuprofeno 400 mg x 20 comprimidos",
+            identity_key="vivo-ibuprofeno-400-20",
+            data_origin="simulated",
+        )
+        s.add(item)
+        await s.flush()
+        observacion = CommercialObservation(
+            organization_id=org,
+            text_original="Prefiero ASCEND cuando haya.",
+            author_id=api.farm["admin"],
+            trade_item_id=item.id,
+            data_origin="simulated",
+        )
+        s.add(observacion)
+        await s.flush()
+        interpretacion = ObservationInterpretation(
+            organization_id=org,
+            observation_id=observacion.id,
+            trade_item_id=item.id,
+            status="suggested",
+            model="fake-observations",
+            prompt_version="test-v1",
+            data_origin="simulated",
+        )
+        s.add(interpretacion)
+        await s.flush()
+        s.add(
+            CommercialPreference(
+                organization_id=org,
+                interpretation_id=interpretacion.id,
+                observation_id=observacion.id,
+                trade_item_id=item.id,
+                subject_kind="laboratory",
+                subject_key="ASCEND",
+                subject_label="ASCEND",
+                effect="prefer",
+                confidence="0.90",
+                status="suggested",
+                data_origin="simulated",
+            )
+        )
+
+    fake.offers = [
+        offer(
+            external_id="OTRO",
+            name="Ibuprofeno 400 mg x 20 comprimidos",
+            laboratory="Otro laboratorio",
+            price=Decimal("990"),
+            ean=None,
+        ),
+        offer(
+            external_id="ASC",
+            name="Ibuprofeno 400 mg x 20 comprimidos",
+            laboratory="ASCEND",
+            price=Decimal("1090"),
+            ean=None,
+        ),
+    ]
+    r = await search(api)
+    assert r.status_code == 200, r.text
+    ofertas = {o["external_id"]: o for o in r.json()["offers"]}
+
+    # La equivalencia ordena (ASCEND primero) sin inventar un vínculo ni tocar el precio.
+    assert ofertas["ASC"]["order_key"] < ofertas["OTRO"]["order_key"]
+    assert ofertas["ASC"]["trade_item_id"] is None
+    assert ofertas["OTRO"]["trade_item_id"] is None
+    assert ofertas["ASC"]["price"] == {"amount": "1090", "currency": "CLP"}
+    assert ofertas["OTRO"]["price"] == {"amount": "990", "currency": "CLP"}
+
+    # Ni vínculos ni ofertas persistentes: la búsqueda en vivo sigue siendo de solo lectura.
+    assert await count(sessions, SupplierProductMapping) == 0
+    assert await count(sessions, OfferSnapshot) == 0
+    async with sessions() as s:
+        assert (await s.execute(select(func.count()).select_from(TradeItem))).scalar_one() == 1

@@ -2668,3 +2668,52 @@ suites relacionadas (`test_article_preferences`, `test_import_identity_adoption`
 `test_import_current_list`, `test_search_api`, `test_comparison_api`): **72 aprobadas**; suite completa de backend con
 `REQUIRE_DB=1`: **1.236 aprobadas, 8 omitidas, 0 fallos**; `ruff check` limpio. Sin commit, push, despliegue ni Lovable
 Publish al implementarse.
+
+### D-153 — Equivalencia farmacéutica automática: una preferencia ordena las ofertas del mismo producto aunque no estén vinculadas (2026-11-11)
+
+**Contexto.** Con D-152 aprobada y la preferencia de laboratorio ASCEND enseñada sobre el artículo canónico
+`e024d8e7-526c-4550-a0c1-8068d273fe57`, las ofertas vivas de FarmaLoop seguían sin aplicar la preferencia porque sus SKU
+no resuelven a ese artículo: el motor de D-152 solo ordena ofertas **del mismo `trade_item_id`** y la regla de vínculos
+exactos (mapping, EAN único único, identidad técnica) no las asocia. El usuario fijó las reglas definitivas del módulo:
+Pao **solo comenta preferencias** mediante «Enseñar a la IA», **no vincula artículos ni identifica SKU ni configura
+nada**, y el sistema debe reconocer por sí mismo cuándo ofertas de distintos proveedores corresponden al mismo producto
+farmacéutico para aplicarles lo enseñado, también para proveedores y ofertas futuros.
+
+1. **Firma farmacéutica.** Dos ofertas corresponden al mismo producto solo cuando coinciden por completo el principio
+   activo, la potencia o concentración, la forma farmacéutica, la liberación (o su ausencia) y el contenido del envase,
+   comparados como atributos estructurados y normalizados (medidas `mass:400mg`, `count:20un`; nombre
+   acento/mayúscula/signo-insensible). Nunca por parecido parcial ni por prefijo del nombre; una identidad incompleta o
+   inferida sin sustento (`pharma_pending`, ancla comercial no resuelta) **no** genera equivalencia. La presentación
+   publicada por la fuente completa el contenido y la forma faltantes; no corrige lo ya leído del nombre.
+2. **El laboratorio no forma parte de la firma.** Es el sujeto de la preferencia: «prefiero ASCEND» solo puede ordenar
+   si las alternativas del **mismo producto** se comparan juntas. La identidad comercial sigue separada (D-080): la
+   equivalencia no fusiona artículos, no crea perfiles por laboratorio ni propaga preferencias a otros productos
+   (D-138). Si el laboratorio quedó pegado al nombre del ingrediente y la fuente también lo publicó aparte, se retira
+   como sufijo exacto.
+3. **Solo ordena; nunca vincula.** La equivalencia aporta únicamente el artículo cuya preferencia ordena la oferta
+   (`equivalent_trade_item_id` interno, consumido en `_apply_order_keys`). No crea `supplier_product_mapping`, no
+   cambia `trade_item_id` (sigue siendo el vínculo exacto), no persiste nada, no toca snapshots ni carritos, y no altera
+   qué ofertas se muestran, sus precios, stock, cantidades, descuentos ni historial. Un vínculo exacto siempre manda
+   sobre la equivalencia. Sin migración y sin cambio de esquema ni de la API pública.
+4. **Salvaguardas.** Solo artículos `active` de la organización del `Actor`, y solo con firma **única**: dos artículos
+   con la misma firma son ambiguos y la oferta queda sin equivalencia en vez de elegir uno al azar. Sin coincidencia
+   única no hay preferencia aplicada, pero la oferta se muestra igual.
+5. **Alcance.** Aplica a todas las lecturas que pasan por el motor de orden (búsqueda de proveedores en vivo y
+   comparación), para cualquier artículo, proveedor y oferta presente o futura: no depende de los SKU 91280/15391 ni de
+   ninguna asociación manual de Pao. La semántica de D-152 (tolerancia hasta el margen sobre la alternativa comparable
+   más barata, por moneda y base de precio) queda intacta; la equivalencia solo amplía el grupo de ofertas sobre el que
+   D-152 ya opera. SIMULACIÓN no se modifica.
+
+**Estado.** Implementada en código y probada el 2026-11-11: `app/services/offer_equivalence.py` (nuevo:
+`offer_signature`, `item_signature`, `resolve_equivalent_item_ids`), `app/services/connectors/service.py`
+(`_apply_order_keys` resuelve equivalentes después de los vínculos exactos y usa el vínculo exacto o, si falta, el
+artículo equivalente como ancla de orden), `tests/test_offer_equivalence.py` (nuevo, 11 pruebas: laboratorio fuera de
+la firma, laboratorio pegado al nombre, presentación publicada, conteo sin «x», identidad incompleta, lectura desde
+atributos estructurados, resolución solo del mismo producto y con firma única, vínculo exacto no reemplazado, firma
+duplicada ambigua, artículo inactivo o de otra organización, y que la resolución no escribe nada) y
+`tests/test_supplier_connectors_api.py` (`test_la_equivalencia_farmaceutica_ordena_ofertas_sin_vincularlas`).
+Resultados: `test_offer_equivalence.py` **11 aprobadas**; pruebas focalizadas de la API de conectores **3 aprobadas**;
+regresión focalizada (`test_supplier_connectors_api`, `test_supplier_connectors`, `test_preference_engine`,
+`test_article_preferences`, `test_supplier_mappings_api`, `test_offer_identity_teaching`, `test_search_api`):
+**144 aprobadas**; `ruff check` limpio. Suite completa no ejecutada en esta pasada (base vigente: 1.236 aprobadas, 8
+omitidas); se correrá antes del cierre del módulo. Sin commit, push, despliegue ni Lovable Publish al implementarse.

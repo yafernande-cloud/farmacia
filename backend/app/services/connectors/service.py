@@ -47,6 +47,7 @@ from app.services.connectors.config import validate_profile
 from app.services.connectors.matching import classify_match
 from app.services.connectors.store import store
 from app.services.events import advisory_lock, emit
+from app.services.offer_equivalence import resolve_equivalent_item_ids
 from app.services.offer_identities import offer_identity_key
 from app.services.preferences import (
     OfferView,
@@ -561,12 +562,24 @@ async def _apply_order_keys(
     recién enseñada se refleja al refrescar sin crear `OfferSnapshot` ni persistir la oferta. Las
     ofertas sin vínculo quedan con clave neutra y siguen visibles. La marca no viaja en el
     resultado vivo, así que las preferencias de marca no se aplican aquí (no se inventa).
+
+    Una oferta sin vínculo exacto puede **compartir la preferencia** de un artículo cuando su
+    identidad farmacéutica es la misma (medicamento, concentración, forma y presentación). Esa
+    equivalencia solo alimenta el orden: `trade_item_id` sigue siendo el vínculo exacto y no se
+    crea ningún `SupplierProductMapping`.
     """
     entries = snapshot.get("offers", [])
     if not entries:
         return snapshot
+    equivalents = await resolve_equivalent_item_ids(
+        session, snapshot["organization_id"], entries
+    )
     views: list[OfferView] = []
     for entry in entries:
+        equivalent_id = equivalents.get(entry["external_id"])
+        # El vínculo exacto manda; la equivalencia solo aporta la preferencia que ordena.
+        entry["equivalent_trade_item_id"] = equivalent_id
+        preference_id = entry.get("trade_item_id") or equivalent_id
         price = entry.get("price") or {}
         try:
             amount = Decimal(str(price.get("amount")))
@@ -590,7 +603,7 @@ async def _apply_order_keys(
                 stock_quantity=Decimal(str(quantity)) if quantity is not None else None,
                 stock_unit=entry.get("stock_unit"),
                 sale_unit=entry.get("sale_unit"),
-                trade_item_id=entry.get("trade_item_id"),
+                trade_item_id=preference_id,
             )
         )
     if not views:
