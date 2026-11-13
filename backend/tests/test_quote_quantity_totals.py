@@ -173,7 +173,7 @@ async def tienda(sessions):
         offers = {
             "uno_x": _offer(uno, src_uno, items["x"], "U-X"),
             "dos_x": _offer(dos, src_dos, items["x"], "D-X"),
-            "uno_y": _offer(uno, src_uno, items["y"], "U-Y"),
+            "uno_y": _offer(uno, src_uno, items["y"], "U-Y", sale_unit="unit"),
             "dos_z": _offer(dos, src_dos, items["z"], "D-Z", sale_unit="unit"),
         }
         s.add_all(offers.values())

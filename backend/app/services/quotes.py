@@ -62,6 +62,7 @@ from app.services.provenance import org_kind, origin_for
 from app.services.search import _latest_offers
 
 UNITS = ("box", "package", "unit", "bottle")
+UNIT_LABELS = {"box": "caja", "package": "envase", "unit": "unidad", "bottle": "botella"}
 MAX_TEXT = 2000
 ZERO = Decimal(0)
 
@@ -102,6 +103,45 @@ def _term(raw: Any) -> str | None:
         return None
     text = str(raw).strip()
     return text or None
+
+
+def _unit_label(unit: str | None) -> str:
+    return UNIT_LABELS.get(unit or "", unit or "sin unidad")
+
+
+def _confirmed_unit(
+    raw: Any,
+    *,
+    declared: str | None,
+    allow_confirmation: bool,
+) -> tuple[str | None, bool]:
+    """Unidad comercial confirmada por la administradora para una oferta que no la declara.
+
+    Devuelve `(unidad_de_la_línea, fue_confirmada)`. La confirmación:
+    * solo se admite para la fuente que legítimamente omite la unidad de venta (FarmaLoop);
+    * nunca reemplaza una unidad que la fuente sí publicó;
+    * no modifica el snapshot de la oferta, que conserva `sale_unit = NULL`.
+    """
+    text = _term(raw)
+    if text is None:
+        return declared, False
+    confirmed = _unit(text)
+    if declared is not None:
+        if confirmed != declared:
+            raise DomainError(
+                "UNIT_CONFIRMATION_CONFLICTS_WITH_OFFER",
+                "La oferta ya declara su unidad de venta: la confirmación no puede reemplazarla.",
+                status_code=422,
+                details={"declared_unit": declared, "confirmed_unit": confirmed},
+            )
+        return declared, False
+    if not allow_confirmation:
+        raise DomainError(
+            "UNIT_CONFIRMATION_NOT_ALLOWED",
+            "Esta oferta no puede cotizarse confirmando una unidad: su fuente debe informarla.",
+            status_code=422,
+        )
+    return confirmed, True
 
 
 def _qty(value: Decimal | None) -> str | None:
@@ -312,9 +352,24 @@ def _unit_price(offer: OfferSnapshot) -> dict | None:
     return {**price, "basis": offer.price_basis, "sale_unit": offer.sale_unit}
 
 
+def _unit_matches_offer(line: QuoteLine, offer: OfferSnapshot) -> bool:
+    """La unidad de la línea coincide con la oferta, o fue confirmada por una persona.
+
+    La confirmación solo vale cuando la fuente no declaró unidad (`sale_unit = NULL`) y la línea
+    sí tiene una; nunca reemplaza un valor publicado.
+    """
+    if line.quantity_unit == offer.sale_unit:
+        return True
+    return bool(
+        line.quantity_unit_confirmed
+        and line.quantity_unit is not None
+        and offer.sale_unit is None
+    )
+
+
 def _line_subtotal(line: QuoteLine, offer: OfferSnapshot) -> dict | None:
     """Subtotal congelado del precio elegido. Sin unidad coincidente no se inventa un monto."""
-    if line.quantity_unit != offer.sale_unit:
+    if not _unit_matches_offer(line, offer):
         return None
     return _money(offer.price_amount * line.quantity, offer.currency)
 
@@ -913,9 +968,12 @@ async def _normalize_allocations(
             if not generic_report:
                 message = (
                     "La oferta no declara unidad de venta y el reporte se mide en "
-                    f"«{demand.quantity_unit}»: no se asigna sin inventar la equivalencia."
+                    f"«{_unit_label(demand.quantity_unit)}»: no se asigna sin inventar la "
+                    "equivalencia."
                     if allow_unknown_unit and unit is None
-                    else "La unidad del reporte no coincide con la unidad de la línea."
+                    else "El reporte se mide en "
+                    f"«{_unit_label(demand.quantity_unit)}» y la línea en "
+                    f"«{_unit_label(unit)}»: no se asigna sin inventar la equivalencia."
                 )
                 raise DomainError(
                     "UNIT_MISMATCH",
@@ -1480,6 +1538,7 @@ async def add_line(
     offer_context: offer_svc.OfferViewContext | None = None,
     quantity: Any,
     quantity_unit: Any,
+    confirmed_sale_unit: Any | None = None,
     demand_item_id: uuid.UUID | None = None,
     demand_allocations: list[dict[str, Any]] | None = None,
     idempotency_key: str | None = None,
@@ -1561,11 +1620,16 @@ async def add_line(
         _live_offer_terms(offer_context, allow_unknown_terms=allow_unknown_terms)
         # La unidad de la línea sale de lo que publicó el proveedor, también cuando el cliente
         # repite otra unidad: si la fuente declara «box», la línea la adopta; si no declara
-        # ninguna (FarmaLoop) la línea queda sin unidad. La unidad nunca se inventa.
+        # ninguna (FarmaLoop) la línea queda sin unidad salvo que la administradora la confirme
+        # de forma explícita. La unidad nunca se inventa.
         declared_unit = _term(offer_context.sale_unit)
-        unit = _unit(declared_unit) if declared_unit is not None else None
+        declared = _unit(declared_unit) if declared_unit is not None else None
+        unit, unit_confirmed = _confirmed_unit(
+            confirmed_sale_unit,
+            declared=declared,
+            allow_confirmation=allow_unknown_unit,
+        )
     else:
-        unit = _unit(unit_hint) if unit_hint is not None else None
         snapshot = await _offer(session, org, offer_snapshot_id)
         if snapshot.supplier_id != supplier_id:
             raise DomainError(
@@ -1575,6 +1639,35 @@ async def add_line(
             )
         # Una oferta ya publicada conserva la misma excepción por la fuente que la registró.
         allow_unknown_unit = await _allows_unknown_terms(session, org, snapshot.source_id)
+        # La observación publicada es la fuente de verdad, no la pista que repite el cliente: una
+        # unidad distinta de la declarada no se acepta, y una oferta sin unidad no la adquiere por
+        # la petición. La única excepción es la confirmación explícita y auditada de FarmaLoop.
+        declared_unit = _term(snapshot.sale_unit)
+        declared = _unit(declared_unit) if declared_unit is not None else None
+        if unit_hint is not None:
+            hinted = _unit(unit_hint)
+            if declared is not None and hinted != declared:
+                raise DomainError(
+                    "UNIT_MISMATCH",
+                    "La oferta declara su unidad de venta como "
+                    f"«{_unit_label(declared)}»: la selección no puede indicar "
+                    f"«{_unit_label(hinted)}».",
+                    status_code=422,
+                    details={"offer_unit": declared, "line_unit": hinted},
+                )
+            if declared is None and _term(confirmed_sale_unit) is None:
+                raise DomainError(
+                    "UNIT_MISMATCH",
+                    "La oferta no declara unidad de venta: la selección no puede imponer "
+                    f"«{_unit_label(hinted)}». Confirma la unidad comercial de forma explícita.",
+                    status_code=422,
+                    details={"offer_unit": None, "line_unit": hinted},
+                )
+        unit, unit_confirmed = _confirmed_unit(
+            confirmed_sale_unit,
+            declared=declared,
+            allow_confirmation=allow_unknown_unit,
+        )
         supplier = (
             await session.execute(
                 select(Supplier).where(
@@ -1701,6 +1794,7 @@ async def add_line(
         trade_item_id=snapshot.trade_item_id,
         quantity=value,
         quantity_unit=unit,
+        quantity_unit_confirmed=unit_confirmed,
         status="active",
         demand_item_id=demand.id if demand else None,
         coverage_relation=relation,
@@ -1734,6 +1828,15 @@ async def add_line(
             for a in allocations
         ],
     }
+    if unit_confirmed:
+        # Registro explícito de la decisión humana: la fuente no declaró unidad y la
+        # administración confirmó una. No cambia el snapshot de la oferta, que sigue en NULL.
+        after["sale_unit_confirmation"] = {
+            "unit": unit,
+            "origin": "admin",
+            "confirmed_by": str(actor.id),
+            "offer_declared_unit": None,
+        }
     if idempotency_key:
         # La clave se guarda en la auditoría de la misma transacción: no hay tabla nueva y el
         # registro es duradero e inmutable (§5.2, E8).
@@ -1754,6 +1857,7 @@ async def add_line(
             "offer_snapshot_id": str(snapshot.id),
             "quantity": _qty(value),
             "quantity_unit": unit,
+            "quantity_unit_confirmed": unit_confirmed,
             "demand_item_id": str(demand.id) if demand else None,
         },
         after=after,
@@ -1790,11 +1894,42 @@ async def patch_line(
             "asignaciones primero.",
             status_code=422,
         )
+    if unit != line.quantity_unit:
+        # Cambiar la unidad tampoco puede dejar la línea no cotizable: la oferta elegida manda y
+        # una oferta sin unidad solo admite una unidad confirmada al agregarla (no por PATCH).
+        selected_offer = await _offer(session, org, line.offer_snapshot_id)
+        declared_raw = _term(selected_offer.sale_unit)
+        declared = _unit(declared_raw) if declared_raw is not None else None
+        if declared is None:
+            raise DomainError(
+                "UNIT_MISMATCH",
+                "La oferta elegida no declara su unidad de venta: la unidad de la línea no se "
+                "cambia por esta vía. Quita la línea y agrégala de nuevo confirmando su unidad.",
+                status_code=422,
+                details={"offer_unit": None, "line_unit": unit},
+            )
+        if unit != declared:
+            raise DomainError(
+                "UNIT_MISMATCH",
+                "La oferta declara su unidad de venta como "
+                f"«{_unit_label(declared)}»: la línea no puede indicar "
+                f"«{_unit_label(unit)}».",
+                status_code=422,
+                details={"offer_unit": declared, "line_unit": unit},
+            )
     # C5-B: si hay compras vigentes, `value` no puede ser menor que lo comprado
     # (`409 QUANTITY_BELOW_PURCHASED`). Hoy no existe la tabla de compras.
     now = _now()
-    before = {"quantity": _qty(line.quantity), "quantity_unit": line.quantity_unit}
+    before = {
+        "quantity": _qty(line.quantity),
+        "quantity_unit": line.quantity_unit,
+        "quantity_unit_confirmed": line.quantity_unit_confirmed,
+    }
     line.quantity = value
+    if unit != line.quantity_unit:
+        # Cambiar la unidad invalida la confirmación anterior: la persona tendría que volver a
+        # confirmarla al agregar la oferta. Nunca se arrastra una decisión a otra unidad.
+        line.quantity_unit_confirmed = False
     line.quantity_unit = unit
     line.version += 1
     line.updated_at = now
@@ -1829,7 +1964,11 @@ async def patch_line(
         aggregate_version=line.version,
         payload={"quote_id": str(quote.id), "quantity": _qty(value), "quantity_unit": unit},
         before=before,
-        after={"quantity": _qty(value), "quantity_unit": unit},
+        after={
+            "quantity": _qty(value),
+            "quantity_unit": unit,
+            "quantity_unit_confirmed": line.quantity_unit_confirmed,
+        },
     )
     return line, cart, quote
 
@@ -1965,6 +2104,34 @@ async def move_line(
             "La oferta destino corresponde a otro artículo.",
             status_code=422,
         )
+    # La línea nueva nunca queda no cotizable: o su unidad coincide con la oferta destino, o se
+    # conserva la confirmación humana vigente de la línea de origen. Si la oferta destino no
+    # declara unidad y la línea no trae esa misma confirmación, se rechaza de forma controlada en
+    # vez de crear una línea sin subtotal que bloquearía la finalización.
+    declared_raw = _term(target.sale_unit)
+    declared = _unit(declared_raw) if declared_raw is not None else None
+    unit_confirmed = False
+    if declared is not None:
+        if unit != declared:
+            raise DomainError(
+                "UNIT_MISMATCH",
+                "La oferta de destino declara su unidad de venta como "
+                f"«{_unit_label(declared)}»: la línea no puede mover "
+                f"«{_unit_label(unit)}».",
+                status_code=422,
+                details={"offer_unit": declared, "line_unit": unit},
+            )
+    elif unit is not None:
+        unit_confirmed = bool(source.quantity_unit_confirmed and unit == source.quantity_unit)
+        if not unit_confirmed:
+            raise DomainError(
+                "UNIT_MISMATCH",
+                "La oferta de destino no declara su unidad de venta: mueve la línea solo desde "
+                "una confirmación vigente de la misma unidad. Para una unidad nueva, agrega la "
+                "oferta confirmándola.",
+                status_code=422,
+                details={"offer_unit": None, "line_unit": unit},
+            )
     target_cart = (
         await session.execute(
             select(QuoteCart).where(
@@ -2043,6 +2210,7 @@ async def move_line(
         trade_item_id=target.trade_item_id,
         quantity=value,
         quantity_unit=unit,
+        quantity_unit_confirmed=unit_confirmed,
         status="active",
         demand_item_id=demand.id if demand else None,
         coverage_relation=relation,
@@ -2079,6 +2247,7 @@ async def move_line(
             "offer_snapshot_id": str(source.offer_snapshot_id),
             "quantity": _qty(source.quantity),
             "quantity_unit": source.quantity_unit,
+            "quantity_unit_confirmed": source.quantity_unit_confirmed,
             "demand_item_id": str(source.demand_item_id) if source.demand_item_id else None,
         },
         after={
@@ -2086,6 +2255,7 @@ async def move_line(
             "offer_snapshot_id": str(new_line.offer_snapshot_id),
             "quantity": _qty(new_line.quantity),
             "quantity_unit": new_line.quantity_unit,
+            "quantity_unit_confirmed": new_line.quantity_unit_confirmed,
             "demand_item_id": str(new_line.demand_item_id) if new_line.demand_item_id else None,
             "demand_allocations": [
                 {
@@ -2747,7 +2917,7 @@ async def finalize_quote(
     offenders = [
         str(line.id)
         for line in lines
-        if line.quantity_unit != snapshots[line.offer_snapshot_id].sale_unit
+        if not _unit_matches_offer(line, snapshots[line.offer_snapshot_id])
         or not _currency_ok(snapshots[line.offer_snapshot_id].currency)
     ]
     if offenders:

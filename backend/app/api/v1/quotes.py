@@ -168,6 +168,15 @@ class LineIn(BaseModel):
         examples=[{"value": "3", "unit": "box"}],
         description="`value` entero > 0 (texto o número) y `unit` ∈ box|package|unit|bottle.",
     )
+    confirmed_sale_unit: str | None = Field(
+        default=None,
+        max_length=10,
+        description=(
+            "Unidad comercial confirmada por la administradora cuando la oferta no la declara "
+            "(excepción de FarmaLoop). No reemplaza el dato de la fuente y queda auditada. "
+            "Solo se admite si la oferta no publica unidad de venta."
+        ),
+    )
     demand_item_id: uuid.UUID | None = Field(
         default=None,
         description="Atajo de una sola asignación; incompatible con `demand_allocations`.",
@@ -618,6 +627,7 @@ async def add_line(
                 ),
                 "value": str(value),
                 "unit": unit,
+                "confirmed_sale_unit": body.confirmed_sale_unit,
                 "demand_item_id": str(body.demand_item_id) if body.demand_item_id else None,
                 "demand_allocations": sorted(
                     (
@@ -641,6 +651,7 @@ async def add_line(
             offer_context=body.offer.to_service() if body.offer is not None else None,
             quantity=value,
             quantity_unit=unit,
+            confirmed_sale_unit=body.confirmed_sale_unit,
             demand_item_id=body.demand_item_id,
             demand_allocations=(
                 [a.model_dump() for a in body.demand_allocations]

@@ -2149,6 +2149,130 @@ async def test_farmaloop_asocia_el_faltante_sin_unidad_y_lo_libera(api, sessions
         assert (await s.get(DemandItem, demand_id)).status == "released"
 
 
+async def test_farmaloop_salonpas_tres_unidades_finaliza_aunque_la_comparacion_no_cierre(
+    api, sessions
+):
+    """Caso de producción: Salonpas FarmaLoop × 3 asociado a un reporte de Pato.
+
+    La oferta viva no tiene vínculo explícito de SKU, así que la comparación comercial sigue
+    marcando `identity_mismatch` y `no_complete_total`. Eso es informativo: no bloquea el informe.
+    La finalización usa la oferta elegida, congela $2.990 × 3 = $8.970, libera solo ese reporte y
+    conserva su historial; el producto liberado puede volver a reportarse como faltante nuevo.
+    """
+    from app.services.actors import load_actor
+    from app.services.demand import record_observation
+
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+
+    async with sessions() as s, s.begin():
+        pato = AppUser(
+            organization_id=api.shop["org"], display_name="Pato", roles=["auxiliary"]
+        )
+        s.add(pato)
+        await s.flush()
+        pato_id = pato.id
+    async with sessions() as s, s.begin():
+        actor = await load_actor(s, pato_id)
+        reporte = await record_observation(
+            s,
+            actor,
+            text="salonpas",
+            idempotency_key="telegram-salonpas-produccion-1",
+            declared_quantity=Decimal("1"),
+            declared_unit="unit",
+        )
+        assert reporte.outcome == "created_item"
+        demand_id, version = reporte.item.id, reporte.item.version
+    assert reporte.item.display_name == "Salonpas"
+
+    # La cantidad operativa la decide la administración: 3 unidades (D-155). El reporte original
+    # conserva la unidad declarada por el auxiliar.
+    assert (
+        await _set_quantity(api, demand_id, version, value="3", unit="unit")
+    ).status_code == 200
+
+    quote_id = await _quote(api)
+    oferta = _live_offer(
+        api,
+        external="107581",
+        name="Salonpas x 10 Parches Dérmicos",
+        price="2990.00",
+        sale_unit=None,
+        price_basis=None,
+        stock_status="unknown",
+        stock_quantity=None,
+        stock_unit=None,
+    )
+    r = await _add_live(
+        api,
+        quote_id,
+        quantity="3",
+        offer=oferta,
+        allocations=[{"demand_item_id": str(demand_id), "quantity": 3}],
+    )
+    assert r.status_code == 201, r.text
+    line = r.json()["line"]
+    assert line["quantity"] == {"value": "3", "unit": None}
+    assert line["unit_price"]["basis"] is None and line["unit_price"]["sale_unit"] is None
+    assert line["subtotal"] == {"amount": "8970.00", "currency": "CLP"}
+
+    # La evaluación comercial no puede afirmar el SKU de la oferta viva: no hay total estimado.
+    detalle = (await api.get(f"/api/v1/quotes/{quote_id}", headers=H(api))).json()
+    evaluation = detalle["carts"][0]["evaluation"]
+    assert "identity_mismatch" in evaluation["blockers"]
+    assert evaluation["comparison_status"] == "no_complete_total"
+    assert detalle["estimated_total"]["available"] is False
+
+    r = await _finalize(api, quote_id, key="finalize-salonpas-produccion")
+    assert r.status_code == 200, r.text
+    informe = r.json()["report"]
+    assert informe["total"] == {"amount": "8970.00", "currency": "CLP"}
+    item = informe["items"][0]
+    assert item["quantity"] == {"value": "3", "unit": None}
+    assert item["subtotal"] == {"amount": "8970.00", "currency": "CLP"}
+    assert item["demand_allocations"] == [
+        {"demand_item_id": str(demand_id), "quantity": "3"}
+    ]
+    assert r.json()["pending"] == []
+    assert r.json()["released"] == [
+        {"demand_item_id": str(demand_id), "quantity": "3", "quantity_unit": "unit"}
+    ]
+
+    # Fuera del listado activo de Telegram y de «Faltantes por cotizar»; el historial queda.
+    texto = await _telegram_list(sessions, api.shop["org"])
+    assert "Salonpas" not in texto
+    assert str(demand_id) not in await _active_ids(api)
+    async with sessions() as s:
+        viejo = await s.get(DemandItem, demand_id)
+        assert viejo.status == "released" and viejo.released_quote_id == uuid.UUID(quote_id)
+        observaciones = (
+            await s.execute(
+                select(DemandObservation).where(
+                    DemandObservation.demand_item_id == demand_id
+                )
+            )
+        ).scalars().all()
+        assert len(observaciones) == 1
+        assert (observaciones[0].declared_quantity, observaciones[0].declared_unit) == (
+            Decimal("1"),
+            "unit",
+        )
+
+    # La misma persona puede volver a reportar Salonpas: es un faltante nuevo e independiente.
+    async with sessions() as s, s.begin():
+        actor = await load_actor(s, pato_id)
+        nuevo = await record_observation(
+            s,
+            actor,
+            text="salonpas",
+            idempotency_key="telegram-salonpas-produccion-2",
+            declared_quantity=Decimal("1"),
+            declared_unit="unit",
+        )
+        assert nuevo.outcome == "created_item"
+        assert nuevo.item.id != demand_id and nuevo.item.status == "active"
+
+
 async def test_farmaloop_no_asocia_si_el_reporte_se_mide_en_caja(api, sessions):
     """Sin unidad comercial no se cubre un reporte en caja: no se inventa la equivalencia."""
     await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
@@ -2470,3 +2594,558 @@ async def test_telegram_oculta_el_faltante_liberado_y_admite_un_nuevo_reporte(ap
     r = await api.get("/api/v1/demand-items?status=released", headers=H(api))
     respaldo = next(row for row in r.json()["items"] if row["id"] == str(demand_id))
     assert respaldo["replenishment_state"] == "released"
+
+
+# --------------------------------------------------- unidad comercial confirmada (FarmaLoop)
+
+
+def _add_confirmada(
+    api,
+    quote_id,
+    *,
+    quantity,
+    confirmed,
+    allocations=None,
+    offer=None,
+    offer_snapshot_id=None,
+    unit=None,
+):
+    body = {
+        "supplier_id": str(api.shop["suppliers"]["uno"]),
+        "quantity": {"value": quantity, "unit": unit},
+        "confirmed_sale_unit": confirmed,
+    }
+    if offer_snapshot_id is not None:
+        body["offer_snapshot_id"] = str(offer_snapshot_id)
+    else:
+        body["offer"] = offer
+    if allocations is not None:
+        body["demand_allocations"] = allocations
+    return api.post(f"/api/v1/quotes/{quote_id}/lines", json=body, headers=H(api))
+
+
+async def test_predual_confirma_caja_y_asocia_el_faltante_en_cajas(api, sessions):
+    """Predual x 10 comprimidos: FarmaLoop no publica unidad y la administradora confirma caja.
+
+    La confirmación es explícita y auditada, no reescribe el snapshot (sigue `sale_unit = NULL`),
+    permite asociar el reporte medido en cajas y la finalización lo libera como siempre.
+    """
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    quote_id = await _quote(api)
+    oferta = _live_offer(
+        api,
+        external="PREDUAL-10",
+        name="Predual x 10 comprimidos",
+        price="2500.00",
+        sale_unit=None,
+        price_basis=None,
+        stock_status="unknown",
+        stock_quantity=None,
+        stock_unit=None,
+    )
+    r = await _add_confirmada(
+        api,
+        quote_id,
+        quantity="10",
+        confirmed="box",
+        allocations=_alloc(api, ("exacta", 10)),
+        offer=oferta,
+        unit=None,
+    )
+    assert r.status_code == 201, r.text
+    line = r.json()["line"]
+    assert line["quantity"] == {"value": "10", "unit": "box"}
+    assert line["demand_item_id"] == str(api.shop["demands"]["exacta"])
+    assert _alloc_pairs(line["demand_allocations"]) == [(str(api.shop["demands"]["exacta"]), "10")]
+    assert line["unit_price"]["sale_unit"] is None
+    assert line["subtotal"] == {"amount": "25000.00", "currency": "CLP"}
+
+    async with sessions() as s:
+        row = await s.get(QuoteLine, uuid.UUID(line["line_id"]))
+        snapshot = await s.get(OfferSnapshot, row.offer_snapshot_id)
+        # La fuente no se reescribe: la confirmación vive en la línea y en la auditoría.
+        assert snapshot.sale_unit is None
+        events = (
+            await s.execute(
+                select(AuditEvent).where(
+                    AuditEvent.action == "quote.line.add",
+                    AuditEvent.entity_id == row.id,
+                )
+            )
+        ).scalars().all()
+        assert events[-1].after["sale_unit_confirmation"] == {
+            "unit": "box",
+            "origin": "admin",
+            "confirmed_by": str(api.shop["admin"]),
+            "offer_declared_unit": None,
+        }
+
+    r = await _finalize(api, quote_id, key="finalize-predual-caja")
+    assert r.status_code == 200, r.text
+    assert r.json()["pending"] == []
+    assert r.json()["released"] == [
+        {
+            "demand_item_id": str(api.shop["demands"]["exacta"]),
+            "quantity": "10",
+            "quantity_unit": "box",
+        }
+    ]
+    async with sessions() as s:
+        assert (await s.get(DemandItem, api.shop["demands"]["exacta"])).status == "released"
+
+
+async def test_salonpas_confirma_envase_y_no_se_asume_caja(api, sessions):
+    """Salonpas: la unidad comercial la decide la persona y no se hardcodea «caja»."""
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    demand_id = api.shop["demands"]["desconocida"]
+    fila = await _demand_row(api, "desconocida")
+    r = await _set_quantity(api, demand_id, fila["version"], value="2", unit="package")
+    assert r.status_code == 200, r.text
+
+    quote_id = await _quote(api)
+    oferta = _live_offer(
+        api,
+        external="107581",
+        name="Salonpas x 10 Parches Dérmicos",
+        price="2990.00",
+        sale_unit=None,
+        price_basis=None,
+    )
+    r = await _add_confirmada(
+        api,
+        quote_id,
+        quantity="2",
+        confirmed="package",
+        allocations=_alloc(api, ("desconocida", 2)),
+        offer=oferta,
+        unit=None,
+    )
+    assert r.status_code == 201, r.text
+    line = r.json()["line"]
+    assert line["quantity"] == {"value": "2", "unit": "package"}
+    assert line["demand_item_id"] == str(demand_id)
+
+    async with sessions() as s:
+        row = await s.get(QuoteLine, uuid.UUID(line["line_id"]))
+        assert row.quantity_unit == "package"
+        snapshot = await s.get(OfferSnapshot, row.offer_snapshot_id)
+        assert snapshot.sale_unit is None
+
+    r = await _finalize(api, quote_id, key="finalize-salonpas-envase")
+    assert r.status_code == 200, r.text
+    assert r.json()["released"] == [
+        {"demand_item_id": str(demand_id), "quantity": "2", "quantity_unit": "package"}
+    ]
+
+
+async def test_unidad_confirmada_incompatible_bloquea_la_asociacion(api, sessions):
+    """Confirmar caja no basta para cubrir un reporte medido en unidades: no hay equivalencia."""
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    quote_id = await _quote(api)
+    oferta = _live_offer(
+        api,
+        external="PREDUAL-10",
+        name="Predual x 10 comprimidos",
+        sale_unit=None,
+        price_basis=None,
+    )
+    r = await _add_confirmada(
+        api,
+        quote_id,
+        quantity="2",
+        confirmed="box",
+        allocations=_alloc(api, ("unidad", 2)),
+        offer=oferta,
+        unit=None,
+    )
+    assert r.status_code == 422, r.text
+    error = r.json()["error"]
+    assert error["code"] == "UNIT_MISMATCH"
+    assert "«unidad»" in error["message"] and "«caja»" in error["message"]
+    assert error["details"]["report_unit"] == "unit"
+    assert error["details"]["line_unit"] == "box"
+
+    # La transacción se revirtió: no quedó carrito ni línea.
+    detalle = (await api.get(f"/api/v1/quotes/{quote_id}", headers=H(api))).json()
+    assert detalle["carts"] == []
+    async with sessions() as s:
+        assert (await s.execute(select(QuoteLine))).scalars().all() == []
+        # La observación de la oferta viva tampoco se escribió.
+        assert (
+            await s.execute(
+                select(OfferSnapshot).where(OfferSnapshot.external_id == "PREDUAL-10")
+            )
+        ).scalars().all() == []
+
+
+async def test_una_oferta_que_ya_declara_unidad_no_se_reemplaza(api, sessions):
+    """La confirmación no puede cambiar la unidad publicada por la fuente."""
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    quote_id = await _quote(api)
+    oferta = _live_offer(api, external="FL-PACK", sale_unit="package", price_basis=None)
+    r = await _add_confirmada(
+        api,
+        quote_id,
+        quantity="1",
+        confirmed="box",
+        offer=oferta,
+        unit="package",
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "UNIT_CONFIRMATION_CONFLICTS_WITH_OFFER"
+    assert r.json()["error"]["details"] == {
+        "declared_unit": "package",
+        "confirmed_unit": "box",
+    }
+
+    # Repetir la unidad declarada es aceptable, pero no se registra como confirmación humana.
+    r = await _add_confirmada(
+        api,
+        quote_id,
+        quantity="1",
+        confirmed="package",
+        offer=oferta,
+        unit="package",
+    )
+    assert r.status_code == 201, r.text
+    line = r.json()["line"]
+    assert line["quantity"] == {"value": "1", "unit": "package"}
+    async with sessions() as s:
+        events = (
+            await s.execute(
+                select(AuditEvent).where(
+                    AuditEvent.action == "quote.line.add",
+                    AuditEvent.entity_id == uuid.UUID(line["line_id"]),
+                )
+            )
+        ).scalars().all()
+        assert "sale_unit_confirmation" not in events[-1].after
+
+
+async def test_snapshot_sin_unidad_no_adopta_la_unidad_que_envia_el_cliente(api, sessions):
+    """Cerrar el atajo: una oferta guardada sin unidad no la adquiere por la petición.
+
+    Primero se crea el snapshot agregando la oferta viva sin asociar. Después, en otra
+    cotización, se intenta reutilizar el snapshot enviando `quantity.unit = box` sin confirmar:
+    el backend rechaza porque la observación no declara unidad. Con la confirmación explícita,
+    la misma operación procede y queda auditada.
+    """
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    oferta = _live_offer(
+        api, external="FL-NULL", sale_unit=None, price_basis=None, name="Predual x 10"
+    )
+    primera = await _quote(api)
+    r = await api.post(
+        f"/api/v1/quotes/{primera}/lines",
+        json={
+            "supplier_id": str(api.shop["suppliers"]["uno"]),
+            "offer": oferta,
+            "quantity": {"value": "1", "unit": None},
+        },
+        headers=H(api),
+    )
+    assert r.status_code == 201, r.text
+    snapshot_id = r.json()["line"]["offer_snapshot_id"]
+
+    segunda = await _quote(api)
+    r = await _add_confirmada(
+        api,
+        segunda,
+        quantity="1",
+        confirmed=None,
+        allocations=_alloc(api, ("exacta", 1)),
+        offer_snapshot_id=snapshot_id,
+        unit="box",
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "UNIT_MISMATCH"
+    assert r.json()["error"]["details"] == {"offer_unit": None, "line_unit": "box"}
+
+    r = await _add_confirmada(
+        api,
+        segunda,
+        quantity="1",
+        confirmed="box",
+        allocations=_alloc(api, ("exacta", 1)),
+        offer_snapshot_id=snapshot_id,
+        unit=None,
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["line"]["quantity"] == {"value": "1", "unit": "box"}
+    assert r.json()["line"]["demand_item_id"] == str(api.shop["demands"]["exacta"])
+
+
+async def test_salonpas_confirma_caja_en_un_faltante_medido_en_cajas(api, sessions):
+    """Salonpas desde un faltante medido en cajas: la persona confirma caja y se libera al cerrar."""
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    demand_id = api.shop["demands"]["desconocida"]
+    fila = await _demand_row(api, "desconocida")
+    r = await _set_quantity(api, demand_id, fila["version"], value="2", unit="box")
+    assert r.status_code == 200, r.text
+
+    quote_id = await _quote(api)
+    oferta = _live_offer(
+        api,
+        external="107581",
+        name="Salonpas x 10 Parches Dérmicos",
+        price="2990.00",
+        sale_unit=None,
+        price_basis=None,
+    )
+    r = await _add_confirmada(
+        api,
+        quote_id,
+        quantity="2",
+        confirmed="box",
+        allocations=_alloc(api, ("desconocida", 2)),
+        offer=oferta,
+        unit=None,
+    )
+    assert r.status_code == 201, r.text
+    line = r.json()["line"]
+    assert line["quantity"] == {"value": "2", "unit": "box"}
+    assert line["demand_item_id"] == str(demand_id)
+    assert line["subtotal"] == {"amount": "5980.00", "currency": "CLP"}
+
+    async with sessions() as s:
+        row = await s.get(QuoteLine, uuid.UUID(line["line_id"]))
+        assert row.quantity_unit == "box"
+        assert row.quantity_unit_confirmed is True
+        snapshot = await s.get(OfferSnapshot, row.offer_snapshot_id)
+        assert snapshot.sale_unit is None
+
+    r = await _finalize(api, quote_id, key="finalize-salonpas-caja")
+    assert r.status_code == 200, r.text
+    assert r.json()["released"] == [
+        {"demand_item_id": str(demand_id), "quantity": "2", "quantity_unit": "box"}
+    ]
+
+
+async def _snapshot_de_destino(
+    api, sessions, *, trade_item_id, external, sale_unit, price="1700.00"
+) -> str:
+    """Snapshot de otra oferta del MISMO artículo, para probar el movimiento de líneas."""
+    async with sessions() as s:
+        snapshot = OfferSnapshot(
+            organization_id=api.shop["org"],
+            supplier_id=api.shop["suppliers"]["uno"],
+            source_id=api.shop["sources"]["uno"],
+            trade_item_id=uuid.UUID(str(trade_item_id)),
+            external_id=external,
+            price_amount=Decimal(price),
+            currency="CLP",
+            price_basis=None,
+            sale_unit=sale_unit,
+            stock_status="unknown",
+            observed_at=datetime.now(UTC),
+            data_origin="simulated",
+        )
+        s.add(snapshot)
+        await s.commit()
+        return str(snapshot.id)
+
+
+async def test_mover_una_linea_confirmada_conserva_la_confirmacion_y_su_liberacion(
+    api, sessions
+):
+    """Mover no pierde la decisión humana: la línea destino sigue cotizable y cubre el faltante."""
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    origen = _live_offer(
+        api,
+        external="FL-ORIGEN",
+        name="Predual x 10 comprimidos",
+        sale_unit=None,
+        price_basis=None,
+    )
+    quote_id = await _quote(api)
+    r = await _add_confirmada(
+        api,
+        quote_id,
+        quantity="10",
+        confirmed="box",
+        allocations=_alloc(api, ("exacta", 10)),
+        offer=origen,
+        unit=None,
+    )
+    assert r.status_code == 201, r.text
+    source = r.json()["line"]
+    destino_snapshot = await _snapshot_de_destino(
+        api,
+        sessions,
+        trade_item_id=source["trade_item_id"],
+        external="FL-DESTINO",
+        sale_unit=None,
+    )
+
+    r = await api.post(
+        f"/api/v1/quotes/{quote_id}/lines/{source['line_id']}/move",
+        json={
+            "target_offer_snapshot_id": destino_snapshot,
+            "quantity": {"value": "10", "unit": "box"},
+            "demand_allocations": _alloc(api, ("exacta", 10)),
+        },
+        headers=H(api),
+    )
+    assert r.status_code == 200, r.text
+    moved = r.json()["line"]
+    assert moved["quantity"] == {"value": "10", "unit": "box"}
+    assert moved["subtotal"] == {"amount": "17000.00", "currency": "CLP"}
+    async with sessions() as s:
+        row = await s.get(QuoteLine, uuid.UUID(moved["line_id"]))
+        assert row.quantity_unit == "box"
+        assert row.quantity_unit_confirmed is True
+        snapshot = await s.get(OfferSnapshot, row.offer_snapshot_id)
+        assert snapshot.sale_unit is None
+
+    r = await _finalize(api, quote_id, key="finalize-move-confirmada")
+    assert r.status_code == 200, r.text
+    assert r.json()["released"] == [
+        {
+            "demand_item_id": str(api.shop["demands"]["exacta"]),
+            "quantity": "10",
+            "quantity_unit": "box",
+        }
+    ]
+
+
+async def test_mover_a_una_oferta_sin_unidad_sin_confirmacion_se_rechaza(api, sessions):
+    """Sin confirmación vigente no se crea una línea no cotizable: se rechaza y no se toca nada."""
+    quote_id = await _quote(api)
+    origen = _live_offer(api, external="SRC-BOX")
+    r = await api.post(
+        f"/api/v1/quotes/{quote_id}/lines",
+        json={
+            "supplier_id": str(api.shop["suppliers"]["uno"]),
+            "offer": origen,
+            "quantity": {"value": "2", "unit": "box"},
+        },
+        headers=H(api),
+    )
+    assert r.status_code == 201, r.text
+    source = r.json()["line"]
+    sin_unidad = await _snapshot_de_destino(
+        api,
+        sessions,
+        trade_item_id=source["trade_item_id"],
+        external="DEST-NULL",
+        sale_unit=None,
+    )
+    con_envase = await _snapshot_de_destino(
+        api,
+        sessions,
+        trade_item_id=source["trade_item_id"],
+        external="DEST-PACK",
+        sale_unit="package",
+    )
+
+    for destino, details in (
+        (sin_unidad, {"offer_unit": None, "line_unit": "box"}),
+        (con_envase, {"offer_unit": "package", "line_unit": "box"}),
+    ):
+        r = await api.post(
+            f"/api/v1/quotes/{quote_id}/lines/{source['line_id']}/move",
+            json={
+                "target_offer_snapshot_id": destino,
+                "quantity": {"value": "2", "unit": "box"},
+            },
+            headers=H(api),
+        )
+        assert r.status_code == 422, r.text
+        assert r.json()["error"]["code"] == "UNIT_MISMATCH"
+        assert r.json()["error"]["details"] == details
+
+    # La transacción se revirtió: la línea de origen sigue activa y con su unidad.
+    r = await api.get(f"/api/v1/quotes/{quote_id}", headers=H(api))
+    activas = [
+        linea
+        for carrito in r.json()["carts"]
+        for linea in carrito["lines"]
+        if linea["status"] == "active"
+    ]
+    assert [(linea["line_id"], linea["quantity"]) for linea in activas] == [
+        (source["line_id"], {"value": "2", "unit": "box"})
+    ]
+
+
+async def test_patch_conserva_la_confirmacion_al_cambiar_solo_la_cantidad(api, sessions):
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    quote_id = await _quote(api)
+    oferta = _live_offer(
+        api,
+        external="FL-PATCH",
+        name="Predual x 10 comprimidos",
+        price="2500.00",
+        sale_unit=None,
+        price_basis=None,
+    )
+    r = await _add_confirmada(
+        api,
+        quote_id,
+        quantity="10",
+        confirmed="box",
+        allocations=_alloc(api, ("exacta", 10)),
+        offer=oferta,
+        unit=None,
+    )
+    assert r.status_code == 201, r.text
+    line = r.json()["line"]
+
+    r = await api.patch(
+        f"/api/v1/quotes/{quote_id}/lines/{line['line_id']}",
+        json={"version": line["version"], "quantity": _q(value="5")},
+        headers=H(api),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["line"]["quantity"] == {"value": "5", "unit": "box"}
+    assert r.json()["line"]["subtotal"] == {"amount": "12500.00", "currency": "CLP"}
+    async with sessions() as s:
+        row = await s.get(QuoteLine, uuid.UUID(line["line_id"]))
+        assert row.quantity_unit_confirmed is True
+
+
+async def test_patch_no_cambia_la_unidad_a_una_incompatible(api, sessions):
+    """PATCH no deja la línea fuera de la unidad de su oferta ni inventa una confirmación."""
+    await _perfil_conector(api, sessions, config=FARMALOOP_CONFIG)
+    quote_id = await _quote(api)
+    sin_unidad = _live_offer(
+        api,
+        external="FL-PATCH-NULL",
+        name="Salonpas x 10 Parches Dérmicos",
+        sale_unit=None,
+        price_basis=None,
+    )
+    r = await _add_confirmada(
+        api,
+        quote_id,
+        quantity="2",
+        confirmed="box",
+        offer=sin_unidad,
+        unit=None,
+    )
+    assert r.status_code == 201, r.text
+    confirmada = r.json()["line"]
+
+    r = await api.patch(
+        f"/api/v1/quotes/{quote_id}/lines/{confirmada['line_id']}",
+        json={"version": confirmada["version"], "quantity": {"value": "2", "unit": "package"}},
+        headers=H(api),
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "UNIT_MISMATCH"
+    assert r.json()["error"]["details"] == {"offer_unit": None, "line_unit": "package"}
+    async with sessions() as s:
+        row = await s.get(QuoteLine, uuid.UUID(confirmada["line_id"]))
+        assert row.quantity_unit == "box"
+        assert row.quantity_unit_confirmed is True
+
+    r = await _add(api, quote_id, value="2")
+    declarada = r.json()["line"]
+    r = await api.patch(
+        f"/api/v1/quotes/{quote_id}/lines/{declarada['line_id']}",
+        json={"version": declarada["version"], "quantity": {"value": "2", "unit": "package"}},
+        headers=H(api),
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "UNIT_MISMATCH"
+    assert r.json()["error"]["details"] == {"offer_unit": "box", "line_unit": "package"}
+

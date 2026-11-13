@@ -27,6 +27,7 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKeyConstraint,
@@ -221,6 +222,12 @@ class QuoteLine(Base):
         # E5 exige entero positivo: una línea es una selección explícita, no una estimación.
         CheckConstraint("quantity = trunc(quantity)", name="cantidad_entera"),
         CheckConstraint(f"quantity_unit IN ({UNITS})", name="unidad_valida"),
+        # Confirmación humana de la unidad comercial cuando la oferta no la declara (FarmaLoop).
+        # No reescribe el snapshot: solo una línea con unidad puede llevar la marca.
+        CheckConstraint(
+            "NOT quantity_unit_confirmed OR quantity_unit IS NOT NULL",
+            name="confirmacion_con_unidad",
+        ),
         CheckConstraint("status IN ('active','removed')", name="estado_valido"),
         CheckConstraint(
             "(status = 'removed') = (removed_at IS NOT NULL AND removed_by IS NOT NULL)",
@@ -268,6 +275,12 @@ class QuoteLine(Base):
     # NULL = la oferta elegida no informa su unidad de venta: la cantidad se cuenta en ofertas y
     # no se declara una unidad que nadie informó (migración 0030).
     quantity_unit: Mapped[str | None] = mapped_column(String(10))
+    # `true` = la administración confirmó esa unidad comercial porque la fuente no la declara. La
+    # observación de la oferta sigue con `sale_unit = NULL`; quien confirmó es `added_by` y el
+    # antes/después queda en la auditoría de `quote.line.add` (migración 0032).
+    quantity_unit_confirmed: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false")
+    )
     status: Mapped[str] = mapped_column(String(10), server_default="active")
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     removed_by: Mapped[uuid.UUID | None] = mapped_column()
