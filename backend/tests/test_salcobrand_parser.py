@@ -72,6 +72,19 @@ def test_normaliza_los_campos_publicados() -> None:
     assert product["match"] == {"level": "not_evaluated", "causes": []}
 
 
+def test_un_nombre_bien_escrito_llega_intacto() -> None:
+    """El parser no decodifica de nuevo: el texto UTF-8 correcto se conserva tal cual.
+
+    Regresión del caso abierto del 2026-11-13: si el nombre publicado viene bien escrito, no debe
+    transformarse. El origen del nombre afectado (mojibake) se revisará con la respuesta original.
+    """
+    nombre = "Sicadol Forte (B) Ácido Mefenámico 500mg 10 Comprimidos"
+    [product] = salcobrand.parse_search_results(
+        _payload(_hit(name=nombre)), observed_at=OBSERVED_AT
+    )
+    assert product["published_name"] == nombre
+
+
 def test_sin_oferta_general_solo_hay_precio_normal() -> None:
     [product] = salcobrand.parse_search_results(
         _payload(

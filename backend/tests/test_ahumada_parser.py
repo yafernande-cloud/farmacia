@@ -326,18 +326,73 @@ def test_una_pagina_sin_ninguna_coincidencia_no_es_un_resultado() -> None:
     assert ahumada.parse_search_results(html, query="Ácido Mefenámico") == []
 
 
-def test_una_ficha_de_marca_se_conserva_cuando_la_pagina_confirma() -> None:
-    """La ficha que no repite la consulta no se descarta si la página sí la confirma."""
+def test_una_pagina_con_una_coincidencia_directa_descarta_el_relleno() -> None:
+    """Con una ficha que confirma, las que no comparten nada de la consulta son vitrina."""
     html = FIXTURE.read_text(encoding="utf-8")
     results = ahumada.parse_search_results(html, query="paracetamol")
-    assert {item["chain_item_id"] for item in results} == {"84574", "84575", "70000", "99999"}
-    assert _by_id(results, "84574")["match"] == {
+    assert [item["chain_item_id"] for item in results] == ["84574"]
+    assert results[0]["match"] == {
         "level": "direct",
         "causes": ["all_query_terms_in_name"],
     }
-    assert _by_id(results, "84575")["match"] == {
+
+
+def test_una_pagina_con_solo_coincidencias_parciales_no_es_un_resultado() -> None:
+    """Una palabra suelta («Ácido») no convierte una vitrina en resultados de la búsqueda."""
+    html = """
+    <div class="product-tile" data-pid="1">
+      <a href="/producto-1.html"><h2>Neutrogena Hydro Boost 50 g</h2></a>
+      <div class="product-price">$12.990</div>
+    </div>
+    <div class="product-tile" data-pid="2">
+      <a href="/producto-2.html"><h2>Ácido Hialurónico Loreal Revitalift 30 ml</h2></a>
+      <div class="product-price">$19.990</div>
+    </div>
+    <div class="product-tile" data-pid="3">
+      <a href="/producto-3.html"><h2>Tranexton 500 mg 30 comprimidos</h2></a>
+      <div class="product-price">$8.990</div>
+    </div>
+    """
+    assert ahumada.parse_search_results(html, query="Acido mefenamico") == []
+
+
+def test_una_coincidencia_directa_se_ve_y_los_productos_ajenos_quedan_fuera() -> None:
+    html = """
+    <div class="product-tile" data-pid="140196">
+      <a href="/producto-140196.html"><h2>Ácido Mefenámico 500 mg x 10 Comprimidos</h2></a>
+      <div class="product-price">$2.990</div>
+    </div>
+    <div class="product-tile" data-pid="2">
+      <a href="/producto-2.html"><h2>Neutrogena Hydro Boost 50 g</h2></a>
+      <div class="product-price">$12.990</div>
+    </div>
+    <div class="product-tile" data-pid="3">
+      <a href="/producto-3.html"><h2>Tranexton 500 mg 30 comprimidos</h2></a>
+      <div class="product-price">$8.990</div>
+    </div>
+    """
+    results = ahumada.parse_search_results(html, query="Acido mefenamico")
+    assert [item["chain_item_id"] for item in results] == ["140196"]
+    assert results[0]["match"]["level"] == "direct"
+
+
+def test_las_sugerencias_parciales_se_conservan_junto_a_una_coincidencia_directa() -> None:
+    """Una sugerencia que comparte parte de la consulta se conserva, marcada como parcial."""
+    html = """
+    <div class="product-tile" data-pid="140196">
+      <a href="/producto-140196.html"><h2>Ácido Mefenámico 500 mg x 10 Comprimidos</h2></a>
+      <div class="product-price">$2.990</div>
+    </div>
+    <div class="product-tile" data-pid="2">
+      <a href="/producto-2.html"><h2>Ácido Hialurónico Loreal Revitalift 30 ml</h2></a>
+      <div class="product-price">$19.990</div>
+    </div>
+    """
+    results = ahumada.parse_search_results(html, query="Acido mefenamico")
+    assert [item["chain_item_id"] for item in results] == ["140196", "2"]
+    assert results[1]["match"] == {
         "level": "related",
-        "causes": ["query_not_confirmed_by_name"],
+        "causes": ["partial_query_match"],
     }
 
 

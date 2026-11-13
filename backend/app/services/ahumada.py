@@ -116,8 +116,6 @@ _UNIT_ALIASES = {
     "grs.": "g",
 }
 _SKIP_PRICE_RE = re.compile(r"\b(cuotas?|meses|paga en)\b", re.IGNORECASE)
-# Causa de `classify_match` para una ficha cuyo nombre no confirma ninguna parte de la consulta.
-_UNCONFIRMED = "query_not_confirmed_by_name"
 
 _NAME_CLASSES = ("product-name", "tile-name", "product-title", "pdp-link")
 # En las fichas de Ahumada el laboratorio se publica en el bloque de marca de la tarjeta
@@ -632,9 +630,10 @@ def parse_search_results(
     Con `query` cada ficha declara su relación con lo pedido (`direct` o `related` + causa). La
     página de resultados de Ahumada puede ser una vitrina de destacados cuando la consulta no
     existe: si **ninguna** ficha confirma la consulta, la página no es un resultado y se devuelve
-    vacío. Si al menos una confirma, se conservan todas —una ficha de marca legítima («Xumadol»
-    para «paracetamol») no se descarta por no repetir la palabra— y la que no confirma queda como
-    `related`, nunca presentada como coincidencia.
+    vacío. Si al menos una confirma, se conservan las que confirman y las que solo coinciden en
+    parte (se presentan como `related` y la pantalla las rotula «Coincidencia no confirmada»).
+    Las fichas que no confirman nada de la consulta se descartan: son relleno de la vitrina, no
+    resultados. Una coincidencia parcial por sí sola tampoco convierte la página en resultado.
     """
     moment = observed_at or datetime.now(UTC)
     root = _parse_html(html_text)
@@ -649,8 +648,16 @@ def parse_search_results(
         results.append(product)
         if len(results) >= limit:
             break
-    if query and results and all(_UNCONFIRMED in item["match"]["causes"] for item in results):
-        return []
+    if query:
+        # Sin ninguna coincidencia directa la página entera es una vitrina. Con al menos una,
+        # se descarta el relleno (ni siquiera comparte un término) y se conservan las parciales.
+        if not any(item["match"]["level"] == "direct" for item in results):
+            return []
+        results = [
+            item
+            for item in results
+            if item["match"]["level"] == "direct" or "partial_query_match" in item["match"]["causes"]
+        ]
     return results
 
 
