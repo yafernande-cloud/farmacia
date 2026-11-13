@@ -1,12 +1,18 @@
 # Golden set
 
-## 1. Qué es
+## Qué situaciones cubre
 
-`casos.json` reúne **17 casos** con entrada, resultado esperado, versión del prompt, modelo y
-verificaciones. La evaluación incluida es **offline**: las salidas del modelo están pregrabadas en
-el archivo y se pasan por los validadores reales del backend. No son respuestas de OpenAI.
+El golden set reúne **17 escenarios**. Hay 16 casos evaluables y un escenario de referencia,
+V7, que queda fuera del alcance porque el bot recibe una foto por producto.
 
-El golden set debe ejecutarse cada vez que cambie un prompt, el modelo o el esquema de salida.
+Los ejemplos representan situaciones del Cotizador: leer un envase parcialmente visible,
+distinguir la cantidad impresa de la cantidad que se quiere comprar y pedir aclaración cuando
+una preferencia comercial es ambigua. Las imágenes son sintéticas y los textos de prueba son
+ficticios. Cada caso describe la entrada, el resultado esperado y la evidencia que lo respalda.
+
+La validación offline pasa respuestas preparadas por los validadores del backend. El resultado
+guardado registra **16/16 casos evaluables y 60/60 comprobaciones**. La [comparación con OpenAI](../comparacion/resultados-2026-11-13.md)
+usó una selección de nueve casos.
 
 ## 2. Casos de visión (7)
 

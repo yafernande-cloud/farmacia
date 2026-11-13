@@ -228,7 +228,7 @@ automatizadas usan dobles.
 - «Enseñar a la IA» usa `/api/v1/commercial-observations` para guardar la observación y el
   endpoint de interpretaciones para procesarla. La responsable del proyecto confirmó su
   funcionamiento en el sitio publicado.
-- La comparación de prompts con OpenAI sigue pendiente.
+- Consulta el [informe de la comparación con OpenAI](../prompts/comparacion/resultados-2026-11-13.md).
 
 ## 9. Proveedores, fuentes e importación
 

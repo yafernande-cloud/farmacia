@@ -1,0 +1,4890 @@
+{
+  "generado_en": "2026-11-13T16:06:57+00:00",
+  "tipo": "llamadas_reales_a_openai",
+  "advertencia": "Resultados reales del modelo elegido. No se extrapolan a otros modelos ni a producción. Cada repetición es una llamada cobrada.",
+  "plan": {
+    "tareas": [
+      "vision",
+      "observaciones"
+    ],
+    "casos": {
+      "vision": [
+        "V1",
+        "V2",
+        "V3",
+        "V4",
+        "V6"
+      ],
+      "observaciones": [
+        "O1",
+        "O10",
+        "O2",
+        "O7"
+      ]
+    },
+    "versiones": {
+      "vision": [
+        "vision-v1",
+        "vision-v2",
+        "vision-v3"
+      ],
+      "observaciones": [
+        "observaciones-v1",
+        "observaciones-v2",
+        "observaciones-v3"
+      ]
+    },
+    "repeticiones": 2,
+    "llamadas": 54,
+    "modelos": {
+      "observaciones": "gpt-5.4-mini",
+      "vision": "gpt-5.4-mini"
+    },
+    "tarifas_usd_por_millon": {
+      "entrada": "0.75",
+      "salida": "4.50"
+    },
+    "max_tokens_salida": {
+      "vision": 800,
+      "observaciones": 800
+    },
+    "criterio": "Acierto estricto por repetición: se cumplen todas las verificaciones de `casos.json`. O10 se informa aparte como capacidad nueva de v3."
+  },
+  "estimacion_previa": {
+    "llamadas": 54,
+    "por_tarea": {
+      "vision": 30,
+      "observaciones": 24
+    },
+    "tokens_entrada_esperados": 106244,
+    "tokens_salida_esperados": 18900,
+    "costo_esperado_usd": "0.1647",
+    "costo_reserva_usd": "0.3309",
+    "advertencia": "El costo esperado usa la longitud real de los prompts y ~350 tokens de salida. La reserva usa 2,5 caracteres por token, 2000 tokens de imagen por foto y el tope de salida por llamada: es el techo a partir del cual el evaluador se detendría."
+  },
+  "repeticiones": 2,
+  "completado": true,
+  "presupuesto": {
+    "tope_usd": "0.25",
+    "gastado_usd": "0.117255",
+    "llamadas": 54,
+    "tokens_entrada": 103858,
+    "tokens_salida": 8747,
+    "detenido_por": null
+  },
+  "resultados": [
+    {
+      "numero": 1,
+      "tarea": "vision",
+      "caso": "V1",
+      "version_prompt": "vision-v1",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "fececde3a0b3b8adaee06d4aea2c8236d6fd1692bbdce080446d406ec597a5a1",
+      "hash_imagen": "0581cf728c9311e4aa77a336d93288a4e9cfd13ed7569a8a2c91907cb11ec352",
+      "tokens_entrada": 1536,
+      "tokens_salida": 167,
+      "latencia_ms": 3216,
+      "costo_estimado_usd": "0.001904",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"PREDUAL\",\"confidence\":0.99},{\"attribute\":\"ingredient\",\"text\":\"Paracetamol\",\"confidence\":0.98},{\"attribute\":\"ingredient\",\"text\":\"Mefenamina\",\"confidence\":0.98},{\"attribute\":\"strength\",\"text\":\"500 mg\",\"confidence\":0.98},{\"attribute\":\"strength\",\"text\":\"250 mg\",\"confidence\":0.98},{\"attribute\":\"form\",\"text\":\"Comprimidos recubiertos\",\"confidence\":0.93},{\"attribute\":\"content\",\"text\":\"10 comprimidos\",\"confidence\":0.99},{\"attribute\":\"laboratory\",\"text\":\"Laboratorios Ficticios\",\"confidence\":0.9}],\"warnings\":[]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "PREDUAL"
+          ],
+          "ingredient": [
+            "Paracetamol",
+            "Mefenamina"
+          ],
+          "strength": [
+            "500 mg",
+            "250 mg"
+          ],
+          "form": [
+            "Comprimidos recubiertos"
+          ],
+          "content": [
+            "10 comprimidos"
+          ],
+          "laboratory": [
+            "Laboratorios Ficticios"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Predual 500 mg 250 mg comprimido recubierto x 10",
+          "search_query": "PREDUAL",
+          "variant": null,
+          "uncertainties": [],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "campos.product_name.0",
+          "esperado": {
+            "igual": "Predual"
+          },
+          "obtenido": "PREDUAL",
+          "cumple": false
+        },
+        {
+          "ruta": "reading.search_query",
+          "esperado": {
+            "igual": "Predual"
+          },
+          "obtenido": "PREDUAL",
+          "cumple": false
+        },
+        {
+          "ruta": "reading.variant",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "contiene": "variant_not_commercial"
+          },
+          "obtenido": [],
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 2,
+      "tarea": "vision",
+      "caso": "V1",
+      "version_prompt": "vision-v2",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "644652c6bd3bacee322f6c0e91bde17c14baae4e0a08d79c00fe99a4dc386003",
+      "hash_imagen": "0581cf728c9311e4aa77a336d93288a4e9cfd13ed7569a8a2c91907cb11ec352",
+      "tokens_entrada": 1626,
+      "tokens_salida": 316,
+      "latencia_ms": 2858,
+      "costo_estimado_usd": "0.002642",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"PREDUAL\",\"confidence\":0.99},{\"attribute\":\"ingredient\",\"text\":\"Paracetamol\",\"confidence\":0.99},{\"attribute\":\"ingredient\",\"text\":\"Mefenamina\",\"confidence\":0.99},{\"attribute\":\"strength\",\"text\":\"500 mg\",\"confidence\":0.99},{\"attribute\":\"strength\",\"text\":\"250 mg\",\"confidence\":0.99},{\"attribute\":\"form\",\"text\":\"Comprimidos recubiertos\",\"confidence\":0.95},{\"attribute\":\"content\",\"text\":\"10 comprimidos\",\"confidence\":0.99},{\"attribute\":\"laboratory\",\"text\":\"Laboratorios Ficticios\",\"confidence\":0.95},{\"attribute\":\"packaging\",\"text\":\"caja\",\"confidence\":0.86},{\"attribute\":\"visible_quantity\",\"text\":\"1\",\"confidence\":0.99}],\"warnings\":[]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "PREDUAL"
+          ],
+          "ingredient": [
+            "Paracetamol",
+            "Mefenamina"
+          ],
+          "strength": [
+            "500 mg",
+            "250 mg"
+          ],
+          "form": [
+            "Comprimidos recubiertos"
+          ],
+          "content": [
+            "10 comprimidos"
+          ],
+          "laboratory": [
+            "Laboratorios Ficticios"
+          ],
+          "packaging": [
+            "caja"
+          ],
+          "visible_quantity": [
+            "1"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Predual 500 mg 250 mg comprimido recubierto x 10",
+          "search_query": "PREDUAL",
+          "variant": null,
+          "uncertainties": [],
+          "ignored": [
+            "visible_quantity_not_a_requested_quantity"
+          ]
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "campos.product_name.0",
+          "esperado": {
+            "igual": "Predual"
+          },
+          "obtenido": "PREDUAL",
+          "cumple": false
+        },
+        {
+          "ruta": "reading.search_query",
+          "esperado": {
+            "igual": "Predual"
+          },
+          "obtenido": "PREDUAL",
+          "cumple": false
+        },
+        {
+          "ruta": "reading.variant",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "contiene": "variant_not_commercial"
+          },
+          "obtenido": [],
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 3,
+      "tarea": "vision",
+      "caso": "V1",
+      "version_prompt": "vision-v3",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "18570ff383d7cf8f7469e5938c33bb3f456ef602ba063ca687fcd66fb322a94f",
+      "hash_imagen": "0581cf728c9311e4aa77a336d93288a4e9cfd13ed7569a8a2c91907cb11ec352",
+      "tokens_entrada": 1773,
+      "tokens_salida": 262,
+      "latencia_ms": 5564,
+      "costo_estimado_usd": "0.002509",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"PREDUAL\",\"confidence\":0.99},{\"attribute\":\"ingredient\",\"text\":\"Paracetamol\",\"confidence\":0.99},{\"attribute\":\"strength\",\"text\":\"500 mg\",\"confidence\":0.99},{\"attribute\":\"ingredient\",\"text\":\"Mefenamina\",\"confidence\":0.99},{\"attribute\":\"strength\",\"text\":\"250 mg\",\"confidence\":0.99},{\"attribute\":\"form\",\"text\":\"Comprimidos recubiertos\",\"confidence\":0.98},{\"attribute\":\"content\",\"text\":\"10 comprimidos\",\"confidence\":0.99},{\"attribute\":\"laboratory\",\"text\":\"Laboratorios Ficticios\",\"confidence\":0.95}],\"warnings\":[\"El texto «ANALGÉSICO FEMENINO» parece una indicación promocional/terapéutica, no una variante comercial.\"]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "PREDUAL"
+          ],
+          "ingredient": [
+            "Paracetamol",
+            "Mefenamina"
+          ],
+          "strength": [
+            "500 mg",
+            "250 mg"
+          ],
+          "form": [
+            "Comprimidos recubiertos"
+          ],
+          "content": [
+            "10 comprimidos"
+          ],
+          "laboratory": [
+            "Laboratorios Ficticios"
+          ]
+        },
+        "warnings": [
+          "El texto «ANALGÉSICO FEMENINO» parece una indicación promocional/terapéutica, no una variante comercial."
+        ],
+        "reading": {
+          "status": "identified",
+          "display_name": "Predual 500 mg 250 mg comprimido recubierto x 10",
+          "search_query": "PREDUAL",
+          "variant": null,
+          "uncertainties": [],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "campos.product_name.0",
+          "esperado": {
+            "igual": "Predual"
+          },
+          "obtenido": "PREDUAL",
+          "cumple": false
+        },
+        {
+          "ruta": "reading.search_query",
+          "esperado": {
+            "igual": "Predual"
+          },
+          "obtenido": "PREDUAL",
+          "cumple": false
+        },
+        {
+          "ruta": "reading.variant",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "contiene": "variant_not_commercial"
+          },
+          "obtenido": [],
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 4,
+      "tarea": "vision",
+      "caso": "V1",
+      "version_prompt": "vision-v1",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "fececde3a0b3b8adaee06d4aea2c8236d6fd1692bbdce080446d406ec597a5a1",
+      "hash_imagen": "0581cf728c9311e4aa77a336d93288a4e9cfd13ed7569a8a2c91907cb11ec352",
+      "tokens_entrada": 1536,
+      "tokens_salida": 166,
+      "latencia_ms": 1918,
+      "costo_estimado_usd": "0.001899",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"PREDUAL\",\"confidence\":0.99},{\"attribute\":\"ingredient\",\"text\":\"Paracetamol\",\"confidence\":0.98},{\"attribute\":\"ingredient\",\"text\":\"Mefenamina\",\"confidence\":0.98},{\"attribute\":\"strength\",\"text\":\"500 mg\",\"confidence\":0.98},{\"attribute\":\"strength\",\"text\":\"250 mg\",\"confidence\":0.98},{\"attribute\":\"form\",\"text\":\"Comprimidos recubiertos\",\"confidence\":0.95},{\"attribute\":\"content\",\"text\":\"10 comprimidos\",\"confidence\":0.99},{\"attribute\":\"laboratory\",\"text\":\"Laboratorios Ficticios\",\"confidence\":0.9}],\"warnings\":[]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "PREDUAL"
+          ],
+          "ingredient": [
+            "Paracetamol",
+            "Mefenamina"
+          ],
+          "strength": [
+            "500 mg",
+            "250 mg"
+          ],
+          "form": [
+            "Comprimidos recubiertos"
+          ],
+          "content": [
+            "10 comprimidos"
+          ],
+          "laboratory": [
+            "Laboratorios Ficticios"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Predual 500 mg 250 mg comprimido recubierto x 10",
+          "search_query": "PREDUAL",
+          "variant": null,
+          "uncertainties": [],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "campos.product_name.0",
+          "esperado": {
+            "igual": "Predual"
+          },
+          "obtenido": "PREDUAL",
+          "cumple": false
+        },
+        {
+          "ruta": "reading.search_query",
+          "esperado": {
+            "igual": "Predual"
+          },
+          "obtenido": "PREDUAL",
+          "cumple": false
+        },
+        {
+          "ruta": "reading.variant",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "contiene": "variant_not_commercial"
+          },
+          "obtenido": [],
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 5,
+      "tarea": "vision",
+      "caso": "V1",
+      "version_prompt": "vision-v2",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "644652c6bd3bacee322f6c0e91bde17c14baae4e0a08d79c00fe99a4dc386003",
+      "hash_imagen": "0581cf728c9311e4aa77a336d93288a4e9cfd13ed7569a8a2c91907cb11ec352",
+      "tokens_entrada": 1626,
+      "tokens_salida": 322,
+      "latencia_ms": 2734,
+      "costo_estimado_usd": "0.002668",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"PREDUAL\",\"confidence\":0.99},{\"attribute\":\"ingredient\",\"text\":\"Paracetamol\",\"confidence\":0.98},{\"attribute\":\"strength\",\"text\":\"500 mg\",\"confidence\":0.98},{\"attribute\":\"ingredient\",\"text\":\"Mefenamina\",\"confidence\":0.94},{\"attribute\":\"strength\",\"text\":\"250 mg\",\"confidence\":0.94},{\"attribute\":\"form\",\"text\":\"Comprimidos recubiertos\",\"confidence\":0.96},{\"attribute\":\"content\",\"text\":\"10 comprimidos\",\"confidence\":0.99},{\"attribute\":\"laboratory\",\"text\":\"Laboratorios Ficticios\",\"confidence\":0.97},{\"attribute\":\"packaging\",\"text\":\"caja\",\"confidence\":0.8}],\"warnings\":[] }",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "PREDUAL"
+          ],
+          "ingredient": [
+            "Paracetamol",
+            "Mefenamina"
+          ],
+          "strength": [
+            "500 mg",
+            "250 mg"
+          ],
+          "form": [
+            "Comprimidos recubiertos"
+          ],
+          "content": [
+            "10 comprimidos"
+          ],
+          "laboratory": [
+            "Laboratorios Ficticios"
+          ],
+          "packaging": [
+            "caja"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Predual 500 mg 250 mg comprimido recubierto x 10",
+          "search_query": "PREDUAL",
+          "variant": null,
+          "uncertainties": [],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "campos.product_name.0",
+          "esperado": {
+            "igual": "Predual"
+          },
+          "obtenido": "PREDUAL",
+          "cumple": false
+        },
+        {
+          "ruta": "reading.search_query",
+          "esperado": {
+            "igual": "Predual"
+          },
+          "obtenido": "PREDUAL",
+          "cumple": false
+        },
+        {
+          "ruta": "reading.variant",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "contiene": "variant_not_commercial"
+          },
+          "obtenido": [],
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 6,
+      "tarea": "vision",
+      "caso": "V1",
+      "version_prompt": "vision-v3",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "18570ff383d7cf8f7469e5938c33bb3f456ef602ba063ca687fcd66fb322a94f",
+      "hash_imagen": "0581cf728c9311e4aa77a336d93288a4e9cfd13ed7569a8a2c91907cb11ec352",
+      "tokens_entrada": 1773,
+      "tokens_salida": 267,
+      "latencia_ms": 2158,
+      "costo_estimado_usd": "0.002531",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"PREDUAL\",\"confidence\":0.99},{\"attribute\":\"ingredient\",\"text\":\"Paracetamol\",\"confidence\":0.99},{\"attribute\":\"strength\",\"text\":\"500 mg\",\"confidence\":0.99},{\"attribute\":\"ingredient\",\"text\":\"Mefenamina\",\"confidence\":0.99},{\"attribute\":\"strength\",\"text\":\"250 mg\",\"confidence\":0.99},{\"attribute\":\"form\",\"text\":\"Comprimidos recubiertos\",\"confidence\":0.97},{\"attribute\":\"content\",\"text\":\"10 comprimidos\",\"confidence\":0.99},{\"attribute\":\"laboratory\",\"text\":\"Laboratorios Ficticios\",\"confidence\":0.96}],\"warnings\":[\"El texto \\\"ANALGÉSICO FEMENINO\\\" aparece como descripción promocional/terapéutica, no como variante comercial.\"]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "PREDUAL"
+          ],
+          "ingredient": [
+            "Paracetamol",
+            "Mefenamina"
+          ],
+          "strength": [
+            "500 mg",
+            "250 mg"
+          ],
+          "form": [
+            "Comprimidos recubiertos"
+          ],
+          "content": [
+            "10 comprimidos"
+          ],
+          "laboratory": [
+            "Laboratorios Ficticios"
+          ]
+        },
+        "warnings": [
+          "El texto \"ANALGÉSICO FEMENINO\" aparece como descripción promocional/terapéutica, no como variante comercial."
+        ],
+        "reading": {
+          "status": "identified",
+          "display_name": "Predual 500 mg 250 mg comprimido recubierto x 10",
+          "search_query": "PREDUAL",
+          "variant": null,
+          "uncertainties": [],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "campos.product_name.0",
+          "esperado": {
+            "igual": "Predual"
+          },
+          "obtenido": "PREDUAL",
+          "cumple": false
+        },
+        {
+          "ruta": "reading.search_query",
+          "esperado": {
+            "igual": "Predual"
+          },
+          "obtenido": "PREDUAL",
+          "cumple": false
+        },
+        {
+          "ruta": "reading.variant",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "contiene": "variant_not_commercial"
+          },
+          "obtenido": [],
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 7,
+      "tarea": "vision",
+      "caso": "V2",
+      "version_prompt": "vision-v1",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "fececde3a0b3b8adaee06d4aea2c8236d6fd1692bbdce080446d406ec597a5a1",
+      "hash_imagen": "05c72697dc41b416d7f975cea261edc712e51a7066816b847f143d1d940b3638",
+      "tokens_entrada": 1536,
+      "tokens_salida": 224,
+      "latencia_ms": 2110,
+      "costo_estimado_usd": "0.002160",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"TRAMADOL / PARACETAMOL\",\"confidence\":0.98},{\"attribute\":\"ingredient\",\"text\":\"Tramadol clorhidrato / Paracetamol\",\"confidence\":0.97},{\"attribute\":\"strength\",\"text\":\"37,5 mg / 325 mg\",\"confidence\":0.99},{\"attribute\":\"form\",\"text\":\"Comprimidos de liberación prolongada\",\"confidence\":0.96},{\"attribute\":\"content\",\"text\":\"30 comprimidos\",\"confidence\":0.99}],\"warnings\":[]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "TRAMADOL / PARACETAMOL"
+          ],
+          "ingredient": [
+            "Tramadol clorhidrato / Paracetamol"
+          ],
+          "strength": [
+            "37,5 mg / 325 mg"
+          ],
+          "form": [
+            "Comprimidos de liberación prolongada"
+          ],
+          "content": [
+            "30 comprimidos"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Tramadol / paracetamol 37.5 mg/325 mg comprimido prolongada x 30",
+          "search_query": "TRAMADOL / PARACETAMOL",
+          "variant": null,
+          "uncertainties": [],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "campos.ingredient",
+          "esperado": {
+            "longitud": 2
+          },
+          "obtenido": [
+            "Tramadol clorhidrato / Paracetamol"
+          ],
+          "cumple": false
+        },
+        {
+          "ruta": "campos.strength",
+          "esperado": {
+            "longitud": 2
+          },
+          "obtenido": [
+            "37,5 mg / 325 mg"
+          ],
+          "cumple": false
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "contiene": "Tramadol"
+          },
+          "obtenido": "Tramadol / paracetamol 37.5 mg/325 mg comprimido prolongada x 30",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "no_contiene": "low_confidence"
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 8,
+      "tarea": "vision",
+      "caso": "V2",
+      "version_prompt": "vision-v2",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "644652c6bd3bacee322f6c0e91bde17c14baae4e0a08d79c00fe99a4dc386003",
+      "hash_imagen": "05c72697dc41b416d7f975cea261edc712e51a7066816b847f143d1d940b3638",
+      "tokens_entrada": 1626,
+      "tokens_salida": 229,
+      "latencia_ms": 2230,
+      "costo_estimado_usd": "0.002250",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"TRAMADOL / PARACETAMOL\",\"confidence\":0.99},{\"attribute\":\"ingredient\",\"text\":\"Tramadol clorhidrato\",\"confidence\":0.98},{\"attribute\":\"ingredient\",\"text\":\"Paracetamol\",\"confidence\":0.98},{\"attribute\":\"strength\",\"text\":\"37,5 mg\",\"confidence\":0.97},{\"attribute\":\"strength\",\"text\":\"325 mg\",\"confidence\":0.97},{\"attribute\":\"form\",\"text\":\"Comprimidos de liberación prolongada\",\"confidence\":0.96},{\"attribute\":\"content\",\"text\":\"30 comprimidos\",\"confidence\":0.99}],\"warnings\":[]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "TRAMADOL / PARACETAMOL"
+          ],
+          "ingredient": [
+            "Tramadol clorhidrato",
+            "Paracetamol"
+          ],
+          "strength": [
+            "37,5 mg",
+            "325 mg"
+          ],
+          "form": [
+            "Comprimidos de liberación prolongada"
+          ],
+          "content": [
+            "30 comprimidos"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Tramadol / paracetamol 37.5 mg 325 mg comprimido prolongada x 30",
+          "search_query": "TRAMADOL / PARACETAMOL",
+          "variant": null,
+          "uncertainties": [],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "campos.ingredient",
+          "esperado": {
+            "longitud": 2
+          },
+          "obtenido": [
+            "Tramadol clorhidrato",
+            "Paracetamol"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "campos.strength",
+          "esperado": {
+            "longitud": 2
+          },
+          "obtenido": [
+            "37,5 mg",
+            "325 mg"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "contiene": "Tramadol"
+          },
+          "obtenido": "Tramadol / paracetamol 37.5 mg 325 mg comprimido prolongada x 30",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "no_contiene": "low_confidence"
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 9,
+      "tarea": "vision",
+      "caso": "V2",
+      "version_prompt": "vision-v3",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "18570ff383d7cf8f7469e5938c33bb3f456ef602ba063ca687fcd66fb322a94f",
+      "hash_imagen": "05c72697dc41b416d7f975cea261edc712e51a7066816b847f143d1d940b3638",
+      "tokens_entrada": 1773,
+      "tokens_salida": 297,
+      "latencia_ms": 1873,
+      "costo_estimado_usd": "0.002666",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"ingredient\",\"text\":\"Tramadol clorhidrato\",\"confidence\":0.98},{\"attribute\":\"ingredient\",\"text\":\"Paracetamol\",\"confidence\":0.99},{\"attribute\":\"strength\",\"text\":\"37,5 mg\",\"confidence\":0.98},{\"attribute\":\"strength\",\"text\":\"325 mg\",\"confidence\":0.98},{\"attribute\":\"form\",\"text\":\"Comprimidos\",\"confidence\":0.96},{\"attribute\":\"release\",\"text\":\"liberación prolongada\",\"confidence\":0.96},{\"attribute\":\"content\",\"text\":\"30 comprimidos\",\"confidence\":0.99},{\"attribute\":\"packaging\",\"text\":\"caja\",\"confidence\":0.9},{\"attribute\":\"visible_quantity\",\"text\":\"1\",\"confidence\":0.99}],\"warnings\":[\"No se aprecia nombre comercial del producto\",\"No se observa marca, laboratorio ni código de barras\"]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "ingredient": [
+            "Tramadol clorhidrato",
+            "Paracetamol"
+          ],
+          "strength": [
+            "37,5 mg",
+            "325 mg"
+          ],
+          "form": [
+            "Comprimidos"
+          ],
+          "release": [
+            "liberación prolongada"
+          ],
+          "content": [
+            "30 comprimidos"
+          ],
+          "packaging": [
+            "caja"
+          ],
+          "visible_quantity": [
+            "1"
+          ]
+        },
+        "warnings": [
+          "No se aprecia nombre comercial del producto",
+          "No se observa marca, laboratorio ni código de barras"
+        ],
+        "reading": {
+          "status": "identified",
+          "display_name": "Tramadol clorhidrato paracetamol liberacion 37.5 mg 325 mg comprimido prolongada x 30",
+          "search_query": "Tramadol clorhidrato paracetamol liberacion 37.5 mg 325 mg",
+          "variant": null,
+          "uncertainties": [],
+          "ignored": [
+            "visible_quantity_not_a_requested_quantity"
+          ]
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "campos.ingredient",
+          "esperado": {
+            "longitud": 2
+          },
+          "obtenido": [
+            "Tramadol clorhidrato",
+            "Paracetamol"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "campos.strength",
+          "esperado": {
+            "longitud": 2
+          },
+          "obtenido": [
+            "37,5 mg",
+            "325 mg"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "contiene": "Tramadol"
+          },
+          "obtenido": "Tramadol clorhidrato paracetamol liberacion 37.5 mg 325 mg comprimido prolongada x 30",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "no_contiene": "low_confidence"
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 10,
+      "tarea": "vision",
+      "caso": "V2",
+      "version_prompt": "vision-v1",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "fececde3a0b3b8adaee06d4aea2c8236d6fd1692bbdce080446d406ec597a5a1",
+      "hash_imagen": "05c72697dc41b416d7f975cea261edc712e51a7066816b847f143d1d940b3638",
+      "tokens_entrada": 1536,
+      "tokens_salida": 141,
+      "latencia_ms": 1764,
+      "costo_estimado_usd": "0.001786",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"TRAMADOL / PARACETAMOL\",\"confidence\":0.99},{\"attribute\":\"ingredient\",\"text\":\"Tramadol clorhidrato / Paracetamol\",\"confidence\":0.97},{\"attribute\":\"strength\",\"text\":\"37,5 mg / 325 mg\",\"confidence\":0.99},{\"attribute\":\"form\",\"text\":\"Comprimidos de liberación prolongada\",\"confidence\":0.94},{\"attribute\":\"content\",\"text\":\"30 comprimidos\",\"confidence\":0.99}],\"warnings\":[]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "TRAMADOL / PARACETAMOL"
+          ],
+          "ingredient": [
+            "Tramadol clorhidrato / Paracetamol"
+          ],
+          "strength": [
+            "37,5 mg / 325 mg"
+          ],
+          "form": [
+            "Comprimidos de liberación prolongada"
+          ],
+          "content": [
+            "30 comprimidos"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Tramadol / paracetamol 37.5 mg/325 mg comprimido prolongada x 30",
+          "search_query": "TRAMADOL / PARACETAMOL",
+          "variant": null,
+          "uncertainties": [],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "campos.ingredient",
+          "esperado": {
+            "longitud": 2
+          },
+          "obtenido": [
+            "Tramadol clorhidrato / Paracetamol"
+          ],
+          "cumple": false
+        },
+        {
+          "ruta": "campos.strength",
+          "esperado": {
+            "longitud": 2
+          },
+          "obtenido": [
+            "37,5 mg / 325 mg"
+          ],
+          "cumple": false
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "contiene": "Tramadol"
+          },
+          "obtenido": "Tramadol / paracetamol 37.5 mg/325 mg comprimido prolongada x 30",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "no_contiene": "low_confidence"
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 11,
+      "tarea": "vision",
+      "caso": "V2",
+      "version_prompt": "vision-v2",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "644652c6bd3bacee322f6c0e91bde17c14baae4e0a08d79c00fe99a4dc386003",
+      "hash_imagen": "05c72697dc41b416d7f975cea261edc712e51a7066816b847f143d1d940b3638",
+      "tokens_entrada": 1626,
+      "tokens_salida": 240,
+      "latencia_ms": 2406,
+      "costo_estimado_usd": "0.002300",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"ingredient\",\"text\":\"Tramadol\",\"confidence\":0.99},{\"attribute\":\"ingredient\",\"text\":\"Paracetamol\",\"confidence\":0.99},{\"attribute\":\"strength\",\"text\":\"37,5 mg\",\"confidence\":0.99},{\"attribute\":\"strength\",\"text\":\"325 mg\",\"confidence\":0.99},{\"attribute\":\"form\",\"text\":\"Comprimidos de liberación prolongada\",\"confidence\":0.96},{\"attribute\":\"content\",\"text\":\"30 comprimidos\",\"confidence\":0.99},{\"attribute\":\"visible_quantity\",\"text\":\"1\",\"confidence\":0.99}],\"warnings\":[\"No se aprecia un nombre comercial distinto; solo se leen los principios activos.\"]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "ingredient": [
+            "Tramadol",
+            "Paracetamol"
+          ],
+          "strength": [
+            "37,5 mg",
+            "325 mg"
+          ],
+          "form": [
+            "Comprimidos de liberación prolongada"
+          ],
+          "content": [
+            "30 comprimidos"
+          ],
+          "visible_quantity": [
+            "1"
+          ]
+        },
+        "warnings": [
+          "No se aprecia un nombre comercial distinto; solo se leen los principios activos."
+        ],
+        "reading": {
+          "status": "identified",
+          "display_name": "Tramadol paracetamol liberacion 37.5 mg 325 mg comprimido prolongada x 30",
+          "search_query": "Tramadol paracetamol liberacion 37.5 mg 325 mg",
+          "variant": null,
+          "uncertainties": [],
+          "ignored": [
+            "visible_quantity_not_a_requested_quantity"
+          ]
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "campos.ingredient",
+          "esperado": {
+            "longitud": 2
+          },
+          "obtenido": [
+            "Tramadol",
+            "Paracetamol"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "campos.strength",
+          "esperado": {
+            "longitud": 2
+          },
+          "obtenido": [
+            "37,5 mg",
+            "325 mg"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "contiene": "Tramadol"
+          },
+          "obtenido": "Tramadol paracetamol liberacion 37.5 mg 325 mg comprimido prolongada x 30",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "no_contiene": "low_confidence"
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 12,
+      "tarea": "vision",
+      "caso": "V2",
+      "version_prompt": "vision-v3",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "18570ff383d7cf8f7469e5938c33bb3f456ef602ba063ca687fcd66fb322a94f",
+      "hash_imagen": "05c72697dc41b416d7f975cea261edc712e51a7066816b847f143d1d940b3638",
+      "tokens_entrada": 1773,
+      "tokens_salida": 317,
+      "latencia_ms": 2487,
+      "costo_estimado_usd": "0.002756",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"TRAMADOL / PARACETAMOL\",\"confidence\":0.98},{\"attribute\":\"ingredient\",\"text\":\"Tramadol clorhidrato\",\"confidence\":0.96},{\"attribute\":\"ingredient\",\"text\":\"Paracetamol\",\"confidence\":0.96},{\"attribute\":\"strength\",\"text\":\"37,5 mg / 325 mg\",\"confidence\":0.99},{\"attribute\":\"form\",\"text\":\"Comprimidos de liberación prolongada\",\"confidence\":0.93},{\"attribute\":\"packaging\",\"text\":\"caja\",\"confidence\":0.86},{\"attribute\":\"content\",\"text\":\"30 comprimidos\",\"confidence\":0.99},{\"attribute\":\"visible_quantity\",\"text\":\"1\",\"confidence\":0.99}],\"warnings\":[]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "TRAMADOL / PARACETAMOL"
+          ],
+          "ingredient": [
+            "Tramadol clorhidrato",
+            "Paracetamol"
+          ],
+          "strength": [
+            "37,5 mg / 325 mg"
+          ],
+          "form": [
+            "Comprimidos de liberación prolongada"
+          ],
+          "packaging": [
+            "caja"
+          ],
+          "content": [
+            "30 comprimidos"
+          ],
+          "visible_quantity": [
+            "1"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Tramadol / paracetamol 37.5 mg/325 mg comprimido prolongada x 30",
+          "search_query": "TRAMADOL / PARACETAMOL",
+          "variant": null,
+          "uncertainties": [],
+          "ignored": [
+            "visible_quantity_not_a_requested_quantity"
+          ]
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "campos.ingredient",
+          "esperado": {
+            "longitud": 2
+          },
+          "obtenido": [
+            "Tramadol clorhidrato",
+            "Paracetamol"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "campos.strength",
+          "esperado": {
+            "longitud": 2
+          },
+          "obtenido": [
+            "37,5 mg / 325 mg"
+          ],
+          "cumple": false
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "contiene": "Tramadol"
+          },
+          "obtenido": "Tramadol / paracetamol 37.5 mg/325 mg comprimido prolongada x 30",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "no_contiene": "low_confidence"
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 13,
+      "tarea": "vision",
+      "caso": "V3",
+      "version_prompt": "vision-v1",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "fececde3a0b3b8adaee06d4aea2c8236d6fd1692bbdce080446d406ec597a5a1",
+      "hash_imagen": "5cee62b8ca927152d2501b06ca6132d173d716acf9dd7175401751fa1a9e5fd6",
+      "tokens_entrada": 1755,
+      "tokens_salida": 155,
+      "latencia_ms": 2015,
+      "costo_estimado_usd": "0.002014",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"ingredient\",\"text\":\"ibuprofeno\",\"confidence\":0.99},{\"attribute\":\"form\",\"text\":\"comprimidos\",\"confidence\":0.98},{\"attribute\":\"packaging\",\"text\":\"caja\",\"confidence\":0.86}],\"warnings\":[\"No se ve la dosis/potencia.\",\"No se ve el contenido del envase.\",\"No se aprecian marca, laboratorio ni registro sanitario.\",\"Texto visible: 'Venta bajo receta'.\"]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "ingredient": [
+            "ibuprofeno"
+          ],
+          "form": [
+            "comprimidos"
+          ],
+          "packaging": [
+            "caja"
+          ]
+        },
+        "warnings": [
+          "No se ve la dosis/potencia.",
+          "No se ve el contenido del envase.",
+          "No se aprecian marca, laboratorio ni registro sanitario.",
+          "Texto visible: 'Venta bajo receta'."
+        ],
+        "reading": {
+          "status": "identified",
+          "display_name": "Ibuprofeno comprimido",
+          "search_query": "Ibuprofeno",
+          "variant": null,
+          "uncertainties": [
+            "strength_not_visible"
+          ],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "legibility",
+          "esperado": {
+            "igual": "partial"
+          },
+          "obtenido": "clear",
+          "cumple": false
+        },
+        {
+          "ruta": "campos.strength",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        },
+        {
+          "ruta": "warnings",
+          "esperado": {
+            "longitud": 1
+          },
+          "obtenido": [
+            "No se ve la dosis/potencia.",
+            "No se ve el contenido del envase.",
+            "No se aprecian marca, laboratorio ni registro sanitario.",
+            "Texto visible: 'Venta bajo receta'."
+          ],
+          "cumple": false
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "contiene": "active_ingredient_not_visible"
+          },
+          "obtenido": [
+            "strength_not_visible"
+          ],
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 14,
+      "tarea": "vision",
+      "caso": "V3",
+      "version_prompt": "vision-v2",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "644652c6bd3bacee322f6c0e91bde17c14baae4e0a08d79c00fe99a4dc386003",
+      "hash_imagen": "5cee62b8ca927152d2501b06ca6132d173d716acf9dd7175401751fa1a9e5fd6",
+      "tokens_entrada": 1845,
+      "tokens_salida": 148,
+      "latencia_ms": 1657,
+      "costo_estimado_usd": "0.002050",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"ingredient\",\"text\":\"IBUPROFENO\",\"confidence\":0.99},{\"attribute\":\"form\",\"text\":\"Comprimidos\",\"confidence\":0.96},{\"attribute\":\"visible_quantity\",\"text\":\"1\",\"confidence\":0.95}],\"warnings\":[\"La dosis/concentración no es visible\",\"El contenido del envase no es visible\",\"La marca y el laboratorio no son visibles\"]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "ingredient": [
+            "IBUPROFENO"
+          ],
+          "form": [
+            "Comprimidos"
+          ],
+          "visible_quantity": [
+            "1"
+          ]
+        },
+        "warnings": [
+          "La dosis/concentración no es visible",
+          "El contenido del envase no es visible",
+          "La marca y el laboratorio no son visibles"
+        ],
+        "reading": {
+          "status": "identified",
+          "display_name": "Ibuprofeno comprimido",
+          "search_query": "Ibuprofeno",
+          "variant": null,
+          "uncertainties": [
+            "strength_not_visible"
+          ],
+          "ignored": [
+            "visible_quantity_not_a_requested_quantity"
+          ]
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "legibility",
+          "esperado": {
+            "igual": "partial"
+          },
+          "obtenido": "clear",
+          "cumple": false
+        },
+        {
+          "ruta": "campos.strength",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        },
+        {
+          "ruta": "warnings",
+          "esperado": {
+            "longitud": 1
+          },
+          "obtenido": [
+            "La dosis/concentración no es visible",
+            "El contenido del envase no es visible",
+            "La marca y el laboratorio no son visibles"
+          ],
+          "cumple": false
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "contiene": "active_ingredient_not_visible"
+          },
+          "obtenido": [
+            "strength_not_visible"
+          ],
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 15,
+      "tarea": "vision",
+      "caso": "V3",
+      "version_prompt": "vision-v3",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "18570ff383d7cf8f7469e5938c33bb3f456ef602ba063ca687fcd66fb322a94f",
+      "hash_imagen": "5cee62b8ca927152d2501b06ca6132d173d716acf9dd7175401751fa1a9e5fd6",
+      "tokens_entrada": 1992,
+      "tokens_salida": 226,
+      "latencia_ms": 1909,
+      "costo_estimado_usd": "0.002511",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"IBUPROFENO\",\"confidence\":0.98},{\"attribute\":\"ingredient\",\"text\":\"ibuprofeno\",\"confidence\":0.99},{\"attribute\":\"form\",\"text\":\"Comprimidos\",\"confidence\":0.97}],\"warnings\":[\"Solo se lee claramente el principio activo/nombre del producto; no se ve laboratorio, contenido ni otros datos del envase.\",\"Texto visible adicional: 'Venta bajo receta'.\"]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "IBUPROFENO"
+          ],
+          "ingredient": [
+            "ibuprofeno"
+          ],
+          "form": [
+            "Comprimidos"
+          ]
+        },
+        "warnings": [
+          "Solo se lee claramente el principio activo/nombre del producto; no se ve laboratorio, contenido ni otros datos del envase.",
+          "Texto visible adicional: 'Venta bajo receta'."
+        ],
+        "reading": {
+          "status": "identified",
+          "display_name": "Ibuprofeno comprimido",
+          "search_query": "IBUPROFENO",
+          "variant": null,
+          "uncertainties": [
+            "strength_not_visible"
+          ],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "legibility",
+          "esperado": {
+            "igual": "partial"
+          },
+          "obtenido": "clear",
+          "cumple": false
+        },
+        {
+          "ruta": "campos.strength",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        },
+        {
+          "ruta": "warnings",
+          "esperado": {
+            "longitud": 1
+          },
+          "obtenido": [
+            "Solo se lee claramente el principio activo/nombre del producto; no se ve laboratorio, contenido ni otros datos del envase.",
+            "Texto visible adicional: 'Venta bajo receta'."
+          ],
+          "cumple": false
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "contiene": "active_ingredient_not_visible"
+          },
+          "obtenido": [
+            "strength_not_visible"
+          ],
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 16,
+      "tarea": "vision",
+      "caso": "V3",
+      "version_prompt": "vision-v1",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "fececde3a0b3b8adaee06d4aea2c8236d6fd1692bbdce080446d406ec597a5a1",
+      "hash_imagen": "5cee62b8ca927152d2501b06ca6132d173d716acf9dd7175401751fa1a9e5fd6",
+      "tokens_entrada": 1755,
+      "tokens_salida": 201,
+      "latencia_ms": 2061,
+      "costo_estimado_usd": "0.002221",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"ingredient\",\"text\":\"ibuprofeno\",\"confidence\":0.99},{\"attribute\":\"product_name\",\"text\":\"IBUPROFENO\",\"confidence\":0.97},{\"attribute\":\"form\",\"text\":\"Comprimidos\",\"confidence\":0.98},{\"attribute\":\"packaging\",\"text\":\"caja\",\"confidence\":0.9},{\"attribute\":\"visible_quantity\",\"text\":\"1\",\"confidence\":0.95}],\"warnings\":[\"No se ve la dosis/concentración ni el contenido.\",\"No se aprecia marca, laboratorio ni registro sanitario.\"]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "ingredient": [
+            "ibuprofeno"
+          ],
+          "product_name": [
+            "IBUPROFENO"
+          ],
+          "form": [
+            "Comprimidos"
+          ],
+          "packaging": [
+            "caja"
+          ],
+          "visible_quantity": [
+            "1"
+          ]
+        },
+        "warnings": [
+          "No se ve la dosis/concentración ni el contenido.",
+          "No se aprecia marca, laboratorio ni registro sanitario."
+        ],
+        "reading": {
+          "status": "identified",
+          "display_name": "Ibuprofeno comprimido",
+          "search_query": "IBUPROFENO",
+          "variant": null,
+          "uncertainties": [
+            "strength_not_visible"
+          ],
+          "ignored": [
+            "visible_quantity_not_a_requested_quantity"
+          ]
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "legibility",
+          "esperado": {
+            "igual": "partial"
+          },
+          "obtenido": "clear",
+          "cumple": false
+        },
+        {
+          "ruta": "campos.strength",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        },
+        {
+          "ruta": "warnings",
+          "esperado": {
+            "longitud": 1
+          },
+          "obtenido": [
+            "No se ve la dosis/concentración ni el contenido.",
+            "No se aprecia marca, laboratorio ni registro sanitario."
+          ],
+          "cumple": false
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "contiene": "active_ingredient_not_visible"
+          },
+          "obtenido": [
+            "strength_not_visible"
+          ],
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 17,
+      "tarea": "vision",
+      "caso": "V3",
+      "version_prompt": "vision-v2",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "644652c6bd3bacee322f6c0e91bde17c14baae4e0a08d79c00fe99a4dc386003",
+      "hash_imagen": "5cee62b8ca927152d2501b06ca6132d173d716acf9dd7175401751fa1a9e5fd6",
+      "tokens_entrada": 1845,
+      "tokens_salida": 201,
+      "latencia_ms": 1893,
+      "costo_estimado_usd": "0.002288",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"ingredient\",\"text\":\"IBUPROFENO\",\"confidence\":0.99},{\"attribute\":\"form\",\"text\":\"Comprimidos\",\"confidence\":0.98},{\"attribute\":\"packaging\",\"text\":\"caja\",\"confidence\":0.7}],\"warnings\":[\"No se ve la dosis o concentración\",\"No se observa nombre comercial\",\"No se observa marca ni laboratorio\",\"No se observa contenido del envase\",\"No se observa registro sanitario\",\"Texto visible adicional: 'Venta bajo receta'\",\"No se ve código de barras\",\"visible_quantity no se puede determinar con certeza; parece 1 envase\"]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "ingredient": [
+            "IBUPROFENO"
+          ],
+          "form": [
+            "Comprimidos"
+          ],
+          "packaging": [
+            "caja"
+          ]
+        },
+        "warnings": [
+          "No se ve la dosis o concentración",
+          "No se observa nombre comercial",
+          "No se observa marca ni laboratorio",
+          "No se observa contenido del envase",
+          "No se observa registro sanitario",
+          "Texto visible adicional: 'Venta bajo receta'",
+          "No se ve código de barras",
+          "visible_quantity no se puede determinar con certeza; parece 1 envase"
+        ],
+        "reading": {
+          "status": "identified",
+          "display_name": "Ibuprofeno comprimido",
+          "search_query": "Ibuprofeno",
+          "variant": null,
+          "uncertainties": [
+            "strength_not_visible"
+          ],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "legibility",
+          "esperado": {
+            "igual": "partial"
+          },
+          "obtenido": "clear",
+          "cumple": false
+        },
+        {
+          "ruta": "campos.strength",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        },
+        {
+          "ruta": "warnings",
+          "esperado": {
+            "longitud": 1
+          },
+          "obtenido": [
+            "No se ve la dosis o concentración",
+            "No se observa nombre comercial",
+            "No se observa marca ni laboratorio",
+            "No se observa contenido del envase",
+            "No se observa registro sanitario",
+            "Texto visible adicional: 'Venta bajo receta'",
+            "No se ve código de barras",
+            "visible_quantity no se puede determinar con certeza; parece 1 envase"
+          ],
+          "cumple": false
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "contiene": "active_ingredient_not_visible"
+          },
+          "obtenido": [
+            "strength_not_visible"
+          ],
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 18,
+      "tarea": "vision",
+      "caso": "V3",
+      "version_prompt": "vision-v3",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "18570ff383d7cf8f7469e5938c33bb3f456ef602ba063ca687fcd66fb322a94f",
+      "hash_imagen": "5cee62b8ca927152d2501b06ca6132d173d716acf9dd7175401751fa1a9e5fd6",
+      "tokens_entrada": 1992,
+      "tokens_salida": 206,
+      "latencia_ms": 1856,
+      "costo_estimado_usd": "0.002421",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"ingredient\",\"text\":\"ibuprofeno\",\"confidence\":0.99},{\"attribute\":\"product_name\",\"text\":\"IBUPROFENO\",\"confidence\":0.98},{\"attribute\":\"form\",\"text\":\"Comprimidos\",\"confidence\":0.97},{\"attribute\":\"packaging\",\"text\":\"caja\",\"confidence\":0.84},{\"attribute\":\"visible_quantity\",\"text\":\"1\",\"confidence\":0.9}],\"warnings\":[\"No se ve concentración o dosis.\",\"No se aprecia laboratorio, marca ni contenido del envase.\",\"Texto visible: \\\"Venta bajo receta\\\".\"]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "ingredient": [
+            "ibuprofeno"
+          ],
+          "product_name": [
+            "IBUPROFENO"
+          ],
+          "form": [
+            "Comprimidos"
+          ],
+          "packaging": [
+            "caja"
+          ],
+          "visible_quantity": [
+            "1"
+          ]
+        },
+        "warnings": [
+          "No se ve concentración o dosis.",
+          "No se aprecia laboratorio, marca ni contenido del envase.",
+          "Texto visible: \"Venta bajo receta\"."
+        ],
+        "reading": {
+          "status": "identified",
+          "display_name": "Ibuprofeno comprimido",
+          "search_query": "IBUPROFENO",
+          "variant": null,
+          "uncertainties": [
+            "strength_not_visible"
+          ],
+          "ignored": [
+            "visible_quantity_not_a_requested_quantity"
+          ]
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "legibility",
+          "esperado": {
+            "igual": "partial"
+          },
+          "obtenido": "clear",
+          "cumple": false
+        },
+        {
+          "ruta": "campos.strength",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        },
+        {
+          "ruta": "warnings",
+          "esperado": {
+            "longitud": 1
+          },
+          "obtenido": [
+            "No se ve concentración o dosis.",
+            "No se aprecia laboratorio, marca ni contenido del envase.",
+            "Texto visible: \"Venta bajo receta\"."
+          ],
+          "cumple": false
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "contiene": "active_ingredient_not_visible"
+          },
+          "obtenido": [
+            "strength_not_visible"
+          ],
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 19,
+      "tarea": "vision",
+      "caso": "V4",
+      "version_prompt": "vision-v1",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "fececde3a0b3b8adaee06d4aea2c8236d6fd1692bbdce080446d406ec597a5a1",
+      "hash_imagen": "b8045f7c7d32edca802827b163a45b7ad46ab4ecda548527c303a18257ed00c0",
+      "tokens_entrada": 1536,
+      "tokens_salida": 78,
+      "latencia_ms": 1945,
+      "costo_estimado_usd": "0.001503",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"unreadable\",\"fields\":[],\"warnings\":[\"La imagen está demasiado borrosa; no se puede leer ningún texto del envase.\",\"No se distinguen marca, nombre del producto ni otros datos visibles.\"]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "unreadable",
+        "campos": {},
+        "warnings": [
+          "La imagen está demasiado borrosa; no se puede leer ningún texto del envase.",
+          "No se distinguen marca, nombre del producto ni otros datos visibles."
+        ],
+        "reading": {
+          "status": "needs_review",
+          "display_name": null,
+          "search_query": null,
+          "variant": null,
+          "uncertainties": [
+            "image_unreadable"
+          ],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "legibility",
+          "esperado": {
+            "igual": "unreadable"
+          },
+          "obtenido": "unreadable",
+          "cumple": true
+        },
+        {
+          "ruta": "campos",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": {},
+          "cumple": true
+        },
+        {
+          "ruta": "reading.status",
+          "esperado": {
+            "igual": "needs_review"
+          },
+          "obtenido": "needs_review",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        }
+      ],
+      "cumple": true,
+      "v4_ampliado": true
+    },
+    {
+      "numero": 20,
+      "tarea": "vision",
+      "caso": "V4",
+      "version_prompt": "vision-v2",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "644652c6bd3bacee322f6c0e91bde17c14baae4e0a08d79c00fe99a4dc386003",
+      "hash_imagen": "b8045f7c7d32edca802827b163a45b7ad46ab4ecda548527c303a18257ed00c0",
+      "tokens_entrada": 1626,
+      "tokens_salida": 94,
+      "latencia_ms": 1296,
+      "costo_estimado_usd": "0.001642",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"unreadable\",\"fields\":[],\"warnings\":[\"La fotografía está demasiado borrosa; no se distinguen texto, marca ni datos del envase.\"]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "unreadable",
+        "campos": {},
+        "warnings": [
+          "La fotografía está demasiado borrosa; no se distinguen texto, marca ni datos del envase."
+        ],
+        "reading": {
+          "status": "needs_review",
+          "display_name": null,
+          "search_query": null,
+          "variant": null,
+          "uncertainties": [
+            "image_unreadable"
+          ],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "legibility",
+          "esperado": {
+            "igual": "unreadable"
+          },
+          "obtenido": "unreadable",
+          "cumple": true
+        },
+        {
+          "ruta": "campos",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": {},
+          "cumple": true
+        },
+        {
+          "ruta": "reading.status",
+          "esperado": {
+            "igual": "needs_review"
+          },
+          "obtenido": "needs_review",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        }
+      ],
+      "cumple": true,
+      "v4_ampliado": true
+    },
+    {
+      "numero": 21,
+      "tarea": "vision",
+      "caso": "V4",
+      "version_prompt": "vision-v3",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "18570ff383d7cf8f7469e5938c33bb3f456ef602ba063ca687fcd66fb322a94f",
+      "hash_imagen": "b8045f7c7d32edca802827b163a45b7ad46ab4ecda548527c303a18257ed00c0",
+      "tokens_entrada": 1773,
+      "tokens_salida": 82,
+      "latencia_ms": 3433,
+      "costo_estimado_usd": "0.001699",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"unreadable\",\"fields\":[],\"warnings\":[\"La imagen está demasiado borrosa; no se distinguen textos ni datos del producto.\"]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "unreadable",
+        "campos": {},
+        "warnings": [
+          "La imagen está demasiado borrosa; no se distinguen textos ni datos del producto."
+        ],
+        "reading": {
+          "status": "needs_review",
+          "display_name": null,
+          "search_query": null,
+          "variant": null,
+          "uncertainties": [
+            "image_unreadable"
+          ],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "legibility",
+          "esperado": {
+            "igual": "unreadable"
+          },
+          "obtenido": "unreadable",
+          "cumple": true
+        },
+        {
+          "ruta": "campos",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": {},
+          "cumple": true
+        },
+        {
+          "ruta": "reading.status",
+          "esperado": {
+            "igual": "needs_review"
+          },
+          "obtenido": "needs_review",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        }
+      ],
+      "cumple": true,
+      "v4_ampliado": true
+    },
+    {
+      "numero": 22,
+      "tarea": "vision",
+      "caso": "V4",
+      "version_prompt": "vision-v1",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "fececde3a0b3b8adaee06d4aea2c8236d6fd1692bbdce080446d406ec597a5a1",
+      "hash_imagen": "b8045f7c7d32edca802827b163a45b7ad46ab4ecda548527c303a18257ed00c0",
+      "tokens_entrada": 1536,
+      "tokens_salida": 60,
+      "latencia_ms": 1948,
+      "costo_estimado_usd": "0.001422",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"unreadable\",\"fields\":[],\"warnings\":[\"La imagen está demasiado borrosa y no se distinguen textos ni datos del envase.\"]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "unreadable",
+        "campos": {},
+        "warnings": [
+          "La imagen está demasiado borrosa y no se distinguen textos ni datos del envase."
+        ],
+        "reading": {
+          "status": "needs_review",
+          "display_name": null,
+          "search_query": null,
+          "variant": null,
+          "uncertainties": [
+            "image_unreadable"
+          ],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "legibility",
+          "esperado": {
+            "igual": "unreadable"
+          },
+          "obtenido": "unreadable",
+          "cumple": true
+        },
+        {
+          "ruta": "campos",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": {},
+          "cumple": true
+        },
+        {
+          "ruta": "reading.status",
+          "esperado": {
+            "igual": "needs_review"
+          },
+          "obtenido": "needs_review",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        }
+      ],
+      "cumple": true,
+      "v4_ampliado": true
+    },
+    {
+      "numero": 23,
+      "tarea": "vision",
+      "caso": "V4",
+      "version_prompt": "vision-v2",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "644652c6bd3bacee322f6c0e91bde17c14baae4e0a08d79c00fe99a4dc386003",
+      "hash_imagen": "b8045f7c7d32edca802827b163a45b7ad46ab4ecda548527c303a18257ed00c0",
+      "tokens_entrada": 1626,
+      "tokens_salida": 65,
+      "latencia_ms": 2581,
+      "costo_estimado_usd": "0.001512",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"unreadable\",\"fields\":[],\"warnings\":[\"La imagen está demasiado borrosa; no se distinguen textos ni datos del envase.\"]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "unreadable",
+        "campos": {},
+        "warnings": [
+          "La imagen está demasiado borrosa; no se distinguen textos ni datos del envase."
+        ],
+        "reading": {
+          "status": "needs_review",
+          "display_name": null,
+          "search_query": null,
+          "variant": null,
+          "uncertainties": [
+            "image_unreadable"
+          ],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "legibility",
+          "esperado": {
+            "igual": "unreadable"
+          },
+          "obtenido": "unreadable",
+          "cumple": true
+        },
+        {
+          "ruta": "campos",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": {},
+          "cumple": true
+        },
+        {
+          "ruta": "reading.status",
+          "esperado": {
+            "igual": "needs_review"
+          },
+          "obtenido": "needs_review",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        }
+      ],
+      "cumple": true,
+      "v4_ampliado": true
+    },
+    {
+      "numero": 24,
+      "tarea": "vision",
+      "caso": "V4",
+      "version_prompt": "vision-v3",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "18570ff383d7cf8f7469e5938c33bb3f456ef602ba063ca687fcd66fb322a94f",
+      "hash_imagen": "b8045f7c7d32edca802827b163a45b7ad46ab4ecda548527c303a18257ed00c0",
+      "tokens_entrada": 1773,
+      "tokens_salida": 52,
+      "latencia_ms": 2500,
+      "costo_estimado_usd": "0.001564",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"unreadable\",\"fields\":[],\"warnings\":[\"La imagen está demasiado borrosa para leer datos del envase.\"]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "unreadable",
+        "campos": {},
+        "warnings": [
+          "La imagen está demasiado borrosa para leer datos del envase."
+        ],
+        "reading": {
+          "status": "needs_review",
+          "display_name": null,
+          "search_query": null,
+          "variant": null,
+          "uncertainties": [
+            "image_unreadable"
+          ],
+          "ignored": []
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "legibility",
+          "esperado": {
+            "igual": "unreadable"
+          },
+          "obtenido": "unreadable",
+          "cumple": true
+        },
+        {
+          "ruta": "campos",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": {},
+          "cumple": true
+        },
+        {
+          "ruta": "reading.status",
+          "esperado": {
+            "igual": "needs_review"
+          },
+          "obtenido": "needs_review",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        }
+      ],
+      "cumple": true,
+      "v4_ampliado": true
+    },
+    {
+      "numero": 25,
+      "tarea": "vision",
+      "caso": "V6",
+      "version_prompt": "vision-v1",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "fececde3a0b3b8adaee06d4aea2c8236d6fd1692bbdce080446d406ec597a5a1",
+      "hash_imagen": "2951227f4bb955de2aa07a67419eb01c7df6dd414e39b09545f7fa1456c66cd1",
+      "tokens_entrada": 1755,
+      "tokens_salida": 143,
+      "latencia_ms": 1945,
+      "costo_estimado_usd": "0.001960",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"MIGRANOL\",\"confidence\":0.99},{\"attribute\":\"brand\",\"text\":\"Bagó\",\"confidence\":0.95},{\"attribute\":\"form\",\"text\":\"Comprimidos\",\"confidence\":0.98},{\"attribute\":\"content\",\"text\":\"10 comprimidos\",\"confidence\":0.99},{\"attribute\":\"visible_quantity\",\"text\":\"3\",\"confidence\":0.93}],\"warnings\":[]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "MIGRANOL"
+          ],
+          "brand": [
+            "Bagó"
+          ],
+          "form": [
+            "Comprimidos"
+          ],
+          "content": [
+            "10 comprimidos"
+          ],
+          "visible_quantity": [
+            "3"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Migranol comprimido x 10",
+          "search_query": "Migranol",
+          "variant": null,
+          "uncertainties": [
+            "active_ingredient_not_visible",
+            "strength_not_visible"
+          ],
+          "ignored": [
+            "visible_quantity_not_a_requested_quantity"
+          ]
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.ignored",
+          "esperado": {
+            "contiene": "visible_quantity_not_a_requested_quantity"
+          },
+          "obtenido": [
+            "visible_quantity_not_a_requested_quantity"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "contiene": "Migranol"
+          },
+          "obtenido": "Migranol comprimido x 10",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 26,
+      "tarea": "vision",
+      "caso": "V6",
+      "version_prompt": "vision-v2",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "644652c6bd3bacee322f6c0e91bde17c14baae4e0a08d79c00fe99a4dc386003",
+      "hash_imagen": "2951227f4bb955de2aa07a67419eb01c7df6dd414e39b09545f7fa1456c66cd1",
+      "tokens_entrada": 1845,
+      "tokens_salida": 175,
+      "latencia_ms": 1833,
+      "costo_estimado_usd": "0.002171",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"Migranol\",\"confidence\":0.99},{\"attribute\":\"brand\",\"text\":\"Bagó\",\"confidence\":0.98},{\"attribute\":\"form\",\"text\":\"Comprimidos\",\"confidence\":0.99},{\"attribute\":\"content\",\"text\":\"10 comprimidos\",\"confidence\":0.99},{\"attribute\":\"packaging\",\"text\":\"caja\",\"confidence\":0.9},{\"attribute\":\"visible_quantity\",\"text\":\"3\",\"confidence\":0.99}],\"warnings\":[]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "Migranol"
+          ],
+          "brand": [
+            "Bagó"
+          ],
+          "form": [
+            "Comprimidos"
+          ],
+          "content": [
+            "10 comprimidos"
+          ],
+          "packaging": [
+            "caja"
+          ],
+          "visible_quantity": [
+            "3"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Migranol comprimido x 10",
+          "search_query": "Migranol",
+          "variant": null,
+          "uncertainties": [
+            "active_ingredient_not_visible",
+            "strength_not_visible"
+          ],
+          "ignored": [
+            "visible_quantity_not_a_requested_quantity"
+          ]
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.ignored",
+          "esperado": {
+            "contiene": "visible_quantity_not_a_requested_quantity"
+          },
+          "obtenido": [
+            "visible_quantity_not_a_requested_quantity"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "contiene": "Migranol"
+          },
+          "obtenido": "Migranol comprimido x 10",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 27,
+      "tarea": "vision",
+      "caso": "V6",
+      "version_prompt": "vision-v3",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "18570ff383d7cf8f7469e5938c33bb3f456ef602ba063ca687fcd66fb322a94f",
+      "hash_imagen": "2951227f4bb955de2aa07a67419eb01c7df6dd414e39b09545f7fa1456c66cd1",
+      "tokens_entrada": 1992,
+      "tokens_salida": 174,
+      "latencia_ms": 1832,
+      "costo_estimado_usd": "0.002277",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"MIGRANOL\",\"confidence\":0.99},{\"attribute\":\"brand\",\"text\":\"Bagó\",\"confidence\":0.95},{\"attribute\":\"form\",\"text\":\"Comprimidos\",\"confidence\":0.98},{\"attribute\":\"content\",\"text\":\"10 comprimidos\",\"confidence\":0.99},{\"attribute\":\"packaging\",\"text\":\"caja\",\"confidence\":0.8},{\"attribute\":\"visible_quantity\",\"text\":\"3\",\"confidence\":0.92}],\"warnings\":[]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "MIGRANOL"
+          ],
+          "brand": [
+            "Bagó"
+          ],
+          "form": [
+            "Comprimidos"
+          ],
+          "content": [
+            "10 comprimidos"
+          ],
+          "packaging": [
+            "caja"
+          ],
+          "visible_quantity": [
+            "3"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Migranol comprimido x 10",
+          "search_query": "Migranol",
+          "variant": null,
+          "uncertainties": [
+            "active_ingredient_not_visible",
+            "strength_not_visible"
+          ],
+          "ignored": [
+            "visible_quantity_not_a_requested_quantity"
+          ]
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.ignored",
+          "esperado": {
+            "contiene": "visible_quantity_not_a_requested_quantity"
+          },
+          "obtenido": [
+            "visible_quantity_not_a_requested_quantity"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "contiene": "Migranol"
+          },
+          "obtenido": "Migranol comprimido x 10",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 28,
+      "tarea": "vision",
+      "caso": "V6",
+      "version_prompt": "vision-v1",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "fececde3a0b3b8adaee06d4aea2c8236d6fd1692bbdce080446d406ec597a5a1",
+      "hash_imagen": "2951227f4bb955de2aa07a67419eb01c7df6dd414e39b09545f7fa1456c66cd1",
+      "tokens_entrada": 1755,
+      "tokens_salida": 173,
+      "latencia_ms": 1963,
+      "costo_estimado_usd": "0.002095",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"MIGRANOL\",\"confidence\":0.99},{\"attribute\":\"brand\",\"text\":\"Bagó\",\"confidence\":0.98},{\"attribute\":\"form\",\"text\":\"Comprimidos\",\"confidence\":0.98},{\"attribute\":\"content\",\"text\":\"10 comprimidos\",\"confidence\":0.99},{\"attribute\":\"packaging\",\"text\":\"caja\",\"confidence\":0.9},{\"attribute\":\"visible_quantity\",\"text\":\"3\",\"confidence\":0.95}],\"warnings\":[]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "MIGRANOL"
+          ],
+          "brand": [
+            "Bagó"
+          ],
+          "form": [
+            "Comprimidos"
+          ],
+          "content": [
+            "10 comprimidos"
+          ],
+          "packaging": [
+            "caja"
+          ],
+          "visible_quantity": [
+            "3"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Migranol comprimido x 10",
+          "search_query": "Migranol",
+          "variant": null,
+          "uncertainties": [
+            "active_ingredient_not_visible",
+            "strength_not_visible"
+          ],
+          "ignored": [
+            "visible_quantity_not_a_requested_quantity"
+          ]
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.ignored",
+          "esperado": {
+            "contiene": "visible_quantity_not_a_requested_quantity"
+          },
+          "obtenido": [
+            "visible_quantity_not_a_requested_quantity"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "contiene": "Migranol"
+          },
+          "obtenido": "Migranol comprimido x 10",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 29,
+      "tarea": "vision",
+      "caso": "V6",
+      "version_prompt": "vision-v2",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "644652c6bd3bacee322f6c0e91bde17c14baae4e0a08d79c00fe99a4dc386003",
+      "hash_imagen": "2951227f4bb955de2aa07a67419eb01c7df6dd414e39b09545f7fa1456c66cd1",
+      "tokens_entrada": 1845,
+      "tokens_salida": 162,
+      "latencia_ms": 2277,
+      "costo_estimado_usd": "0.002113",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"MIGRANOL\",\"confidence\":0.99},{\"attribute\":\"brand\",\"text\":\"Bagó\",\"confidence\":0.98},{\"attribute\":\"form\",\"text\":\"Comprimidos\",\"confidence\":0.95},{\"attribute\":\"content\",\"text\":\"10 comprimidos\",\"confidence\":0.98},{\"attribute\":\"packaging\",\"text\":\"caja\",\"confidence\":0.9},{\"attribute\":\"visible_quantity\",\"text\":\"3\",\"confidence\":0.99}],\"warnings\":[]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "MIGRANOL"
+          ],
+          "brand": [
+            "Bagó"
+          ],
+          "form": [
+            "Comprimidos"
+          ],
+          "content": [
+            "10 comprimidos"
+          ],
+          "packaging": [
+            "caja"
+          ],
+          "visible_quantity": [
+            "3"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Migranol comprimido x 10",
+          "search_query": "Migranol",
+          "variant": null,
+          "uncertainties": [
+            "active_ingredient_not_visible",
+            "strength_not_visible"
+          ],
+          "ignored": [
+            "visible_quantity_not_a_requested_quantity"
+          ]
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.ignored",
+          "esperado": {
+            "contiene": "visible_quantity_not_a_requested_quantity"
+          },
+          "obtenido": [
+            "visible_quantity_not_a_requested_quantity"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "contiene": "Migranol"
+          },
+          "obtenido": "Migranol comprimido x 10",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 30,
+      "tarea": "vision",
+      "caso": "V6",
+      "version_prompt": "vision-v3",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "18570ff383d7cf8f7469e5938c33bb3f456ef602ba063ca687fcd66fb322a94f",
+      "hash_imagen": "2951227f4bb955de2aa07a67419eb01c7df6dd414e39b09545f7fa1456c66cd1",
+      "tokens_entrada": 1992,
+      "tokens_salida": 182,
+      "latencia_ms": 1563,
+      "costo_estimado_usd": "0.002313",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"legibility\":\"clear\",\"fields\":[{\"attribute\":\"product_name\",\"text\":\"MIGRANOL\",\"confidence\":0.99},{\"attribute\":\"brand\",\"text\":\"Bagó\",\"confidence\":0.97},{\"attribute\":\"form\",\"text\":\"Comprimidos\",\"confidence\":0.95},{\"attribute\":\"content\",\"text\":\"10 comprimidos\",\"confidence\":0.98},{\"attribute\":\"packaging\",\"text\":\"caja\",\"confidence\":0.9},{\"attribute\":\"visible_quantity\",\"text\":\"3\",\"confidence\":0.99}],\"warnings\":[]}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "MIGRANOL"
+          ],
+          "brand": [
+            "Bagó"
+          ],
+          "form": [
+            "Comprimidos"
+          ],
+          "content": [
+            "10 comprimidos"
+          ],
+          "packaging": [
+            "caja"
+          ],
+          "visible_quantity": [
+            "3"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Migranol comprimido x 10",
+          "search_query": "Migranol",
+          "variant": null,
+          "uncertainties": [
+            "active_ingredient_not_visible",
+            "strength_not_visible"
+          ],
+          "ignored": [
+            "visible_quantity_not_a_requested_quantity"
+          ]
+        }
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.ignored",
+          "esperado": {
+            "contiene": "visible_quantity_not_a_requested_quantity"
+          },
+          "obtenido": [
+            "visible_quantity_not_a_requested_quantity"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "contiene": "Migranol"
+          },
+          "obtenido": "Migranol comprimido x 10",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 31,
+      "tarea": "observaciones",
+      "caso": "O1",
+      "version_prompt": "observaciones-v1",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "65238268830d27bfa711aa27e6d85b34560d9b60be3b588444b2e17372f84ef8",
+      "hash_imagen": null,
+      "tokens_entrada": 1993,
+      "tokens_salida": 91,
+      "latencia_ms": 1434,
+      "costo_estimado_usd": "0.001904",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[{\"subject_kind\":\"supplier\",\"subject_label\":\"Proveedor Norte\",\"effect\":\"prefer\",\"tolerance\":{\"kind\":\"none\",\"percent\":null,\"amount\":null,\"currency\":null},\"price_reference\":null,\"confidence\":0.99}],\"retire_subject_kinds\":[],\"ambiguity\":null}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "preferencias": [
+          {
+            "subject_kind": "supplier",
+            "subject_label": "Proveedor Norte",
+            "effect": "prefer",
+            "tolerance_kind": "none",
+            "price_reference_kind": "none",
+            "price_reference_amount": null,
+            "confidence": 0.99
+          }
+        ],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_kind",
+          "esperado": {
+            "igual": "supplier"
+          },
+          "obtenido": "supplier",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_label",
+          "esperado": {
+            "igual": "Proveedor Norte"
+          },
+          "obtenido": "Proveedor Norte",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.effect",
+          "esperado": {
+            "igual": "prefer"
+          },
+          "obtenido": "prefer",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 32,
+      "tarea": "observaciones",
+      "caso": "O1",
+      "version_prompt": "observaciones-v2",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "baef0eb88b8fe16af5fbb801e90271fbd4a592d8bc12ee6d7b8cef5d27b5b641",
+      "hash_imagen": null,
+      "tokens_entrada": 2048,
+      "tokens_salida": 86,
+      "latencia_ms": 1036,
+      "costo_estimado_usd": "0.001923",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[{\"subject_kind\":\"supplier\",\"subject_label\":\"Proveedor Norte\",\"effect\":\"prefer\",\"tolerance\":{\"kind\":\"none\",\"percent\":null,\"amount\":null,\"currency\":null},\"price_reference\":null,\"confidence\":0.99}],\"retire_subject_kinds\":[],\"ambiguity\":null}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "preferencias": [
+          {
+            "subject_kind": "supplier",
+            "subject_label": "Proveedor Norte",
+            "effect": "prefer",
+            "tolerance_kind": "none",
+            "price_reference_kind": "none",
+            "price_reference_amount": null,
+            "confidence": 0.99
+          }
+        ],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_kind",
+          "esperado": {
+            "igual": "supplier"
+          },
+          "obtenido": "supplier",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_label",
+          "esperado": {
+            "igual": "Proveedor Norte"
+          },
+          "obtenido": "Proveedor Norte",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.effect",
+          "esperado": {
+            "igual": "prefer"
+          },
+          "obtenido": "prefer",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 33,
+      "tarea": "observaciones",
+      "caso": "O1",
+      "version_prompt": "observaciones-v3",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "ddcc88d40b09c0d0f4d4c214e988689a35c0c2a70c34066a939928f6649e9113",
+      "hash_imagen": null,
+      "tokens_entrada": 2453,
+      "tokens_salida": 109,
+      "latencia_ms": 1949,
+      "costo_estimado_usd": "0.002330",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[{\"subject_kind\":\"supplier\",\"subject_label\":\"Proveedor Norte\",\"effect\":\"prefer\",\"tolerance\":{\"kind\":\"none\",\"percent\":null,\"amount\":null,\"currency\":null},\"price_reference\":null,\"confidence\":0.99}],\"article_operations\":[],\"retire_subject_kinds\":[],\"ambiguity\":null}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "preferencias": [
+          {
+            "subject_kind": "supplier",
+            "subject_label": "Proveedor Norte",
+            "effect": "prefer",
+            "tolerance_kind": "none",
+            "price_reference_kind": "none",
+            "price_reference_amount": null,
+            "confidence": 0.99
+          }
+        ],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_kind",
+          "esperado": {
+            "igual": "supplier"
+          },
+          "obtenido": "supplier",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_label",
+          "esperado": {
+            "igual": "Proveedor Norte"
+          },
+          "obtenido": "Proveedor Norte",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.effect",
+          "esperado": {
+            "igual": "prefer"
+          },
+          "obtenido": "prefer",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 34,
+      "tarea": "observaciones",
+      "caso": "O1",
+      "version_prompt": "observaciones-v1",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "65238268830d27bfa711aa27e6d85b34560d9b60be3b588444b2e17372f84ef8",
+      "hash_imagen": null,
+      "tokens_entrada": 1993,
+      "tokens_salida": 103,
+      "latencia_ms": 1435,
+      "costo_estimado_usd": "0.001958",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[{\"subject_kind\":\"supplier\",\"subject_label\":\"Proveedor Norte\",\"effect\":\"prefer\",\"tolerance\":{\"kind\":\"none\",\"percent\":null,\"amount\":null,\"currency\":null},\"price_reference\":null,\"confidence\":0.98}],\"retire_subject_kinds\":[],\"ambiguity\":null}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "preferencias": [
+          {
+            "subject_kind": "supplier",
+            "subject_label": "Proveedor Norte",
+            "effect": "prefer",
+            "tolerance_kind": "none",
+            "price_reference_kind": "none",
+            "price_reference_amount": null,
+            "confidence": 0.98
+          }
+        ],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_kind",
+          "esperado": {
+            "igual": "supplier"
+          },
+          "obtenido": "supplier",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_label",
+          "esperado": {
+            "igual": "Proveedor Norte"
+          },
+          "obtenido": "Proveedor Norte",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.effect",
+          "esperado": {
+            "igual": "prefer"
+          },
+          "obtenido": "prefer",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 35,
+      "tarea": "observaciones",
+      "caso": "O1",
+      "version_prompt": "observaciones-v2",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "baef0eb88b8fe16af5fbb801e90271fbd4a592d8bc12ee6d7b8cef5d27b5b641",
+      "hash_imagen": null,
+      "tokens_entrada": 2048,
+      "tokens_salida": 88,
+      "latencia_ms": 1047,
+      "costo_estimado_usd": "0.001932",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[{\"subject_kind\":\"supplier\",\"subject_label\":\"Proveedor Norte\",\"effect\":\"prefer\",\"tolerance\":{\"kind\":\"none\",\"percent\":null,\"amount\":null,\"currency\":null},\"price_reference\":null,\"confidence\":0.99}],\"retire_subject_kinds\":[],\"ambiguity\":null}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "preferencias": [
+          {
+            "subject_kind": "supplier",
+            "subject_label": "Proveedor Norte",
+            "effect": "prefer",
+            "tolerance_kind": "none",
+            "price_reference_kind": "none",
+            "price_reference_amount": null,
+            "confidence": 0.99
+          }
+        ],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_kind",
+          "esperado": {
+            "igual": "supplier"
+          },
+          "obtenido": "supplier",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_label",
+          "esperado": {
+            "igual": "Proveedor Norte"
+          },
+          "obtenido": "Proveedor Norte",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.effect",
+          "esperado": {
+            "igual": "prefer"
+          },
+          "obtenido": "prefer",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 36,
+      "tarea": "observaciones",
+      "caso": "O1",
+      "version_prompt": "observaciones-v3",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "ddcc88d40b09c0d0f4d4c214e988689a35c0c2a70c34066a939928f6649e9113",
+      "hash_imagen": null,
+      "tokens_entrada": 2453,
+      "tokens_salida": 100,
+      "latencia_ms": 1293,
+      "costo_estimado_usd": "0.002290",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[{\"subject_kind\":\"supplier\",\"subject_label\":\"Proveedor Norte\",\"effect\":\"prefer\",\"tolerance\":{\"kind\":\"none\",\"percent\":null,\"amount\":null,\"currency\":null},\"price_reference\":null,\"confidence\":0.99}],\"article_operations\":[],\"retire_subject_kinds\":[],\"ambiguity\":null}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "preferencias": [
+          {
+            "subject_kind": "supplier",
+            "subject_label": "Proveedor Norte",
+            "effect": "prefer",
+            "tolerance_kind": "none",
+            "price_reference_kind": "none",
+            "price_reference_amount": null,
+            "confidence": 0.99
+          }
+        ],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_kind",
+          "esperado": {
+            "igual": "supplier"
+          },
+          "obtenido": "supplier",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_label",
+          "esperado": {
+            "igual": "Proveedor Norte"
+          },
+          "obtenido": "Proveedor Norte",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.effect",
+          "esperado": {
+            "igual": "prefer"
+          },
+          "obtenido": "prefer",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 37,
+      "tarea": "observaciones",
+      "caso": "O2",
+      "version_prompt": "observaciones-v1",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "65238268830d27bfa711aa27e6d85b34560d9b60be3b588444b2e17372f84ef8",
+      "hash_imagen": null,
+      "tokens_entrada": 1992,
+      "tokens_salida": 109,
+      "latencia_ms": 1529,
+      "costo_estimado_usd": "0.001984",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[],\"retire_subject_kinds\":[],\"ambiguity\":{\"code\":\"unclear_referent\",\"note\":\"\\\"el proveedor del sur\\\" podría referirse a \\\"Proveedor Sur\\\" o \\\"Proveedor Sur Express\\\"; no hay un único referente claro.\"}}",
+      "error_proveedor": null,
+      "estado": "rechazada",
+      "resultado_backend": {
+        "estado": "rechazada",
+        "codigo": "ambiguous",
+        "aclaracion": true,
+        "preferencias": [],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "rechazada"
+          },
+          "obtenido": "rechazada",
+          "cumple": true
+        },
+        {
+          "ruta": "codigo",
+          "esperado": {
+            "igual": "ambiguous"
+          },
+          "obtenido": "ambiguous",
+          "cumple": true
+        },
+        {
+          "ruta": "aclaracion",
+          "esperado": {
+            "igual": true
+          },
+          "obtenido": true,
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 38,
+      "tarea": "observaciones",
+      "caso": "O2",
+      "version_prompt": "observaciones-v2",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "baef0eb88b8fe16af5fbb801e90271fbd4a592d8bc12ee6d7b8cef5d27b5b641",
+      "hash_imagen": null,
+      "tokens_entrada": 2047,
+      "tokens_salida": 147,
+      "latencia_ms": 1957,
+      "costo_estimado_usd": "0.002197",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[],\"retire_subject_kinds\":[],\"ambiguity\":{\"code\":\"insufficient_context\",\"note\":\"La frase \\\"el proveedor del sur\\\" no identifica de forma única entre los proveedores disponibles.\"}}",
+      "error_proveedor": null,
+      "estado": "rechazada",
+      "resultado_backend": {
+        "estado": "rechazada",
+        "codigo": "ambiguous",
+        "aclaracion": true,
+        "preferencias": [],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "rechazada"
+          },
+          "obtenido": "rechazada",
+          "cumple": true
+        },
+        {
+          "ruta": "codigo",
+          "esperado": {
+            "igual": "ambiguous"
+          },
+          "obtenido": "ambiguous",
+          "cumple": true
+        },
+        {
+          "ruta": "aclaracion",
+          "esperado": {
+            "igual": true
+          },
+          "obtenido": true,
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 39,
+      "tarea": "observaciones",
+      "caso": "O2",
+      "version_prompt": "observaciones-v3",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "ddcc88d40b09c0d0f4d4c214e988689a35c0c2a70c34066a939928f6649e9113",
+      "hash_imagen": null,
+      "tokens_entrada": 2452,
+      "tokens_salida": 121,
+      "latencia_ms": 1817,
+      "costo_estimado_usd": "0.002384",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[],\"article_operations\":[],\"retire_subject_kinds\":[],\"ambiguity\":{\"code\":\"unclear_referent\",\"note\":\"La mención 'el proveedor del sur' puede referirse a 'Proveedor Sur' o 'Proveedor Sur Express'; no es posible elegir uno con exactitud.\"}}",
+      "error_proveedor": null,
+      "estado": "rechazada",
+      "resultado_backend": {
+        "estado": "rechazada",
+        "codigo": "ambiguous",
+        "aclaracion": true,
+        "preferencias": [],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "rechazada"
+          },
+          "obtenido": "rechazada",
+          "cumple": true
+        },
+        {
+          "ruta": "codigo",
+          "esperado": {
+            "igual": "ambiguous"
+          },
+          "obtenido": "ambiguous",
+          "cumple": true
+        },
+        {
+          "ruta": "aclaracion",
+          "esperado": {
+            "igual": true
+          },
+          "obtenido": true,
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 40,
+      "tarea": "observaciones",
+      "caso": "O2",
+      "version_prompt": "observaciones-v1",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "65238268830d27bfa711aa27e6d85b34560d9b60be3b588444b2e17372f84ef8",
+      "hash_imagen": null,
+      "tokens_entrada": 1992,
+      "tokens_salida": 113,
+      "latencia_ms": 1482,
+      "costo_estimado_usd": "0.002002",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[],\"retire_subject_kinds\":[],\"ambiguity\":{\"code\":\"unclear_referent\",\"note\":\"La frase 'el proveedor del sur' podría referirse a 'Proveedor Sur' o 'Proveedor Sur Express', y no queda claro cuál de los dos se prefiere.\"}}",
+      "error_proveedor": null,
+      "estado": "rechazada",
+      "resultado_backend": {
+        "estado": "rechazada",
+        "codigo": "ambiguous",
+        "aclaracion": true,
+        "preferencias": [],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "rechazada"
+          },
+          "obtenido": "rechazada",
+          "cumple": true
+        },
+        {
+          "ruta": "codigo",
+          "esperado": {
+            "igual": "ambiguous"
+          },
+          "obtenido": "ambiguous",
+          "cumple": true
+        },
+        {
+          "ruta": "aclaracion",
+          "esperado": {
+            "igual": true
+          },
+          "obtenido": true,
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 41,
+      "tarea": "observaciones",
+      "caso": "O2",
+      "version_prompt": "observaciones-v2",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "baef0eb88b8fe16af5fbb801e90271fbd4a592d8bc12ee6d7b8cef5d27b5b641",
+      "hash_imagen": null,
+      "tokens_entrada": 2047,
+      "tokens_salida": 132,
+      "latencia_ms": 1287,
+      "costo_estimado_usd": "0.002129",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[{\"subject_kind\":\"supplier\",\"subject_label\":\"Proveedor Sur\",\"effect\":\"prefer\",\"tolerance\":{\"kind\":\"none\",\"percent\":null,\"amount\":null,\"currency\":null},\"price_reference\":null,\"confidence\":0.95}],\"retire_subject_kinds\":[],\"ambiguity\":null}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "preferencias": [
+          {
+            "subject_kind": "supplier",
+            "subject_label": "Proveedor Sur",
+            "effect": "prefer",
+            "tolerance_kind": "none",
+            "price_reference_kind": "none",
+            "price_reference_amount": null,
+            "confidence": 0.95
+          }
+        ],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "rechazada"
+          },
+          "obtenido": "aceptada",
+          "cumple": false
+        },
+        {
+          "ruta": "codigo",
+          "esperado": {
+            "igual": "ambiguous"
+          },
+          "obtenido": null,
+          "cumple": false
+        },
+        {
+          "ruta": "aclaracion",
+          "esperado": {
+            "igual": true
+          },
+          "obtenido": null,
+          "cumple": false
+        },
+        {
+          "ruta": "preferencias",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": [
+            {
+              "subject_kind": "supplier",
+              "subject_label": "Proveedor Sur",
+              "effect": "prefer",
+              "tolerance_kind": "none",
+              "price_reference_kind": "none",
+              "price_reference_amount": null,
+              "confidence": 0.95
+            }
+          ],
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 42,
+      "tarea": "observaciones",
+      "caso": "O2",
+      "version_prompt": "observaciones-v3",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "ddcc88d40b09c0d0f4d4c214e988689a35c0c2a70c34066a939928f6649e9113",
+      "hash_imagen": null,
+      "tokens_entrada": 2452,
+      "tokens_salida": 109,
+      "latencia_ms": 1700,
+      "costo_estimado_usd": "0.002330",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[],\"article_operations\":[],\"retire_subject_kinds\":[],\"ambiguity\":{\"code\":\"unclear_referent\",\"note\":\"La frase 'el proveedor del sur' podría referirse a 'Proveedor Sur' o 'Proveedor Sur Express', no se puede determinar con exactitud.\"}}",
+      "error_proveedor": null,
+      "estado": "rechazada",
+      "resultado_backend": {
+        "estado": "rechazada",
+        "codigo": "ambiguous",
+        "aclaracion": true,
+        "preferencias": [],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "rechazada"
+          },
+          "obtenido": "rechazada",
+          "cumple": true
+        },
+        {
+          "ruta": "codigo",
+          "esperado": {
+            "igual": "ambiguous"
+          },
+          "obtenido": "ambiguous",
+          "cumple": true
+        },
+        {
+          "ruta": "aclaracion",
+          "esperado": {
+            "igual": true
+          },
+          "obtenido": true,
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 43,
+      "tarea": "observaciones",
+      "caso": "O7",
+      "version_prompt": "observaciones-v1",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "65238268830d27bfa711aa27e6d85b34560d9b60be3b588444b2e17372f84ef8",
+      "hash_imagen": null,
+      "tokens_entrada": 1987,
+      "tokens_salida": 92,
+      "latencia_ms": 1103,
+      "costo_estimado_usd": "0.001904",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[{\"subject_kind\":\"laboratory\",\"subject_label\":\"Laboratorios Andes\",\"effect\":\"prefer\",\"tolerance\":{\"kind\":\"none\",\"percent\":null,\"amount\":null,\"currency\":null},\"price_reference\":null,\"confidence\":0.99}],\"retire_subject_kinds\":[],\"ambiguity\":null}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "preferencias": [
+          {
+            "subject_kind": "laboratory",
+            "subject_label": "Laboratorios Andes",
+            "effect": "prefer",
+            "tolerance_kind": "none",
+            "price_reference_kind": "none",
+            "price_reference_amount": null,
+            "confidence": 0.99
+          }
+        ],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_kind",
+          "esperado": {
+            "igual": "laboratory"
+          },
+          "obtenido": "laboratory",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_label",
+          "esperado": {
+            "igual": "Laboratorios Andes"
+          },
+          "obtenido": "Laboratorios Andes",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 44,
+      "tarea": "observaciones",
+      "caso": "O7",
+      "version_prompt": "observaciones-v2",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "baef0eb88b8fe16af5fbb801e90271fbd4a592d8bc12ee6d7b8cef5d27b5b641",
+      "hash_imagen": null,
+      "tokens_entrada": 2042,
+      "tokens_salida": 95,
+      "latencia_ms": 1573,
+      "costo_estimado_usd": "0.001959",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[{\"subject_kind\":\"laboratory\",\"subject_label\":\"Laboratorios Andes\",\"effect\":\"prefer\",\"tolerance\":{\"kind\":\"none\",\"percent\":null,\"amount\":null,\"currency\":null},\"price_reference\":null,\"confidence\":0.99}],\"retire_subject_kinds\":[],\"ambiguity\":null}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "preferencias": [
+          {
+            "subject_kind": "laboratory",
+            "subject_label": "Laboratorios Andes",
+            "effect": "prefer",
+            "tolerance_kind": "none",
+            "price_reference_kind": "none",
+            "price_reference_amount": null,
+            "confidence": 0.99
+          }
+        ],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_kind",
+          "esperado": {
+            "igual": "laboratory"
+          },
+          "obtenido": "laboratory",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_label",
+          "esperado": {
+            "igual": "Laboratorios Andes"
+          },
+          "obtenido": "Laboratorios Andes",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 45,
+      "tarea": "observaciones",
+      "caso": "O7",
+      "version_prompt": "observaciones-v3",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "ddcc88d40b09c0d0f4d4c214e988689a35c0c2a70c34066a939928f6649e9113",
+      "hash_imagen": null,
+      "tokens_entrada": 2447,
+      "tokens_salida": 112,
+      "latencia_ms": 1721,
+      "costo_estimado_usd": "0.002339",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[{\"subject_kind\":\"laboratory\",\"subject_label\":\"Laboratorios Andes\",\"effect\":\"prefer\",\"tolerance\":{\"kind\":\"none\",\"percent\":null,\"amount\":null,\"currency\":null},\"price_reference\":null,\"confidence\":0.99}],\"article_operations\":[],\"retire_subject_kinds\":[],\"ambiguity\":null}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "preferencias": [
+          {
+            "subject_kind": "laboratory",
+            "subject_label": "Laboratorios Andes",
+            "effect": "prefer",
+            "tolerance_kind": "none",
+            "price_reference_kind": "none",
+            "price_reference_amount": null,
+            "confidence": 0.99
+          }
+        ],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_kind",
+          "esperado": {
+            "igual": "laboratory"
+          },
+          "obtenido": "laboratory",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_label",
+          "esperado": {
+            "igual": "Laboratorios Andes"
+          },
+          "obtenido": "Laboratorios Andes",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 46,
+      "tarea": "observaciones",
+      "caso": "O7",
+      "version_prompt": "observaciones-v1",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "65238268830d27bfa711aa27e6d85b34560d9b60be3b588444b2e17372f84ef8",
+      "hash_imagen": null,
+      "tokens_entrada": 1987,
+      "tokens_salida": 100,
+      "latencia_ms": 1184,
+      "costo_estimado_usd": "0.001940",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[{\"subject_kind\":\"laboratory\",\"subject_label\":\"Laboratorios Andes\",\"effect\":\"prefer\",\"tolerance\":{\"kind\":\"none\",\"percent\":null,\"amount\":null,\"currency\":null},\"price_reference\":null,\"confidence\":0.99}],\"retire_subject_kinds\":[],\"ambiguity\":null}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "preferencias": [
+          {
+            "subject_kind": "laboratory",
+            "subject_label": "Laboratorios Andes",
+            "effect": "prefer",
+            "tolerance_kind": "none",
+            "price_reference_kind": "none",
+            "price_reference_amount": null,
+            "confidence": 0.99
+          }
+        ],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_kind",
+          "esperado": {
+            "igual": "laboratory"
+          },
+          "obtenido": "laboratory",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_label",
+          "esperado": {
+            "igual": "Laboratorios Andes"
+          },
+          "obtenido": "Laboratorios Andes",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 47,
+      "tarea": "observaciones",
+      "caso": "O7",
+      "version_prompt": "observaciones-v2",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "baef0eb88b8fe16af5fbb801e90271fbd4a592d8bc12ee6d7b8cef5d27b5b641",
+      "hash_imagen": null,
+      "tokens_entrada": 2042,
+      "tokens_salida": 95,
+      "latencia_ms": 1184,
+      "costo_estimado_usd": "0.001959",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[{\"subject_kind\":\"laboratory\",\"subject_label\":\"Laboratorios Andes\",\"effect\":\"prefer\",\"tolerance\":{\"kind\":\"none\",\"percent\":null,\"amount\":null,\"currency\":null},\"price_reference\":null,\"confidence\":0.99}],\"retire_subject_kinds\":[],\"ambiguity\":null}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "preferencias": [
+          {
+            "subject_kind": "laboratory",
+            "subject_label": "Laboratorios Andes",
+            "effect": "prefer",
+            "tolerance_kind": "none",
+            "price_reference_kind": "none",
+            "price_reference_amount": null,
+            "confidence": 0.99
+          }
+        ],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_kind",
+          "esperado": {
+            "igual": "laboratory"
+          },
+          "obtenido": "laboratory",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_label",
+          "esperado": {
+            "igual": "Laboratorios Andes"
+          },
+          "obtenido": "Laboratorios Andes",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 48,
+      "tarea": "observaciones",
+      "caso": "O7",
+      "version_prompt": "observaciones-v3",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "ddcc88d40b09c0d0f4d4c214e988689a35c0c2a70c34066a939928f6649e9113",
+      "hash_imagen": null,
+      "tokens_entrada": 2447,
+      "tokens_salida": 98,
+      "latencia_ms": 1608,
+      "costo_estimado_usd": "0.002276",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[{\"subject_kind\":\"laboratory\",\"subject_label\":\"Laboratorios Andes\",\"effect\":\"prefer\",\"tolerance\":{\"kind\":\"none\",\"percent\":null,\"amount\":null,\"currency\":null},\"price_reference\":null,\"confidence\":0.99}],\"article_operations\":[],\"retire_subject_kinds\":[],\"ambiguity\":null}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "preferencias": [
+          {
+            "subject_kind": "laboratory",
+            "subject_label": "Laboratorios Andes",
+            "effect": "prefer",
+            "tolerance_kind": "none",
+            "price_reference_kind": "none",
+            "price_reference_amount": null,
+            "confidence": 0.99
+          }
+        ],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_kind",
+          "esperado": {
+            "igual": "laboratory"
+          },
+          "obtenido": "laboratory",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_label",
+          "esperado": {
+            "igual": "Laboratorios Andes"
+          },
+          "obtenido": "Laboratorios Andes",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 49,
+      "tarea": "observaciones",
+      "caso": "O10",
+      "version_prompt": "observaciones-v1",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "65238268830d27bfa711aa27e6d85b34560d9b60be3b588444b2e17372f84ef8",
+      "hash_imagen": null,
+      "tokens_entrada": 1988,
+      "tokens_salida": 291,
+      "latencia_ms": 2006,
+      "costo_estimado_usd": "0.002800",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[],\"retire_subject_kinds\":[],\"ambiguity\":{\"code\":\"insufficient_context\",\"note\":\"La observación compara este artículo con otro producto ('Migranol de caja 20'), pero ese referente no está verificado en el contexto y no se puede aplicar una preferencia estructurada.\"}}",
+      "error_proveedor": null,
+      "estado": "rechazada",
+      "resultado_backend": {
+        "estado": "rechazada",
+        "codigo": "ambiguous",
+        "aclaracion": true,
+        "preferencias": [],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "rechazada",
+          "cumple": false
+        },
+        {
+          "ruta": "preferencias_articulo.0.effect",
+          "esperado": {
+            "igual": "prefer"
+          },
+          "obtenido": null,
+          "cumple": false
+        },
+        {
+          "ruta": "preferencias_articulo.0.article_label",
+          "esperado": {
+            "igual": "Losartán 50 mg x 20 comprimidos"
+          },
+          "obtenido": null,
+          "cumple": false
+        },
+        {
+          "ruta": "preferencias_articulo.0.relative_to_article_label",
+          "esperado": {
+            "igual": "Migranol caja 20"
+          },
+          "obtenido": null,
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 50,
+      "tarea": "observaciones",
+      "caso": "O10",
+      "version_prompt": "observaciones-v2",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "baef0eb88b8fe16af5fbb801e90271fbd4a592d8bc12ee6d7b8cef5d27b5b641",
+      "hash_imagen": null,
+      "tokens_entrada": 2043,
+      "tokens_salida": 279,
+      "latencia_ms": 2191,
+      "costo_estimado_usd": "0.002788",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[],\"retire_subject_kinds\":[],\"ambiguity\":{\"code\":\"unclear_referent\",\"note\":\"La observación compara este artículo con otro producto ('Migranol de caja 20'), pero ese artículo no está disponible en el contexto verificado para aplicar una preferencia estructurada.\"}}",
+      "error_proveedor": null,
+      "estado": "rechazada",
+      "resultado_backend": {
+        "estado": "rechazada",
+        "codigo": "ambiguous",
+        "aclaracion": true,
+        "preferencias": [],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "rechazada",
+          "cumple": false
+        },
+        {
+          "ruta": "preferencias_articulo.0.effect",
+          "esperado": {
+            "igual": "prefer"
+          },
+          "obtenido": null,
+          "cumple": false
+        },
+        {
+          "ruta": "preferencias_articulo.0.article_label",
+          "esperado": {
+            "igual": "Losartán 50 mg x 20 comprimidos"
+          },
+          "obtenido": null,
+          "cumple": false
+        },
+        {
+          "ruta": "preferencias_articulo.0.relative_to_article_label",
+          "esperado": {
+            "igual": "Migranol caja 20"
+          },
+          "obtenido": null,
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 51,
+      "tarea": "observaciones",
+      "caso": "O10",
+      "version_prompt": "observaciones-v3",
+      "repeticion": 1,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "ddcc88d40b09c0d0f4d4c214e988689a35c0c2a70c34066a939928f6649e9113",
+      "hash_imagen": null,
+      "tokens_entrada": 2448,
+      "tokens_salida": 133,
+      "latencia_ms": 2154,
+      "costo_estimado_usd": "0.002434",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[],\"article_operations\":[{\"article_label\":\"este producto\",\"relative_to_label\":\"Migranol de caja 20\",\"effect\":\"prefer\",\"confidence\":0.91}],\"retire_subject_kinds\":[],\"ambiguity\":null}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "preferencias": [],
+        "preferencias_articulo": [
+          {
+            "article_label": "Losartán 50 mg x 20 comprimidos",
+            "relative_to_article_label": "Migranol caja 20",
+            "effect": "prefer",
+            "confidence": 0.91
+          }
+        ],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias_articulo.0.effect",
+          "esperado": {
+            "igual": "prefer"
+          },
+          "obtenido": "prefer",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias_articulo.0.article_label",
+          "esperado": {
+            "igual": "Losartán 50 mg x 20 comprimidos"
+          },
+          "obtenido": "Losartán 50 mg x 20 comprimidos",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias_articulo.0.relative_to_article_label",
+          "esperado": {
+            "igual": "Migranol caja 20"
+          },
+          "obtenido": "Migranol caja 20",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    },
+    {
+      "numero": 52,
+      "tarea": "observaciones",
+      "caso": "O10",
+      "version_prompt": "observaciones-v1",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "65238268830d27bfa711aa27e6d85b34560d9b60be3b588444b2e17372f84ef8",
+      "hash_imagen": null,
+      "tokens_entrada": 1988,
+      "tokens_salida": 338,
+      "latencia_ms": 2618,
+      "costo_estimado_usd": "0.003012",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[],\"retire_subject_kinds\":[],\"ambiguity\":{\"code\":\"insufficient_context\",\"note\":\"La observación expresa una preferencia comparativa frente a otro artículo, pero no identifica un laboratorio, marca, proveedor, disponibilidad ni precio del artículo actual que pueda traducirse a una operación comercial.\"}}",
+      "error_proveedor": null,
+      "estado": "rechazada",
+      "resultado_backend": {
+        "estado": "rechazada",
+        "codigo": "ambiguous",
+        "aclaracion": true,
+        "preferencias": [],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "rechazada",
+          "cumple": false
+        },
+        {
+          "ruta": "preferencias_articulo.0.effect",
+          "esperado": {
+            "igual": "prefer"
+          },
+          "obtenido": null,
+          "cumple": false
+        },
+        {
+          "ruta": "preferencias_articulo.0.article_label",
+          "esperado": {
+            "igual": "Losartán 50 mg x 20 comprimidos"
+          },
+          "obtenido": null,
+          "cumple": false
+        },
+        {
+          "ruta": "preferencias_articulo.0.relative_to_article_label",
+          "esperado": {
+            "igual": "Migranol caja 20"
+          },
+          "obtenido": null,
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 53,
+      "tarea": "observaciones",
+      "caso": "O10",
+      "version_prompt": "observaciones-v2",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "baef0eb88b8fe16af5fbb801e90271fbd4a592d8bc12ee6d7b8cef5d27b5b641",
+      "hash_imagen": null,
+      "tokens_entrada": 2043,
+      "tokens_salida": 159,
+      "latencia_ms": 1574,
+      "costo_estimado_usd": "0.002248",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[],\"retire_subject_kinds\":[],\"ambiguity\":{\"code\":\"not_commercial\",\"note\":\"La observación compara este artículo con otro producto ('Migranol de caja 20') y no expresa una preferencia comercial aplicable al artículo verificado.\"}}",
+      "error_proveedor": null,
+      "estado": "rechazada",
+      "resultado_backend": {
+        "estado": "rechazada",
+        "codigo": "ambiguous",
+        "aclaracion": true,
+        "preferencias": [],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "rechazada",
+          "cumple": false
+        },
+        {
+          "ruta": "preferencias_articulo.0.effect",
+          "esperado": {
+            "igual": "prefer"
+          },
+          "obtenido": null,
+          "cumple": false
+        },
+        {
+          "ruta": "preferencias_articulo.0.article_label",
+          "esperado": {
+            "igual": "Losartán 50 mg x 20 comprimidos"
+          },
+          "obtenido": null,
+          "cumple": false
+        },
+        {
+          "ruta": "preferencias_articulo.0.relative_to_article_label",
+          "esperado": {
+            "igual": "Migranol caja 20"
+          },
+          "obtenido": null,
+          "cumple": false
+        }
+      ],
+      "cumple": false
+    },
+    {
+      "numero": 54,
+      "tarea": "observaciones",
+      "caso": "O10",
+      "version_prompt": "observaciones-v3",
+      "repeticion": 2,
+      "modelo_solicitado": "gpt-5.4-mini",
+      "modelo_respuesta": "gpt-5.4-mini-2026-03-17",
+      "hash_prompt": "ddcc88d40b09c0d0f4d4c214e988689a35c0c2a70c34066a939928f6649e9113",
+      "hash_imagen": null,
+      "tokens_entrada": 2448,
+      "tokens_salida": 122,
+      "latencia_ms": 1783,
+      "costo_estimado_usd": "0.002385",
+      "costo_origen": "uso",
+      "salida_cruda": "{\"operations\":[],\"article_operations\":[{\"article_label\":\"este producto\",\"relative_to_label\":\"Migranol de caja 20\",\"effect\":\"prefer\",\"confidence\":0.93}],\"retire_subject_kinds\":[],\"ambiguity\":null}",
+      "error_proveedor": null,
+      "estado": "aceptada",
+      "resultado_backend": {
+        "estado": "aceptada",
+        "preferencias": [],
+        "preferencias_articulo": [
+          {
+            "article_label": "Losartán 50 mg x 20 comprimidos",
+            "relative_to_article_label": "Migranol caja 20",
+            "effect": "prefer",
+            "confidence": 0.93
+          }
+        ],
+        "retiros": [],
+        "prompt_neutralizado": false
+      },
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias_articulo.0.effect",
+          "esperado": {
+            "igual": "prefer"
+          },
+          "obtenido": "prefer",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias_articulo.0.article_label",
+          "esperado": {
+            "igual": "Losartán 50 mg x 20 comprimidos"
+          },
+          "obtenido": "Losartán 50 mg x 20 comprimidos",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias_articulo.0.relative_to_article_label",
+          "esperado": {
+            "igual": "Migranol caja 20"
+          },
+          "obtenido": "Migranol caja 20",
+          "cumple": true
+        }
+      ],
+      "cumple": true
+    }
+  ],
+  "resumen": {
+    "por_caso_version": {
+      "V1": {
+        "vision-v1": {
+          "repeticiones": 2,
+          "aciertos": 0,
+          "checks": 10,
+          "checks_cumplen": 4
+        },
+        "vision-v2": {
+          "repeticiones": 2,
+          "aciertos": 0,
+          "checks": 10,
+          "checks_cumplen": 4
+        },
+        "vision-v3": {
+          "repeticiones": 2,
+          "aciertos": 0,
+          "checks": 10,
+          "checks_cumplen": 4
+        }
+      },
+      "V2": {
+        "vision-v1": {
+          "repeticiones": 2,
+          "aciertos": 0,
+          "checks": 10,
+          "checks_cumplen": 6
+        },
+        "vision-v2": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 10,
+          "checks_cumplen": 10
+        },
+        "vision-v3": {
+          "repeticiones": 2,
+          "aciertos": 1,
+          "checks": 10,
+          "checks_cumplen": 9
+        }
+      },
+      "V3": {
+        "vision-v1": {
+          "repeticiones": 2,
+          "aciertos": 0,
+          "checks": 10,
+          "checks_cumplen": 4
+        },
+        "vision-v2": {
+          "repeticiones": 2,
+          "aciertos": 0,
+          "checks": 10,
+          "checks_cumplen": 4
+        },
+        "vision-v3": {
+          "repeticiones": 2,
+          "aciertos": 0,
+          "checks": 10,
+          "checks_cumplen": 4
+        }
+      },
+      "V4": {
+        "vision-v1": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 10,
+          "checks_cumplen": 10
+        },
+        "vision-v2": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 10,
+          "checks_cumplen": 10
+        },
+        "vision-v3": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 10,
+          "checks_cumplen": 10
+        }
+      },
+      "V6": {
+        "vision-v1": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 6,
+          "checks_cumplen": 6
+        },
+        "vision-v2": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 6,
+          "checks_cumplen": 6
+        },
+        "vision-v3": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 6,
+          "checks_cumplen": 6
+        }
+      },
+      "O1": {
+        "observaciones-v1": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 8,
+          "checks_cumplen": 8
+        },
+        "observaciones-v2": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 8,
+          "checks_cumplen": 8
+        },
+        "observaciones-v3": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 8,
+          "checks_cumplen": 8
+        }
+      },
+      "O2": {
+        "observaciones-v1": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 8,
+          "checks_cumplen": 8
+        },
+        "observaciones-v2": {
+          "repeticiones": 2,
+          "aciertos": 1,
+          "checks": 8,
+          "checks_cumplen": 4
+        },
+        "observaciones-v3": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 8,
+          "checks_cumplen": 8
+        }
+      },
+      "O7": {
+        "observaciones-v1": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 6,
+          "checks_cumplen": 6
+        },
+        "observaciones-v2": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 6,
+          "checks_cumplen": 6
+        },
+        "observaciones-v3": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 6,
+          "checks_cumplen": 6
+        }
+      },
+      "O10": {
+        "observaciones-v1": {
+          "repeticiones": 2,
+          "aciertos": 0,
+          "checks": 8,
+          "checks_cumplen": 0
+        },
+        "observaciones-v2": {
+          "repeticiones": 2,
+          "aciertos": 0,
+          "checks": 8,
+          "checks_cumplen": 0
+        },
+        "observaciones-v3": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 8,
+          "checks_cumplen": 8
+        }
+      }
+    },
+    "comparaciones": [
+      {
+        "caso": "V1",
+        "desde": "vision-v1",
+        "hasta": "vision-v2",
+        "aciertos_desde": 0,
+        "aciertos_hasta": 0,
+        "resultado": "empate"
+      },
+      {
+        "caso": "V1",
+        "desde": "vision-v2",
+        "hasta": "vision-v3",
+        "aciertos_desde": 0,
+        "aciertos_hasta": 0,
+        "resultado": "empate"
+      },
+      {
+        "caso": "V1",
+        "desde": "vision-v1",
+        "hasta": "vision-v3",
+        "aciertos_desde": 0,
+        "aciertos_hasta": 0,
+        "resultado": "empate"
+      },
+      {
+        "caso": "V2",
+        "desde": "vision-v1",
+        "hasta": "vision-v2",
+        "aciertos_desde": 0,
+        "aciertos_hasta": 2,
+        "resultado": "mejora"
+      },
+      {
+        "caso": "V2",
+        "desde": "vision-v2",
+        "hasta": "vision-v3",
+        "aciertos_desde": 2,
+        "aciertos_hasta": 1,
+        "resultado": "retroceso"
+      },
+      {
+        "caso": "V2",
+        "desde": "vision-v1",
+        "hasta": "vision-v3",
+        "aciertos_desde": 0,
+        "aciertos_hasta": 1,
+        "resultado": "mejora"
+      },
+      {
+        "caso": "V3",
+        "desde": "vision-v1",
+        "hasta": "vision-v2",
+        "aciertos_desde": 0,
+        "aciertos_hasta": 0,
+        "resultado": "empate"
+      },
+      {
+        "caso": "V3",
+        "desde": "vision-v2",
+        "hasta": "vision-v3",
+        "aciertos_desde": 0,
+        "aciertos_hasta": 0,
+        "resultado": "empate"
+      },
+      {
+        "caso": "V3",
+        "desde": "vision-v1",
+        "hasta": "vision-v3",
+        "aciertos_desde": 0,
+        "aciertos_hasta": 0,
+        "resultado": "empate"
+      },
+      {
+        "caso": "V4",
+        "desde": "vision-v1",
+        "hasta": "vision-v2",
+        "aciertos_desde": 2,
+        "aciertos_hasta": 2,
+        "resultado": "empate"
+      },
+      {
+        "caso": "V4",
+        "desde": "vision-v2",
+        "hasta": "vision-v3",
+        "aciertos_desde": 2,
+        "aciertos_hasta": 2,
+        "resultado": "empate"
+      },
+      {
+        "caso": "V4",
+        "desde": "vision-v1",
+        "hasta": "vision-v3",
+        "aciertos_desde": 2,
+        "aciertos_hasta": 2,
+        "resultado": "empate"
+      },
+      {
+        "caso": "V6",
+        "desde": "vision-v1",
+        "hasta": "vision-v2",
+        "aciertos_desde": 2,
+        "aciertos_hasta": 2,
+        "resultado": "empate"
+      },
+      {
+        "caso": "V6",
+        "desde": "vision-v2",
+        "hasta": "vision-v3",
+        "aciertos_desde": 2,
+        "aciertos_hasta": 2,
+        "resultado": "empate"
+      },
+      {
+        "caso": "V6",
+        "desde": "vision-v1",
+        "hasta": "vision-v3",
+        "aciertos_desde": 2,
+        "aciertos_hasta": 2,
+        "resultado": "empate"
+      },
+      {
+        "caso": "O1",
+        "desde": "observaciones-v1",
+        "hasta": "observaciones-v2",
+        "aciertos_desde": 2,
+        "aciertos_hasta": 2,
+        "resultado": "empate"
+      },
+      {
+        "caso": "O1",
+        "desde": "observaciones-v2",
+        "hasta": "observaciones-v3",
+        "aciertos_desde": 2,
+        "aciertos_hasta": 2,
+        "resultado": "empate"
+      },
+      {
+        "caso": "O1",
+        "desde": "observaciones-v1",
+        "hasta": "observaciones-v3",
+        "aciertos_desde": 2,
+        "aciertos_hasta": 2,
+        "resultado": "empate"
+      },
+      {
+        "caso": "O2",
+        "desde": "observaciones-v1",
+        "hasta": "observaciones-v2",
+        "aciertos_desde": 2,
+        "aciertos_hasta": 1,
+        "resultado": "retroceso"
+      },
+      {
+        "caso": "O2",
+        "desde": "observaciones-v2",
+        "hasta": "observaciones-v3",
+        "aciertos_desde": 1,
+        "aciertos_hasta": 2,
+        "resultado": "mejora"
+      },
+      {
+        "caso": "O2",
+        "desde": "observaciones-v1",
+        "hasta": "observaciones-v3",
+        "aciertos_desde": 2,
+        "aciertos_hasta": 2,
+        "resultado": "empate"
+      },
+      {
+        "caso": "O7",
+        "desde": "observaciones-v1",
+        "hasta": "observaciones-v2",
+        "aciertos_desde": 2,
+        "aciertos_hasta": 2,
+        "resultado": "empate"
+      },
+      {
+        "caso": "O7",
+        "desde": "observaciones-v2",
+        "hasta": "observaciones-v3",
+        "aciertos_desde": 2,
+        "aciertos_hasta": 2,
+        "resultado": "empate"
+      },
+      {
+        "caso": "O7",
+        "desde": "observaciones-v1",
+        "hasta": "observaciones-v3",
+        "aciertos_desde": 2,
+        "aciertos_hasta": 2,
+        "resultado": "empate"
+      }
+    ],
+    "o10": {
+      "nota": "O10 depende de `article_operations`, que solo existe en v3. Los fallos de v1 y v2 no se cuentan como retroceso: la capacidad no estaba disponible.",
+      "por_version": {
+        "observaciones-v1": {
+          "repeticiones": 2,
+          "aciertos": 0,
+          "checks": 8,
+          "checks_cumplen": 0
+        },
+        "observaciones-v2": {
+          "repeticiones": 2,
+          "aciertos": 0,
+          "checks": 8,
+          "checks_cumplen": 0
+        },
+        "observaciones-v3": {
+          "repeticiones": 2,
+          "aciertos": 2,
+          "checks": 8,
+          "checks_cumplen": 8
+        }
+      }
+    }
+  }
+}

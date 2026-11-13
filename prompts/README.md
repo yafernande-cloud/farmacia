@@ -8,6 +8,16 @@ Dentro de la aplicación, los prompts de sistema dan instrucciones a OpenAI para
 envases e interpretar observaciones comerciales. Esta carpeta documenta cómo evolucionaron esas
 dos tareas, qué resultados se esperan y cómo se comprueban.
 
+## Por dónde empezar
+
+| Quiero ver… | Documento |
+| --- | --- |
+| Cómo se lee una foto enviada por Telegram | [Visión](vision/README.md) |
+| Cómo se interpreta una preferencia de compra | [Observaciones Comerciales](observaciones/README.md) |
+| Qué situaciones se usan para probar el Cotizador | [Golden set](golden-set/README.md) |
+| Qué se comprobó y cómo repetirlo | [Evaluación](evaluacion/README.md) |
+| Qué cambió entre versiones y cómo compararlas | [Comparación](comparacion/README.md) |
+
 ## 1. Dónde usa la aplicación un modelo
 
 La aplicación usa OpenAI en dos tareas concretas y separadas:
@@ -114,10 +124,13 @@ envases reales ni datos de la farmacia.
 | Pruebas unitarias | Contrato, validadores y adaptadores con dobles | 89 pruebas aprobadas | No |
 | Pruebas de interpretación con PostgreSQL | Servicio, validación y persistencia con `FakeModel` | 38 aprobadas, 6 omitidas | No |
 | Golden set offline | Las salidas pregrabadas pasan por los validadores reales | 16/16 casos con verificaciones, 60/60 comprobaciones | No |
-| Llamadas reales a OpenAI | Calidad del prompt y del modelo | **Pendientes** | Sí |
+| Llamadas reales a OpenAI | Calidad del prompt y del modelo | Comparación 2026-11-13: 54/54 llamadas, USD 0,1173 | Sí |
 
 Las 6 pruebas omitidas son `test_live_*`: solo se ejecutan con `OPENAI_LIVE=1` y tienen un límite
-de 8 llamadas y USD 0.25. **No se hizo ninguna llamada real a OpenAI para este entregable.**
+de 8 llamadas y USD 0.25. En la entrega original no se hizo ninguna llamada real; el 13 de noviembre
+de 2026 se ejecutó la comparación autorizada de prompts, con presupuesto propio de USD 0,25 y
+control de gasto ([criterios](comparacion/criterios-2026-11-13.md),
+[resultados](comparacion/resultados-2026-11-13.md)).
 
 Por eso no se afirma una mejora porcentual. La evaluación offline demuestra que el backend acepta,
 rechaza y transforma lo que el diseño dice; no demuestra que el modelo real acierte más con una
@@ -139,9 +152,12 @@ REQUIRE_DB=1 backend/.venv/bin/pytest \
 La primera orden no usa red ni OpenAI. La segunda usa PostgreSQL local y dobles; las pruebas
 `test_live_*` siguen omitidas.
 
-## 8. Comparación pendiente y autorización
+## 8. Comparación ejecutada y su autorización
 
-La comparación de las tres versiones con OpenAI está pendiente. El evaluador actual necesita
-ajustes para cubrir las tres versiones en ambas tareas y usar los parámetros de cada adaptador.
-El [protocolo de comparación](comparacion/README.md) describe la matriz propuesta y las condiciones
-que habría que acordar antes de una corrida con gasto.
+La comparación de las tres versiones con OpenAI se ejecutó el 13 de noviembre de 2026. El evaluador
+cubre las tres versiones en ambas tareas, usa el esquema de cada versión y comparte entradas dentro
+de cada tarea. Los criterios se fijaron antes de llamar
+([criterios](comparacion/criterios-2026-11-13.md)) y los resultados están en
+[resultados](comparacion/resultados-2026-11-13.md). El
+[protocolo de comparación](comparacion/README.md) conserva la matriz y las condiciones acordadas.
+Los resultados no están medidos contra fotos reales ni son estadísticamente concluyentes.

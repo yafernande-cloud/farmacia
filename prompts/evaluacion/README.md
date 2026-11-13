@@ -49,7 +49,8 @@ resultado como «calidad del prompt» sería incorrecto.
 
 ## 2. Evaluación real
 
-**Archivo:** `evaluar_openai.py` (no ejecutado)
+**Archivo:** `evaluar_openai.py` (ejecutado el 2026-11-13; ver
+[resultados](../comparacion/resultados-2026-11-13.md))
 
 El arnés:
 
@@ -63,16 +64,18 @@ El arnés:
 El mensaje de usuario se construye con el `build_prompt` actual del backend y no está versionado.
 Por eso la comparación aísla el prompt de sistema y no reproduce toda la petición histórica.
 
-### Matriz actual y comparación propuesta
+### Matriz ejecutada
 
-El evaluador publicado planifica 54 llamadas repartidas en tres repeticiones por cruce. Incluye
-Visión v1 y v3, y usa distintos pares de versiones y casos en Observaciones Comerciales.
-El límite implementado controla el número de llamadas.
+El evaluador ejecuta la [matriz acordada](../comparacion/README.md#6-plan-de-llamadas-y-costo):
+54 llamadas, dos repeticiones por cruce y las tres versiones en ambas tareas (Visión V1, V2, V3, V4
+y V6; Observaciones O1, O2, O7 y O10). Usa el esquema propio de cada versión, comparte entradas
+dentro de cada tarea y aplica un control de presupuesto: reserva el peor costo de cada llamada, se
+detiene antes de superar el tope y guarda el informe tras cada llamada. Las pruebas locales del
+evaluador están en `test_evaluar_openai.py` y no llaman a OpenAI.
 
-La [matriz propuesta](../comparacion/README.md#6-plan-de-llamadas-y-costo) mantiene 54 llamadas,
-con dos repeticiones por cruce y cobertura de las tres versiones en ambas tareas. Para ejecutarla
-hace falta actualizar el evaluador, ajustar los parámetros por tarea y añadir el control del
-presupuesto. La corrida sigue pendiente y todavía no existe `resultados-openai.json`.
+La corrida real se hizo el 13 de noviembre de 2026: 54/54 llamadas, USD 0,1173 de un tope de
+USD 0,25. `resultados-openai.json` guarda las salidas crudas y el detalle por llamada;
+`resultados-validacion.json` (offline) no se modificó.
 
 ### Cómo se leería el resultado
 

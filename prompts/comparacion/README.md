@@ -7,9 +7,11 @@ un envase e interpretar preferencias comerciales. En Visión, las versiones inco
 para medicamentos combinados y afinan la identificación por nombre comercial. En Observaciones
 Comerciales, amplían primero el contexto de catálogo y después las preferencias entre artículos.
 
-Los commits de las tablas identifican las versiones del código. El protocolo de este documento
-queda pendiente de ejecución con OpenAI. La evidencia disponible está en la
-[evaluación offline](../evaluacion/README.md).
+Los commits de las tablas identifican las versiones del código. El protocolo se ejecutó con OpenAI
+el **13 de noviembre de 2026**: 54 de 54 llamadas, costo estimado USD 0,1173. Los criterios se
+fijaron antes de llamar en [criterios-2026-11-13.md](criterios-2026-11-13.md) y los resultados
+están en [resultados-2026-11-13.md](resultados-2026-11-13.md). Se conserva la
+[evaluación offline](../evaluacion/README.md) como evidencia separada.
 
 ## 2. Mapa de versiones
 
@@ -112,17 +114,22 @@ La matriz propuesta aplica los mismos casos a las tres versiones de cada tarea.
 O10 se informa aparte como capacidad incorporada en v3. V5 prueba el rechazo de una salida
 contradictoria en el backend. V7 queda fuera de alcance. Se usa una foto por producto. O4 y O9 pueden servir como diagnósticos y quedan fuera de esta matriz.
 
-El costo estimado es **USD 0,19** con los supuestos y tarifas del repositorio. El tope de
-**USD 0,25** es una propuesta que requiere implementar el control de gasto.
+El plan se estimó en USD 0,1647 con los supuestos y tarifas del repositorio, dentro del tope de
+**USD 0,25**. El evaluador incorpora ahora un control de gasto: reserva el peor costo razonable de
+cada llamada, imputa el costo real con los tokens declarados y se detiene antes de superar el tope,
+guardando el informe tras cada llamada. En la corrida real el gasto fue **USD 0,1173**.
 
 ## 7. Antes de ejecutar la comparación
 
-1. Ajustar el evaluador para cubrir la matriz y reproducir los parámetros de cada adaptador.
-2. Definir los criterios sustantivos antes de la corrida y conservar las comprobaciones offline.
-   Por ejemplo, para V4 se puede aceptar `blurry` o `unreadable` si la imagen queda en revisión
-   y no genera filas.
-3. Confirmar modelos, tarifas y presupuesto con la responsable y revisar el plan sin hacer llamadas.
-4. Tras la autorización, registrar resultados por caso, versión y repetición, con sus límites.
+1. ~~Ajustar el evaluador~~: hecho; cubre la matriz, usa el esquema de cada versión y comparte
+   entradas dentro de cada tarea.
+2. ~~Definir los criterios sustantivos antes de la corrida~~: hecho en
+   [criterios-2026-11-13.md](criterios-2026-11-13.md); se conservan las comprobaciones offline.
+   Para V4 se aceptaron `blurry` o `unreadable` si la imagen queda en revisión y no genera filas.
+3. ~~Confirmar modelos, tarifas y presupuesto y revisar el plan sin hacer llamadas~~: hecho;
+   `plan-2026-11-13.json` guarda el plan revisado.
+4. ~~Registrar resultados por caso, versión y repetición, con sus límites~~: hecho en
+   [resultados-2026-11-13.md](resultados-2026-11-13.md).
 
 ## 8. Limitaciones del diseño
 

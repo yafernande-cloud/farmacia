@@ -1,8 +1,7 @@
 # A6 Fase 3B — API REST de observaciones comerciales e interpretación
 
-Fecha: 2026-11-03; estado actualizado 2026-11-09. **Implementado en el backend**; **Lovable no está
-conectado** y el botón «Enseñar a la IA» sigue deshabilitado. La suite usa un proveedor simulado y
-no consume cuota.
+La API guarda e interpreta las observaciones que se ingresan desde «Enseñar a la IA» en Lovable.
+La suite habitual usa un proveedor simulado.
 Complementa el contrato `docs/contracts/cotizador-v0.2.md` §8.3 (espacio
 `/api/v1/commercial-observations`, D0/rev10-A6) y no crea un namespace nuevo.
 
@@ -211,20 +210,11 @@ seguro. Sin clave, cada guardado crea una observación nueva: el frontend debe e
 (`retired_subject_kinds`, `0019`) ya aportan el esquema. La idempotencia usa `audit_event`, y la
 paginación usa `created_at` + `id` de `commercial_observation`.
 
-## 8. Pendiente para Lovable
+## 8. Uso desde Lovable
 
-**Estado 2026-11-09:** no hay pantalla conectada. En la interfaz actual, «Enseñar a la IA» está
-deshabilitado con «Disponible próximamente» y ninguna vista llama a `/commercial-observations` ni a
-`/articles/{id}/preferences`. No se registra una interpretación real contra OpenAI.
-
-- Emitir `Idempotency-Key` al guardar (UUID del formulario) y llamar a `interpretations` justo
-  después del `201`.
-- Mostrar `interpretation_status` y, si corresponde, la preferencia aplicada; nunca explicaciones
-  ni puntuaciones.
-- Paginar el historial con `next_cursor`.
-- Tras interpretar, refrescar `GET /articles/{id}/preferences` y las ofertas del artículo (E3/E5)
-  para ver el orden que aplicó el motor.
-- **No** conectar estas rutas desde el frontend `farmacia-frontend` sin autorización explícita.
+«Enseñar a la IA» guarda la observación y solicita su interpretación por la API. La responsable del
+proyecto confirmó que esta función opera en el sitio publicado. Los resultados por versión están en el
+[informe de la comparación con OpenAI](../prompts/comparacion/resultados-2026-11-13.md).
 
 ## 9. Pruebas
 

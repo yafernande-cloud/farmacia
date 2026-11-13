@@ -14,8 +14,8 @@ logs.
 - El frontend `farmacia-frontend` está conectado a Lovable por la rama `main`; la vista previa y el
   acceso del profesor fueron verificados. La publicación al dominio final es manual.
 - La cabeza de migraciones del repositorio es **0032**. Para la entrega se informó Heroku en
-  `0032 (head)` con el backend `6b61fa1` y Lovable en el commit `85de1d4`. El commit
-  `d0949a3` corresponde a la documentación publicada en GitHub.
+  `0032 (head)`. El despliegue manual posterior del backend en `f355732` terminó correctamente.
+  La responsable confirmó la publicación del frontend `7c27bfb` en Lovable.
 - Los resultados de las suites se registran en [Pruebas](PRUEBAS.md).
 
 ## 2. Cómo arranca
@@ -112,6 +112,17 @@ reales no se documentan aquí. Una cadena sin interruptor o sin configuración i
 La interpretación de observaciones y la visión son independientes: se puede tener una apagada y la
 otra encendida. Sin clave o modelo, el endpoint de interpretación responde
 `503 OBSERVATION_AI_DISABLED` y la foto queda `pending`.
+
+### Claves y gasto de OpenAI
+
+En Heroku, las claves privadas se guardan en **Settings → Config Vars**. Esta guía enumera los
+nombres de las variables. Los valores se administran en Heroku.
+
+El proyecto de la API de OpenAI quedó configurado con un **límite mensual de USD 5,00** y el
+corte de gasto activo (**Limit enforced**), confirmado en el panel el 13 de noviembre de 2026.
+El límite se aplica a las solicitudes del proyecto al que pertenece `OPENAI_API_KEY`.
+Este monto es el límite operativo mensual. La comparación de prompts tiene su propio presupuesto.
+[Guía de límites](https://help.openai.com/en/articles/9186755-managing-projects-in-the-api-platform).
 
 ## 5. Migraciones
 

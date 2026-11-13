@@ -1,0 +1,119 @@
+{
+  "plan": {
+    "tareas": [
+      "vision",
+      "observaciones"
+    ],
+    "casos": {
+      "vision": [
+        "V1",
+        "V2",
+        "V3",
+        "V4",
+        "V6"
+      ],
+      "observaciones": [
+        "O1",
+        "O10",
+        "O2",
+        "O7"
+      ]
+    },
+    "versiones": {
+      "vision": [
+        "vision-v1",
+        "vision-v2",
+        "vision-v3"
+      ],
+      "observaciones": [
+        "observaciones-v1",
+        "observaciones-v2",
+        "observaciones-v3"
+      ]
+    },
+    "repeticiones": 2,
+    "llamadas": 54,
+    "modelos": {
+      "observaciones": "gpt-5.4-mini",
+      "vision": "gpt-5.4-mini"
+    },
+    "tarifas_usd_por_millon": {
+      "entrada": "0.75",
+      "salida": "4.50"
+    },
+    "max_tokens_salida": {
+      "vision": 800,
+      "observaciones": 800
+    },
+    "criterio": "Acierto estricto por repetición: se cumplen todas las verificaciones de `casos.json`. O10 se informa aparte como capacidad nueva de v3."
+  },
+  "estimacion": {
+    "llamadas": 54,
+    "por_tarea": {
+      "vision": 30,
+      "observaciones": 24
+    },
+    "tokens_entrada_esperados": 106244,
+    "tokens_salida_esperados": 18900,
+    "costo_esperado_usd": "0.1647",
+    "costo_reserva_usd": "0.3309",
+    "advertencia": "El costo esperado usa la longitud real de los prompts y ~350 tokens de salida. La reserva usa 2,5 caracteres por token, 2000 tokens de imagen por foto y el tope de salida por llamada: es el techo a partir del cual el evaluador se detendría."
+  }
+}
+01/54 V1   vision-v1            rep 1 NO aceptada USD 0.001904 (acum. 0.001904)
+02/54 V1   vision-v2            rep 1 NO aceptada USD 0.002642 (acum. 0.004545)
+03/54 V1   vision-v3            rep 1 NO aceptada USD 0.002509 (acum. 0.007054)
+04/54 V1   vision-v1            rep 2 NO aceptada USD 0.001899 (acum. 0.008953)
+05/54 V1   vision-v2            rep 2 NO aceptada USD 0.002668 (acum. 0.011621)
+06/54 V1   vision-v3            rep 2 NO aceptada USD 0.002531 (acum. 0.014152)
+07/54 V2   vision-v1            rep 1 NO aceptada USD 0.002160 (acum. 0.016312)
+08/54 V2   vision-v2            rep 1 OK aceptada USD 0.002250 (acum. 0.018562)
+09/54 V2   vision-v3            rep 1 OK aceptada USD 0.002666 (acum. 0.021229)
+10/54 V2   vision-v1            rep 2 NO aceptada USD 0.001786 (acum. 0.023015)
+11/54 V2   vision-v2            rep 2 OK aceptada USD 0.002300 (acum. 0.025315)
+12/54 V2   vision-v3            rep 2 NO aceptada USD 0.002756 (acum. 0.028071)
+13/54 V3   vision-v1            rep 1 NO aceptada USD 0.002014 (acum. 0.030085)
+14/54 V3   vision-v2            rep 1 NO aceptada USD 0.002050 (acum. 0.032134)
+15/54 V3   vision-v3            rep 1 NO aceptada USD 0.002511 (acum. 0.034646)
+16/54 V3   vision-v1            rep 2 NO aceptada USD 0.002221 (acum. 0.036866)
+17/54 V3   vision-v2            rep 2 NO aceptada USD 0.002288 (acum. 0.039154)
+18/54 V3   vision-v3            rep 2 NO aceptada USD 0.002421 (acum. 0.041576)
+19/54 V4   vision-v1            rep 1 OK aceptada USD 0.001503 (acum. 0.043078)
+20/54 V4   vision-v2            rep 1 OK aceptada USD 0.001642 (acum. 0.044721)
+21/54 V4   vision-v3            rep 1 OK aceptada USD 0.001699 (acum. 0.046420)
+22/54 V4   vision-v1            rep 2 OK aceptada USD 0.001422 (acum. 0.047842)
+23/54 V4   vision-v2            rep 2 OK aceptada USD 0.001512 (acum. 0.049354)
+24/54 V4   vision-v3            rep 2 OK aceptada USD 0.001564 (acum. 0.050918)
+25/54 V6   vision-v1            rep 1 OK aceptada USD 0.001960 (acum. 0.052877)
+26/54 V6   vision-v2            rep 1 OK aceptada USD 0.002171 (acum. 0.055048)
+27/54 V6   vision-v3            rep 1 OK aceptada USD 0.002277 (acum. 0.057326)
+28/54 V6   vision-v1            rep 2 OK aceptada USD 0.002095 (acum. 0.059420)
+29/54 V6   vision-v2            rep 2 OK aceptada USD 0.002113 (acum. 0.061533)
+30/54 V6   vision-v3            rep 2 OK aceptada USD 0.002313 (acum. 0.063846)
+31/54 O1   observaciones-v1     rep 1 OK aceptada USD 0.001904 (acum. 0.065750)
+32/54 O1   observaciones-v2     rep 1 OK aceptada USD 0.001923 (acum. 0.067673)
+33/54 O1   observaciones-v3     rep 1 OK aceptada USD 0.002330 (acum. 0.070004)
+34/54 O1   observaciones-v1     rep 2 OK aceptada USD 0.001958 (acum. 0.071962)
+35/54 O1   observaciones-v2     rep 2 OK aceptada USD 0.001932 (acum. 0.073894)
+36/54 O1   observaciones-v3     rep 2 OK aceptada USD 0.002290 (acum. 0.076184)
+37/54 O2   observaciones-v1     rep 1 OK rechazada USD 0.001984 (acum. 0.078168)
+38/54 O2   observaciones-v2     rep 1 OK rechazada USD 0.002197 (acum. 0.080365)
+39/54 O2   observaciones-v3     rep 1 OK rechazada USD 0.002384 (acum. 0.082748)
+40/54 O2   observaciones-v1     rep 2 OK rechazada USD 0.002002 (acum. 0.084751)
+41/54 O2   observaciones-v2     rep 2 NO aceptada USD 0.002129 (acum. 0.086880)
+42/54 O2   observaciones-v3     rep 2 OK rechazada USD 0.002330 (acum. 0.089210)
+43/54 O7   observaciones-v1     rep 1 OK aceptada USD 0.001904 (acum. 0.091114)
+44/54 O7   observaciones-v2     rep 1 OK aceptada USD 0.001959 (acum. 0.093073)
+45/54 O7   observaciones-v3     rep 1 OK aceptada USD 0.002339 (acum. 0.095412)
+46/54 O7   observaciones-v1     rep 2 OK aceptada USD 0.001940 (acum. 0.097352)
+47/54 O7   observaciones-v2     rep 2 OK aceptada USD 0.001959 (acum. 0.099311)
+48/54 O7   observaciones-v3     rep 2 OK aceptada USD 0.002276 (acum. 0.101588)
+49/54 O10  observaciones-v1     rep 1 NO rechazada USD 0.002800 (acum. 0.104388)
+50/54 O10  observaciones-v2     rep 1 NO rechazada USD 0.002788 (acum. 0.107176)
+51/54 O10  observaciones-v3     rep 1 OK aceptada USD 0.002434 (acum. 0.109610)
+52/54 O10  observaciones-v1     rep 2 NO rechazada USD 0.003012 (acum. 0.112622)
+53/54 O10  observaciones-v2     rep 2 NO rechazada USD 0.002248 (acum. 0.114870)
+54/54 O10  observaciones-v3     rep 2 OK aceptada USD 0.002385 (acum. 0.117255)
+
+Completadas 54/54 llamadas · USD 0.117255 de USD 0.25
+Informe: /Users/yarellafernandez/ia-lab/proyecto-farmacia/prompts/evaluacion/resultados-openai.json

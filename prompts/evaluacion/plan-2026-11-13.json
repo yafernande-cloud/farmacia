@@ -1,0 +1,62 @@
+{
+  "plan": {
+    "tareas": [
+      "vision",
+      "observaciones"
+    ],
+    "casos": {
+      "vision": [
+        "V1",
+        "V2",
+        "V3",
+        "V4",
+        "V6"
+      ],
+      "observaciones": [
+        "O1",
+        "O10",
+        "O2",
+        "O7"
+      ]
+    },
+    "versiones": {
+      "vision": [
+        "vision-v1",
+        "vision-v2",
+        "vision-v3"
+      ],
+      "observaciones": [
+        "observaciones-v1",
+        "observaciones-v2",
+        "observaciones-v3"
+      ]
+    },
+    "repeticiones": 2,
+    "llamadas": 54,
+    "modelos": {
+      "observaciones": "gpt-5.4-mini",
+      "vision": "gpt-5.4-mini"
+    },
+    "tarifas_usd_por_millon": {
+      "entrada": "0.75",
+      "salida": "4.50"
+    },
+    "max_tokens_salida": {
+      "vision": 800,
+      "observaciones": 800
+    },
+    "criterio": "Acierto estricto por repetición: se cumplen todas las verificaciones de `casos.json`. O10 se informa aparte como capacidad nueva de v3."
+  },
+  "estimacion": {
+    "llamadas": 54,
+    "por_tarea": {
+      "vision": 30,
+      "observaciones": 24
+    },
+    "tokens_entrada_esperados": 106244,
+    "tokens_salida_esperados": 18900,
+    "costo_esperado_usd": "0.1647",
+    "costo_reserva_usd": "0.3309",
+    "advertencia": "El costo esperado usa la longitud real de los prompts y ~350 tokens de salida. La reserva usa 2,5 caracteres por token, 2000 tokens de imagen por foto y el tope de salida por llamada: es el techo a partir del cual el evaluador se detendría."
+  }
+}

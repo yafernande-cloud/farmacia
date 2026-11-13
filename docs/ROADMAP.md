@@ -1,9 +1,10 @@
 # Roadmap (alcance completo conservado; ver HLD §23 y criterios AC01–AC40)
 
-El orden no reduce el alcance: la presentación final a Pao integra todos los módulos.
+Este documento conserva el historial de planificación. El [README](../README.md) describe el
+alcance de la entrega y la [guía de despliegue](DEPLOY_HEROKU.md) identifica la versión publicada.
 
-**Estado vigente al 2026-11-09.** Las secciones siguientes conservan el historial de decisiones y
-fases; esta cabecera manda sobre lo que quedó desactualizado en el cuerpo.
+**Estado registrado el 2026-11-09.** Las secciones siguientes conservan las decisiones y fases
+que se documentaron en ese momento.
 
 - El **cotizador** es la prioridad y **Telegram no bloquea** su desarrollo.
 - **Implementado y probado localmente:** faltantes y reportes independientes (D-135), integridad de
