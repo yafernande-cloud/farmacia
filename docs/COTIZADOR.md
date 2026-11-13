@@ -14,13 +14,13 @@ contrato y las decisiones registradas mandan sobre este resumen.
 | Búsqueda de catálogo E1–E3 | Implementado | Buscador real | Desplegado |
 | Búsqueda de cadenas E15 | Implementado | Tarjetas por cadena | Según configuración por cadena |
 | Comparación E5 / criterios E9 | Implementado | No conectado | — |
-| Cotizaciones y carrito E10 | Implementado | **Demostración local**; «Agregar a cotización» deshabilitado | — |
+| Cotizaciones y carrito E10 | Implementado | Carrito y finalización conectados a la API | Confirmado por la responsable del proyecto |
 | Asignaciones a reportes | Implementado | No conectado | — |
 | Compras registradas y cierre | **No implementado** | — | — |
-| Historial con búsqueda | **No implementado** | Pantalla con datos de demostración | — |
-| Observaciones comerciales e IA A6/O2 | Implementado | «Enseñar a la IA» deshabilitado | — |
+| Historial de cotizaciones | Informes finalizados disponibles por API | Recupera informes guardados | Confirmado por la responsable del proyecto |
+| Observaciones comerciales e IA A6/O2 | Implementado | «Enseñar a la IA» conectado a la API | Confirmado por la responsable del proyecto |
 | Proveedores e importación | Implementado | Pantalla real | Desplegado |
-| Motor de proveedores: perfiles y búsqueda en vivo | Implementado en backend; apagado por defecto | No conectado | Migración `0027` no aplicada |
+| Motor de proveedores: perfiles y búsqueda en vivo | Implementado en backend; apagado por defecto | Integración con ofertas FarmaLoop en el código del frontend | Disponible según configuración |
 
 La suite backend cubre estos módulos con PostgreSQL real. La suite no llama a cadenas reales, a
 OpenAI ni a Telegram: usa dobles y simuladores. Las excepciones documentadas son verificaciones
@@ -160,7 +160,8 @@ automatizadas usan dobles.
 - Operaciones: agregar/actualizar/retirar línea, `close-pending`, `reopen-pending`, mover entre
   proveedores, refrescar oferta y descartar/reincorporar carrito.
 - Evaluación E5 por carrito; total general solo si todos los carritos están completos.
-- Cobertura provisional por asignaciones; no cierra el faltante.
+- Mientras se prepara la cotización, las asignaciones dan cobertura provisional. Al finalizar,
+  el backend guarda el informe y libera los faltantes activos con cantidad conocida y cobertura suficiente.
 - Integridad: no se cierra una cotización con asignaciones inconsistentes
   (`409 QUOTE_HAS_INCONSISTENT_ALLOCATIONS`); la cantidad pedida no baja de lo asignado
   (`409 QUANTITY_BELOW_ALLOCATED`); no se borra un reporte con asignaciones vigentes
@@ -171,18 +172,15 @@ automatizadas usan dobles.
 
 ### Frontend
 
-- La pantalla principal mantiene un carrito **local de demostración** (`carrito-demo`) y el botón
-  «Agregar a cotización» está deshabilitado («Disponible próximamente»).
-- «Mis cotizaciones» e «Historial» usan datos ficticios de demostración.
-- **No hay conexión entre la UI y `/api/v1/quotes`.** El backend está listo y probado; la integración
-  visual es trabajo pendiente.
+- La pantalla principal consulta la cotización activa y usa `/api/v1/quotes` para gestionar
+  sus líneas y finalizarla. El historial recupera los informes guardados desde la API.
+- Integración verificada en el código del frontend, commit `85de1d4`. La responsable del proyecto
+  confirmó el funcionamiento del carrito, la finalización y el historial en el sitio publicado.
 
 ### Cierre y compra
 
-- Cerrar una cotización significa «preparada para comprar», no «comprada» (D-139, aprobada y **no
-  implementada**). El código actual todavía cuenta solo `draft` y bloquea comprar con
-  `409 QUOTE_CLOSED`; esa contradicción se corrige cuando se autorice C5-B.
-- No hay compras parciales de la selección en la demo.
+- Al finalizar, la cotización queda cerrada y el informe conserva los datos usados. La ejecución
+  de compras queda fuera del alcance de la entrega.
 
 ## 7. Compras registradas y cierre (no implementado)
 
@@ -227,10 +225,10 @@ automatizadas usan dobles.
 
 ### Frontend
 
-- El botón «Enseñar a la IA» está **deshabilitado** con «Disponible próximamente».
-- Ninguna pantalla llama a `/commercial-observations` ni a `/articles/{id}/preferences`.
-- La suite usa un doble del proveedor: **ninguna prueba llama a OpenAI ni consume cuota**.
-- Falta conectar Lovable y hacer una prueba real con presupuesto aprobado.
+- «Enseñar a la IA» usa `/api/v1/commercial-observations` para guardar la observación y el
+  endpoint de interpretaciones para procesarla. La responsable del proyecto confirmó su
+  funcionamiento en el sitio publicado.
+- La comparación de prompts con OpenAI sigue pendiente.
 
 ## 9. Proveedores, fuentes e importación
 

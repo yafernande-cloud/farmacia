@@ -15,21 +15,22 @@ Asistente de compras con IA (demo → producción). Idioma de trabajo y UI: espa
   procedimiento, consultar [la guía de Heroku](docs/DEPLOY_HEROKU.md). El backend se publica
   exclusivamente mediante Manual Deploy por la responsable del proyecto.
 
-## Fuentes de verdad
-- `docs/Farmacia_Parque_Lantano_HLD_LLD.md`: requisitos, invariantes (§2), AC01–AC40. **No editar**; registrar
-  cambios en `docs/decisions/`. Si el prompt del usuario contradice el HLD, rige el usuario y se registra.
-- `docs/ARQUITECTURA.md`, `docs/ROADMAP.md`, `docs/decisions/0001-registro-de-decisiones.md`: estado vigente.
-- `docs/contracts/cotizador-v0.2.md`: contrato del cotizador **revisión 10-A6**, aprobada el 2026-11-03 (D0
-  2026-10-30 y **parcialmente implementado**: C5-A, D-135 y D-137). La revisión 10-A6 incorpora **solo A6** (O3, O4,
-  §8.4, §8.6 y AC31): preferencias por producto que ordenan ofertas, sin explicaciones de IA. **C9/D-139 y C11/D-140
-  siguen pendientes de incorporar**; el texto de trabajo está en `docs/contracts/cotizador-v0.2-rev10-propuesta.md`.
-  Define E10–E15, la cobertura de faltantes, la regla de cierre y la aprobación web que otorga `admin` (D-130). Nada de
-  lo pendiente se implementa sin orden explícita.
-- `docs/decisions/ACUERDOS_FUNCIONALES.md`: acuerdos A1–A11 y flujo funcional completo con su estado real
-  (implementado en código / aprobado sin código / pendiente), contradicciones documentales y recomendación de
-  migración. **Es una propuesta en revisión, no aprobada todavía como documento de referencia**; no acredita despliegue.
-  C7, C9, C11 y AC31 ya están decididos (D-138 a D-141); A6 se aprobó e incorporó el 2026-11-03 (D-142); lo pendiente es
-  su implementación, no su definición.
+## Documentación de referencia
+
+- Para el alcance de la entrega académica, consultar el [Prompt Maestro](PROMPT_MAESTRO.md).
+  Para el estado de las funciones, consultar el [README](README.md) y la
+  [guía del Cotizador](docs/COTIZADOR.md). La entrega cubre el flujo de faltantes, búsqueda y
+  cotización. La ejecución de compras queda fuera del alcance y permanece bloqueada.
+- La [arquitectura](docs/ARQUITECTURA.md) describe la organización técnica. El
+  [roadmap](docs/ROADMAP.md) y el [registro de decisiones](docs/decisions/0001-registro-de-decisiones.md)
+  documentan la evolución del proyecto.
+- Conservar la [especificación HLD/LLD](docs/Farmacia_Parque_Lantano_HLD_LLD.md) como referencia
+  de diseño. Si una instrucción de la responsable cambia un requisito, registrar la decisión
+  en `docs/decisions/`.
+- El [contrato rev. 10-A6](docs/contracts/cotizador-v0.2.md) documenta los acuerdos de esa revisión,
+  incluidas las preferencias por producto. C9/D-139 y C11/D-140 corresponden al flujo de compra
+  posterior y se conservan en la [propuesta de revisión](docs/contracts/cotizador-v0.2-rev10-propuesta.md).
+  Los [acuerdos funcionales](docs/decisions/ACUERDOS_FUNCIONALES.md) son material de revisión.
 
 ## Reglas permanentes
 - **Git:** rama `master`. NO ejecutar commit, push, init, remote add ni renombrar ramas sin orden explícita.
@@ -39,22 +40,12 @@ Asistente de compras con IA (demo → producción). Idioma de trabajo y UI: espa
 - Invariantes críticos: un aviso repetido no suma cantidad; cantidad desconocida = NULL (no 0/1); sin fusión
   automática de dosis/formatos distintos; solo `SET/ADD/CLEAR` explícitos; aprobaciones ligadas a snapshot;
   referencia de cadena ≠ oferta comprable; compra real **bloqueada**; el LLM no decide dinero, cantidades ni permisos.
-- **Cotizador (D-113 a D-142; contrato v0.2 rev10-A6, aprobada solo para A6):** el MVP demuestra *faltante → búsqueda → comparación →
-  cotización → compra*; **no** es inventario ni recepción. La recepción física y las diferencias de entrega están
-  **fuera del MVP** (D-126). El ciclo se cierra **solo** con compras confirmadas que cubren toda la cantidad pedida
-  conocida; cotizar cubre de forma **provisional** y nunca cierra. **Cotización cerrada (C9, D-139, aprobado y no
-  implementado):** cerrar significa que la cotización **terminó de prepararse y puede convertirse en compra**; no
-  significa comprada, descartada ni anulada. `closed` conserva líneas, cantidades y asignaciones, **sigue aportando
-  cobertura provisional** y **se compra sin reabrir**. El código actual todavía cuenta solo `draft` y bloquea comprar
-  con `409 QUOTE_CLOSED`; esa contradicción se corrige cuando se autorice C5-B. **Compra todo o nada (enmienda a
-  D-127, 2026-11-02):** se registra completa —todos los productos y cantidades seleccionados— o no se registra; al
-  registrarse, los faltantes cubiertos se cierran y se liberan para nuevos reportes por Telegram. **La compra puede
-  incluir cantidades sin asignación para inventario (C11, D-140, aprobado y no implementado):** las asignaciones son
-  explícitas, su suma ≤ cantidad comprada, y el excedente no se asigna automáticamente ni cierra reportes. **No hay
-  compras parciales por productos ni cantidades de la selección en la demo** y no se implementa lógica para ellas. Dos saldos distintos: `pending_quantity` = falta
-  **cotizar**, `pending_purchase_quantity` = falta **comprar**. `fulfilled` **no** significa recibido. Telegram solo
-  lee: no registra compras, no aplica cantidades ni confirma llegadas. Cotizar y comprar son `admin` + `StrongActor`
-  (D-130). **Reportes independientes (D-135):** cada persona tiene su propio reporte; un aviso de otra persona nunca se
+- **Cotizador (D-113 a D-142; contrato v0.2 rev10-A6, aprobada solo para A6):** la entrega cubre *faltante → búsqueda → comparación →
+  cotización*; **no** es inventario ni recepción. La recepción física y las diferencias de entrega están
+  **fuera del MVP** (D-126). Al finalizar, el backend guarda el informe y libera los faltantes activos
+  con cantidad conocida y cobertura suficiente. La ejecución de compras queda fuera de la entrega.
+  C9/D-139 y C11/D-140 se conservan como acuerdos históricos para el flujo posterior.
+  Cotizar requiere `admin` y `StrongActor` según D-130. **Reportes independientes (D-135):** cada persona tiene su propio reporte; un aviso de otra persona nunca se
   adjunta ni se suma, el bot pregunta (Confirmar/Modificar/Cancelar) y, si se confirma, crea un reporte propio. La
   línea de cotización cubre uno o varios reportes solo mediante `quote_line_allocation` con cantidades **explícitas**
   (suma ≤ línea, sin reparto automático). Cancelar un reporte es lógico (`admin` + `StrongActor`, versión e
@@ -78,7 +69,7 @@ Asistente de compras con IA (demo → producción). Idioma de trabajo y UI: espa
   traza con modelo/prompt/estado) y **D-144** (retiro explícito por clase con `retired_subject_kinds`, migración `0019`,
   solo para el artículo; una preferencia posterior válida vuelve a establecerla);
   **los endpoints REST de interpretación están implementados (A6 Fase 3B, 2026-11-03; ver
-  `docs/A6_FASE_3B_API.md`) y falta conectar Lovable**, y la suite usa un doble: ninguna prueba llama a
+  `docs/A6_FASE_3B_API.md`) **. El frontend llama a la API de observaciones comerciales y la suite usa un doble: ninguna prueba llama a
   OpenAI ni consume cuota. Observaciones comerciales:
   `/api/v1/commercial-observations`, separadas de los avisos de faltante (`/api/v1/observations`, D-129).
 - **Acceso web (D-130, implementado en código; `0012` no aplicada a `farmacia`):** **único perfil funcional web:
@@ -129,7 +120,9 @@ Asistente de compras con IA (demo → producción). Idioma de trabajo y UI: espa
 - Arrancar: `scripts/dev.sh` · Pruebas: `.venv/bin/pytest` · Lint: `.venv/bin/ruff check .`
 - Migraciones: `.venv/bin/alembic revision --autogenerate -m "..."` / `upgrade head` (requiere `DATABASE_URL`)
 
-## Estado: implementado vs aprobado (2026-11-02)
+## Registro histórico de implementación
+
+Para el alcance de la entrega, consultar la sección inicial y el README.
 - **Implementado en código:** H1-A, H1-B/H1-B.4 con simuladores, personal y `/staff`, auth web (validador JWT,
   enlace `auth_subject` por CLI, `create-admin`, `StrongActor`), **C2** (`catalog-load`, `manual_import`, perfiles de
   importación, `needs_review`, E8 con `Idempotency-Key`; `0009`–`0011`) y **G1** (solicitud pública de acceso,
@@ -172,7 +165,7 @@ Asistente de compras con IA (demo → producción). Idioma de trabajo y UI: espa
   interpretación con OpenAI (D-145)**; la elegibilidad manda,
   los estados no aplicados no retiran preferencias y el retiro explícito solo afecta su clase y su artículo; **los
   endpoints REST de interpretación y preferencias están implementados (A6 Fase 3B, `docs/A6_FASE_3B_API.md`);
-  Lovable NO está conectado**, y las pruebas no llaman al proveedor real. Las
+  el frontend llama a la API**, y las pruebas habituales usan un doble del proveedor. Las
   preferencias son
   **del producto
   específico** (D-138), no se propagan por
@@ -184,8 +177,7 @@ Asistente de compras con IA (demo → producción). Idioma de trabajo y UI: espa
   (mantenedor de proveedores con URL, contacto comercial, cuentas,
   credenciales y estado de conexión)** sigue aprobado y **sin código ni migración**: no hay conectores reales, cuentas
   operativas ni credenciales almacenadas. La recepción está fuera del MVP (D-126).
-- **Sin empezar:** C5-B (`0021`), **la conexión de O2 con Lovable** (el backend de O2 está implementado,
-  A6 Fase 3B), C5-C (`0022`), C5-D (`0023`, bloqueado), la pantalla de Configuración de Telegram de Lovable (T3/T4),
+- **Sin empezar:** C5-B (`0021`), C5-C (`0022`), C5-D (`0023`, bloqueado), la pantalla de Configuración de Telegram de Lovable (T3/T4),
   C6/C6a y H2–H6. **T1 backend está implementado** (migración `0020`, D-146); D-124 sigue pendiente.
 
 ## Metodología

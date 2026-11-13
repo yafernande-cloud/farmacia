@@ -51,7 +51,7 @@ las búsquedas E15, la caché de búsquedas de proveedores y los limitadores de 
 | `telegram` | Parseo, cliente de Bot API, runtime de polling |
 | `models` | Modelos SQLAlchemy |
 | `core` | Configuración, errores, permisos, autenticación, cifrado |
-| `migrations` | Alembic; la cabeza actual es `0027` |
+| `migrations` | Alembic; la cabeza actual es `0032` |
 
 Patrón de servicios: reciben un `Actor` y una `AsyncSession`, verifican permiso, aplican reglas y
 emiten auditoría/outbox con `services.events.emit`. La API abre `transaction()` y hace commit; si algo

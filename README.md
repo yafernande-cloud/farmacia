@@ -58,9 +58,9 @@ identidades. Toda regla de negocio vive en el backend.
 | Búsqueda de catálogo (E1–E3) | Implementado | Suite backend y frontend | En uso desde Lovable |
 | Búsqueda de cadenas (E15) | Implementado | Suite backend y frontend | Según configuración por cadena; límite de Cruz Verde verificado manualmente y caso Predual verificado tras el despliegue con resultados de Cruz Verde, Salcobrand y Ahumada |
 | Motor de proveedores: perfiles y búsqueda en vivo | Implementado en backend; estrategia Algolia y preset Farmaloop, con clasificación directo/relacionado y bloqueo comercial | 47 pruebas nuevas con transporte simulado y PostgreSQL | Apagado por defecto (`SUPPLIER_CONNECTOR_ENABLED=false`); `0027` aplicada solo en una base desechable; una búsqueda real «predual» validada el 2026-11-10 (5 ofertas válidas, sin persistencia); sin conectar a Lovable |
-| Comparación, cotizaciones y carrito (E5/E10) | Implementado en backend | Suite backend | Pantallas de cotizaciones/carrito aún con datos de demostración; sin conectar |
+| Comparación, cotizaciones y carrito (E5/E10) | Implementado en backend | Suite backend | Carrito, finalización e historial de informes confirmados en el sitio publicado por la responsable del proyecto |
 | Compras registradas y cierre de faltantes | **No implementado** | — | — |
-| Observaciones comerciales e IA (A6/O2) | Implementado en backend | Suite con proveedor simulado | Botón «Enseñar a la IA» deshabilitado; sin conectar |
+| Observaciones comerciales e IA (A6/O2) | Implementado en backend | Suite con proveedor simulado | «Enseñar a la IA» confirmado en el sitio publicado por la responsable del proyecto |
 | Acceso web con Google y correo+contraseña | Implementado | Suite backend y frontend | Inicio de sesión con ambos métodos verificado en Lovable Preview |
 | Solicitudes de acceso web y campanita | Backend implementado; frontend solo demostración | Suite backend | **No verificado de punta a punta**: la campanita de Lovable no llama a la API |
 
@@ -110,9 +110,8 @@ la última suite frontend informada, en **238 pruebas aprobadas**. Los números 
 - Cruz Verde: consultas de más de 50 caracteres se resuelven con hasta dos consultas internas más
   cortas, conservando la consulta original; un rechazo (`query_rejected`) se distingue de una caída.
 - Comparación determinista E5 con elegibilidad, totales completos, cota inferior y criterios.
-- Cotizaciones E10 con carritos por proveedor, líneas, cierre provisional y reapertura. El backend
-  está implementado; la pantalla de carrito/cotizaciones de Lovable todavía usa datos de
-  demostración y el botón «Agregar a cotización» está deshabilitado.
+- La interfaz de cotizaciones consulta el carrito, actualiza sus líneas y finaliza la cotización
+  mediante la API del backend. El historial recupera el informe guardado.
 - Proveedores con URL de portal y credenciales cifradas en reposo con Fernet. Guardar una credencial
   **no** conecta ni prueba el portal.
 
@@ -124,8 +123,7 @@ la última suite frontend informada, en **238 pruebas aprobadas**. Los números 
   marca o proveedor y no construyen perfiles globales.
 - Sin explicaciones, justificaciones ni puntuaciones visibles. La traza (modelo, prompt, estado) es
   auditoría interna.
-- Endpoints REST implementados (`/commercial-observations`, `/articles/{id}/preferences`), pero
-  **Lovable no está conectado** y el botón «Enseñar a la IA» está deshabilitado.
+- «Enseñar a la IA» guarda una observación comercial y solicita su interpretación mediante la API.
 
 ### Compras (no implementado)
 
@@ -173,8 +171,8 @@ Detalle completo: [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
 4. **Búsqueda**: E1–E3 sobre catálogo; E15 consulta cadenas en paralelo, cada una con su estado.
 5. **Comparación**: E5 ordena ofertas elegibles y calcula totales solo cuando están completos.
 6. **Cotización**: E10 arma carritos por proveedor y líneas en el backend; las asignaciones a
-   reportes son explícitas. La UI de Lovable aún usa datos de demostración. Cotizar cubre de forma
-   provisional y **no cierra** el faltante.
+   reportes son explícitas. Al finalizar, el backend guarda el informe y libera los faltantes
+   activos con cantidad conocida y cobertura suficiente. Los demás quedan activos.
 7. **Compra**: **no implementada** en esta etapa. La compra real está bloqueada.
 
 ## 6. Integraciones
@@ -260,6 +258,54 @@ El frontend usa `VITE_API_URL`, `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`. 
 pública, pero se mantiene fuera del repositorio. En la vista previa de Lovable se usa la configuración
 pública versionada como respaldo.
 
+### 9.1 Backend en contenedor (Docker)
+
+La imagen se construye con [`backend/Dockerfile`](backend/Dockerfile), usa la versión de
+`.python-version`, instala `requirements.txt` y arranca con el mismo comando que el proceso `web` del
+`Procfile`. El contexto de compilación es la **raíz del repositorio** (allí viven `.python-version` y
+`requirements.txt`); `.dockerignore` deja fuera credenciales, `.env`, entornos virtuales, respaldos,
+pruebas y archivos locales. La configuración y los secretos se pasan **al ejecutar** el contenedor.
+
+```bash
+# 1. Construir (desde la raíz del repositorio)
+docker build -f backend/Dockerfile -t cotizador-farmacia-backend .
+
+# 2. Base desechable solo para la comprobación (nunca la base real ni la de Heroku)
+docker network create cotizador-check
+docker run -d --name cotizador-check-db --network cotizador-check \
+  -e POSTGRES_USER=farmacia -e POSTGRES_PASSWORD=check_local \
+  -e POSTGRES_DB=farmacia_check postgres:17
+# La imagen no migra sola: el `release` sigue siendo un paso explícito, como en Heroku.
+docker run --rm --network cotizador-check \
+  -e DATABASE_URL='postgresql+psycopg://farmacia:check_local@cotizador-check-db:5432/farmacia_check' \
+  cotizador-farmacia-backend alembic upgrade head
+
+# 3. Arrancar (el puerto del host es un ejemplo)
+docker run -d --name cotizador-check-app --network cotizador-check \
+  -p 127.0.0.1:18000:8000 \
+  -e DATABASE_URL='postgresql+psycopg://farmacia:check_local@cotizador-check-db:5432/farmacia_check' \
+  -e AUTH_MODE=demo_header \
+  cotizador-farmacia-backend
+
+# 4. Verificar
+curl -sS http://127.0.0.1:18000/api/v1/health
+# {"status":"ok","env":"local","purchase_execution":"blocked"}
+curl -sS http://127.0.0.1:18000/api/v1/health/ready
+# {"status":"ok","database":{"status":"ok"}}
+
+# 5. Limpiar
+docker rm -f cotizador-check-app cotizador-check-db
+docker network rm cotizador-check
+```
+
+`/api/v1/health` es liveness (no toca la base) y `/api/v1/health/ready` es readiness (informa
+`503` si PostgreSQL no responde). La imagen corre con un usuario sin privilegios (`uid 10001`) y no
+contiene `.env` ni pruebas. En producción, con variables de entorno y secretos, se usa
+`docker run --env-file` o el equivalente del servicio; **la publicación al dominio sigue siendo un
+Manual Deploy en Heroku por la responsable del proyecto**, no se publica esta imagen en ningún
+registro.
+
+
 ## 10. Pruebas
 
 ```bash
@@ -283,12 +329,13 @@ aislada). Nunca a `farmacia`, `farmacia_demo` ni a la base de Heroku. Detalle y 
 ## 11. Estructura del repositorio
 
 ```
-backend/        API FastAPI, dominio, servicios, migraciones y pruebas
+backend/        API FastAPI, dominio, servicios, migraciones, pruebas y Dockerfile
 database/       docker-compose de PostgreSQL y datos semilla
 docs/           arquitectura, módulos, despliegue, pruebas y decisiones
 prompts/        prompts de sistema, golden set y evaluación
 scripts/        utilidades de desarrollo y demostraciones
 requirements.txt / Procfile / .python-version   preparación de Heroku en la raíz
+.dockerignore   contexto de la imagen del backend (excluye secretos y archivos locales)
 ```
 
 El frontend vive en un repositorio separado: `farmacia-frontend` (Lovable). No se duplica su
@@ -298,8 +345,6 @@ documentación aquí; este repositorio es la fuente de verdad del contrato y de 
 
 - Compras registradas, cierre por compra e historial con búsqueda: no implementados.
 - Recepción física y diferencias de entrega: fuera del MVP.
-- La pantalla de carrito/cotizaciones de Lovable aún usa datos de demostración.
-- «Enseñar a la IA» y la campanita de solicitudes web de Lovable no están conectadas al backend.
 - No hay registro público ni recuperación de contraseña; el alta es operativa.
 - MFA y reautenticación fuerte: pendientes (H5); `StrongActor` no es MFA.
 - Cadenas reales: dependen de autorización y configuración por cadena; no hay precios persistidos.

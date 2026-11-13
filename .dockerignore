@@ -1,0 +1,58 @@
+# Contexto de compilación de la imagen del backend.
+#
+# El Dockerfile vive en `backend/Dockerfile` pero el contexto es la raíz del repositorio, porque
+# `.python-version` y `requirements.txt` están allí. Docker solo aplica el `.dockerignore` que
+# está en la raíz del contexto.
+#
+#   docker build -f backend/Dockerfile -t cotizador-farmacia-backend .
+#
+# Nada de esto entra en la imagen: la configuración y los secretos se pasan al ejecutar el
+# contenedor (`docker run --env-file ...`, variables de Heroku o servicio equivalente).
+
+# Credenciales y configuración de entorno
+.env
+.env.*
+**/.env
+**/.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+**/secrets/
+
+# Entornos virtuales y cachés de herramientas
+.venv/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.ruff_cache/
+**/*.egg-info/
+
+# Datos locales, respaldos y fotografías (contienen información real)
+.backups/
+.storage/
+**/.storage/
+database/
+uploads/
+*.dump
+
+# Pruebas y capturas HTML reales (no forman parte del proceso en ejecución)
+backend/tests/
+backend/Dockerfile
+
+# Documentación, prompts y utilidades de desarrollo
+docs/
+prompts/
+scripts/
+PROMPT_MAESTRO.md
+CLAUDE.md
+AGENTS.md
+
+# Repositorios, dependencias y archivos del sistema operativo
+.git/
+.gitignore
+node_modules/
+farmacia-frontend/
+.DS_Store
