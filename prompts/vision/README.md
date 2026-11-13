@@ -84,9 +84,8 @@ al azar. El resultado es una lectura en revisión, no un producto inventado.
 
 ## 6. Límites conocidos
 
-- **Un producto por foto.** El esquema devuelve un objeto con una lista de atributos, no una lista
-  de productos. El caso V7 del golden set —dos envases distintos en una foto— es una brecha
-  declarada, no un caso aprobado.
+- **Un producto por foto.** Para reportar varios productos, se envía una foto por cada uno.
+  V7 registra el escenario de varios productos en una foto como fuera de alcance y sin ejecutar.
 - **No hay versión del prompt en la traza.** La visión se identifica por commit. Las
   observaciones comerciales sí guardan `a6-observations-v3`.
 - **Las imágenes del golden set son sintéticas.** Sirven para comparar versiones, no para afirmar

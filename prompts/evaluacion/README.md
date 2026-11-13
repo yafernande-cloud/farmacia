@@ -32,10 +32,10 @@ Resultado actual (2026-11-13):
 | Casos con verificaciones | 16 |
 | Casos que cumplen todo | 16/16 |
 | Comprobaciones | 60/60 |
-| Brecha declarada | V7 (dos productos por foto) |
+| Fuera de alcance | V7 (dos productos en una foto, sin ejecutar) |
 
-V7 no tiene verificaciones porque el esquema actual no puede cumplirlo. No se cuenta como
-aprobado ni se oculta en el total.
+V7 se conserva como referencia. La regla es una foto por producto y V7 queda fuera del
+denominador de 16 casos evaluables.
 
 ### Qué demuestra y qué no
 
@@ -63,35 +63,16 @@ El arnés:
 El mensaje de usuario se construye con el `build_prompt` actual del backend y no está versionado.
 Por eso la comparación aísla el prompt de sistema y no reproduce toda la petición histórica.
 
-### Plan mínimo
+### Matriz actual y comparación propuesta
 
-| Comparación | Casos | Versiones | Repeticiones | Llamadas |
-| --- | --- | --- | --- | --- |
-| Visión v1 vs v3 | V1, V2, V3, V4, V6 | 2 | 3 | 30 |
-| Observaciones v1 vs v2 | O2, O7 | 2 | 3 | 12 |
-| Observaciones v2 vs v3 | O1, O10 | 2 | 3 | 12 |
-| **Total** | | | | **54** |
+El evaluador publicado planifica 54 llamadas repartidas en tres repeticiones por cruce. Incluye
+Visión v1 y v3, y usa distintos pares de versiones y casos en Observaciones Comerciales.
+El límite implementado controla el número de llamadas.
 
-Estimación con las tarifas del repositorio (`USD 0,75` por millón de entrada y `USD 4,50` por
-millón de salida) y tokens supuestos: **USD 0,19**. Es una estimación, no una cotización: el costo
-real depende del modelo, del tamaño de la imagen y de la longitud de la salida.
-
-### Cómo se ejecutaría, después de la autorización
-
-```bash
-# 1. Ver el plan sin llamar a nadie
-backend/.venv/bin/python prompts/evaluacion/evaluar_openai.py --plan
-
-# 2. Ejecutar con límites explícitos
-export OPENAI_API_KEY=...
-export OPENAI_MODEL=<modelo autorizado>
-export OPENAI_VISION_MODEL=<modelo de visión autorizado>
-backend/.venv/bin/python prompts/evaluacion/evaluar_openai.py \
-  --confirmar-gasto --max-llamadas 54 --repeticiones 3
-```
-
-El programa se niega a llamar sin `--confirmar-gasto`, sin clave, sin modelos o si el plan supera
-`--max-llamadas`. No reintenta errores de negocio ni respuestas truncadas.
+La [matriz propuesta](../comparacion/README.md#6-plan-de-llamadas-y-costo) mantiene 54 llamadas,
+con dos repeticiones por cruce y cobertura de las tres versiones en ambas tareas. Para ejecutarla
+hace falta actualizar el evaluador, ajustar los parámetros por tarea y añadir el control del
+presupuesto. La corrida sigue pendiente y todavía no existe `resultados-openai.json`.
 
 ### Cómo se leería el resultado
 
@@ -126,6 +107,6 @@ En este directorio:
 - «aprobado» significa que una comprobación declarada se cumplió;
 - «omitido» significa que no se ejecutó;
 - «pendiente» significa que requiere una llamada real;
-- «brecha» significa que la aplicación todavía no puede cumplir el caso.
+- El resultado archivado etiqueta V7 como «brecha». En el alcance vigente, V7 queda fuera de la evaluación.
 
 No se usa «mejoró» sin dos mediciones comparables. Hoy no existen.

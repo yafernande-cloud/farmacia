@@ -2,10 +2,14 @@
 
 ## 1. Estado
 
-Existen versiones históricas reales y comparables de los **prompts de sistema**, recuperadas de
-Git. **Todavía no existe una comparación medida con OpenAI real.** Este documento describe qué se
-puede comparar, con qué casos, cuántas llamadas hacen falta y cuánto costaría. No contiene
-porcentajes de mejora porque no se han obtenido.
+El Prompt Maestro plantea dos tareas para la IA dentro del Cotizador: leer los datos visibles de
+un envase e interpretar preferencias comerciales. En Visión, las versiones incorporan reglas
+para medicamentos combinados y afinan la identificación por nombre comercial. En Observaciones
+Comerciales, amplían primero el contexto de catálogo y después las preferencias entre artículos.
+
+Los commits de las tablas identifican las versiones del código. El protocolo de este documento
+queda pendiente de ejecución con OpenAI. La evidencia disponible está en la
+[evaluación offline](../evaluacion/README.md).
 
 ## 2. Mapa de versiones
 
@@ -97,31 +101,28 @@ protocolo para salvarla.
 
 ## 6. Plan de llamadas y costo
 
-Matriz mínima preparada en `evaluacion/evaluar_openai.py`:
+La matriz propuesta aplica los mismos casos a las tres versiones de cada tarea.
 
-| Comparación | Casos | Versiones | Repeticiones | Llamadas |
+| Tarea | Casos | Versiones | Repeticiones | Llamadas |
 | --- | --- | --- | --- | --- |
-| Visión v1 vs v3 | V1, V2, V3, V4, V6 | 2 | 3 | 30 |
-| Observaciones v1 vs v2 | O2, O7 | 2 | 3 | 12 |
-| Observaciones v2 vs v3 | O1, O10 | 2 | 3 | 12 |
-| **Total** | | | | **54** |
+| Visión | V1, V2, V3, V4, V6 | v1, v2, v3 | 2 | 30 |
+| Observaciones comerciales | O1, O2, O7, O10 | v1, v2, v3 | 2 | 24 |
+| **Total** | **9 casos** | | | **54** |
 
-Estimación: **USD 0,19** con las tarifas del repositorio y tokens supuestos. Es una estimación
-gruesa; el modelo real puede cambiar el costo. El arnés muestra el plan antes de llamar y se
-niega a superar `--max-llamadas`.
+O10 se informa aparte como capacidad incorporada en v3. V5 prueba el rechazo de una salida
+contradictoria en el backend. V7 queda fuera de alcance. Se usa una foto por producto. O4 y O9 pueden servir como diagnósticos y quedan fuera de esta matriz.
 
-Si se quisiera una comparación más amplia —por ejemplo, los 10 casos de observaciones en las tres
-versiones— el número sube. No se propone hacerlo sin una autorización de gasto separada.
+El costo estimado es **USD 0,19** con los supuestos y tarifas del repositorio. El tope de
+**USD 0,25** es una propuesta que requiere implementar el control de gasto.
 
-## 7. Qué falta para demostrar una mejora medible
+## 7. Antes de ejecutar la comparación
 
-1. Autorización de la responsable para gastar cuota de OpenAI.
-2. Elegir y confirmar los modelos reales (`OPENAI_MODEL`, `OPENAI_VISION_MODEL`).
-3. Ejecutar `evaluar_openai.py --plan` y revisar las 54 llamadas.
-4. Ejecutar con `--confirmar-gasto --max-llamadas 54`.
-5. Guardar `resultados-openai.json` y comparar versión por versión.
-6. Redactar el informe con aciertos, fallos y límites. Solo entonces se podrá decir si hubo
-   mejora y de qué tamaño; hoy no se puede.
+1. Ajustar el evaluador para cubrir la matriz y reproducir los parámetros de cada adaptador.
+2. Definir los criterios sustantivos antes de la corrida y conservar las comprobaciones offline.
+   Por ejemplo, para V4 se puede aceptar `blurry` o `unreadable` si la imagen queda en revisión
+   y no genera filas.
+3. Confirmar modelos, tarifas y presupuesto con la responsable y revisar el plan sin hacer llamadas.
+4. Tras la autorización, registrar resultados por caso, versión y repetición, con sus límites.
 
 ## 8. Limitaciones del diseño
 
@@ -134,5 +135,4 @@ versiones— el número sube. No se propone hacerlo sin una autorización de gas
   esquema».
 - Solo el prompt de sistema está versionado. El mensaje de usuario —contexto verificado y texto
   de la persona— lo genera el código actual; una versión histórica no se reconstruye completa.
-- El golden set no cubre dos productos por foto (V7): esa brecha queda fuera de la comparación
-  hasta que cambie el esquema.
+- La comparación de Visión sigue la regla de una foto por producto. V7 queda fuera de la corrida.

@@ -1,9 +1,12 @@
 # Prompts del Cotizador Inteligente
 
-Este directorio reúne los prompts reales que la aplicación envía a OpenAI, sus versiones, el
-golden set y la forma de evaluarlo. Sigue el [Prompt Maestro](../PROMPT_MAESTRO.md) y no cambia
-el código del Cotizador ni los prompts del código actual. No afirma qué commit está desplegado en
-producción: las versiones documentadas son las del repositorio.
+El Cotizador Inteligente se diseñó a partir de instrucciones para los agentes de desarrollo.
+El [Prompt Maestro](../PROMPT_MAESTRO.md) reúne el problema de la farmacia, las reglas de
+negocio y los criterios de aceptación que orientan la implementación.
+
+Dentro de la aplicación, los prompts de sistema dan instrucciones a OpenAI para leer fotos de
+envases e interpretar observaciones comerciales. Esta carpeta documenta cómo evolucionaron esas
+dos tareas, qué resultados se esperan y cómo se comprueban.
 
 ## 1. Dónde usa la aplicación un modelo
 
@@ -25,10 +28,10 @@ prompts/
 ├── README.md                     este documento
 ├── vision/
 │   ├── README.md                 contrato, validaciones y límites de la lectura de fotos
-│   └── prompt-v1.md … v3.md      texto exacto de cada versión, extraído de Git
+│   └── prompt-v1.md … v3.md      texto íntegro de cada versión
 ├── observaciones/
 │   ├── README.md                 contrato, validaciones y límites de las preferencias
-│   └── prompt-v1.md … v3.md      texto exacto de cada versión, extraído de Git
+│   └── prompt-v1.md … v3.md      texto íntegro de cada versión
 ├── golden-set/
 │   ├── README.md                 qué es cada caso y qué evidencia lo respalda
 │   ├── casos.json                17 casos con entrada, salida esperada y verificaciones
@@ -42,9 +45,9 @@ prompts/
     └── README.md                 versiones comparables, protocolo y costo pendiente
 ```
 
-## 3. Versiones reales
+## 3. Evolución de los prompts de sistema
 
-Los textos se extrajeron del código con `git show` y análisis del AST, no se reescribieron.
+Los commits identifican cada versión del prompt en el código de la aplicación.
 
 ### Visión
 
@@ -94,8 +97,8 @@ Los detalles están en [vision/README.md](vision/README.md) y
 `golden-set/casos.json` contiene **17 casos**:
 
 - **7 de visión:** V1 a V7. Incluyen aciertos, una foto parcial, una imagen sin producto, una
-  salida ambigua y la cantidad visible. V7 —dos productos en una foto— queda como **brecha
-  pendiente**: el esquema actual produce una lectura por foto y el caso no está aprobado.
+  salida ambigua y la cantidad visible. V7 registra un escenario **fuera de alcance y sin ejecutar**.
+  La regla de uso es enviar una foto por cada producto.
 - **10 de observaciones:** O1 a O10. Incluyen proveedor identificado, proveedor ambiguo, intento
   de cambiar las instrucciones, precio inventado, precio máximo, retiro, laboratorio sin oferta,
   texto sin preferencia, baja confianza y preferencia entre artículos.
@@ -138,13 +141,7 @@ La primera orden no usa red ni OpenAI. La segunda usa PostgreSQL local y dobles;
 
 ## 8. Comparación pendiente y autorización
 
-El arnés `evaluacion/evaluar_openai.py` ya está preparado, pero **no se ejecutó**. Su plan mínimo
-son **54 llamadas** (30 de visión y 24 de observaciones) con una estimación de **USD 0,19** usando
-las tarifas del repositorio. Antes de ejecutarlo se necesita:
-
-1. autorización explícita de la responsable;
-2. `OPENAI_API_KEY` y los modelos concretos en el entorno;
-3. confirmar que el gasto máximo aceptado es al menos el estimado;
-4. ejecutar primero `--plan` y revisar el total.
-
-Hasta entonces, la comparación entre versiones está **diseñada y documentada, no medida**.
+La comparación de las tres versiones con OpenAI está pendiente. El evaluador actual necesita
+ajustes para cubrir las tres versiones en ambas tareas y usar los parámetros de cada adaptador.
+El [protocolo de comparación](comparacion/README.md) describe la matriz propuesta y las condiciones
+que habría que acordar antes de una corrida con gasto.

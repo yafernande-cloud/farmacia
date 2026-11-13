@@ -22,7 +22,7 @@ presentarse como una prueba con fotos reales. V5 y V7 no llevan imagen por dise�
 | V4 | error | Imagen borrosa o sin producto | Cero filas; queda en revisión; se pide otra imagen | `test_h1b_photos.py::test_foto_ilegible_no_crea_nada_y_avisa_sin_presentarla_como_registrada` (flujo completo con proveedor simulado para `blurry`) y `test_interpretation.py::test_imagen_borrosa_no_inventa_nada` (rama `blurry`/`unreadable`). No hay llamada real a OpenAI. |
 | V5 | error | El modelo devuelve dos contenidos distintos | Se rechaza la lectura completa por ambigua | `test_openai_vision.py::test_un_atributo_unico_repetido_con_valores_distintos_es_salida_ambigua`; sin imagen por diseño |
 | V6 | correcto | Tres cajas de Migranol, sin cantidad escrita | La cantidad visible se ignora como cantidad solicitada | `test_openai_vision.py::test_envia_la_imagen_y_devuelve_solo_lo_visible` y `test_h1b_photos.py::test_la_cantidad_visible_en_el_envase_no_es_cantidad_solicitada` (flujo completo con proveedor simulado) |
-| V7 | alcance | Dos envases de productos distintos en una foto | Dos filas revisables, una por producto | **Brecha pendiente:** el esquema actual produce una lectura por foto. No está aprobado ni cuenta como cumplido. |
+| V7 | alcance | Dos envases de productos distintos en una foto | Dos filas revisables, una por producto | **Fuera de alcance y sin ejecutar.** Se usa una foto por producto. |
 
 V5 no es una prueba de lo que el modelo ve: comprueba que el backend rechaza una salida
 contradictoria. Por eso no tiene imagen y no se envía a OpenAI.
@@ -49,15 +49,15 @@ solo en el contexto de prueba.
 
 | Caso exigido por el Prompt Maestro | Estado en el golden set |
 | --- | --- |
-| Foto legible con dos productos | **No cumplido; pendiente.** V7 registra la brecha: el esquema actual lee un producto por foto |
+| Foto legible de un producto | V1 comprueba el uso del nombre comercial con una salida preparada |
 | Foto con un dato ilegible | Cubierto por V3 (dato ausente, sin inventar) |
 | Imagen sin productos reconocibles | Cubierto por V4 |
 | Preferencia con proveedor identificado | Cubierto por O1 |
 | Preferencia con proveedor ambiguo | Cubierto por O2 |
 | Entrada que intenta cambiar las instrucciones | Cubierto por O3 |
 
-La brecha V7 no se disimula: requiere cambiar el esquema y el flujo de revisión, algo que este
-entregable no hace porque el código funcional está fuera de alcance.
+El alcance vigente para Telegram es una foto por producto. V7 queda como referencia y no
+forma parte de los 16 casos evaluables.
 
 ## 5. Estructura de un caso
 

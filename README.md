@@ -5,6 +5,11 @@ la web; compras busca el producto en el catálogo de proveedores y en las grande
 ofertas y prepara una cotización. La compra real permanece **bloqueada por diseño**
 (`purchase_execution = blocked`).
 
+El proyecto partió de instrucciones para los agentes de desarrollo. El [Prompt Maestro](PROMPT_MAESTRO.md)
+reúne las reglas de negocio, las fases de implementación y los criterios de aceptación. La documentación
+de [prompts de la aplicación](prompts/README.md) explica la evolución de Visión y Observaciones
+Comerciales, el golden set y el alcance de la evaluación.
+
 Documentación de referencia (solo en este repositorio):
 
 - Arquitectura y stack: [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md)
@@ -86,6 +91,7 @@ la última suite frontend informada, en **238 pruebas aprobadas**. Los números 
 
 ### Fotografías y visión
 
+- En Telegram se envía una foto por producto. La lectura queda disponible para revisión.
 - El binario vive en PostgreSQL (`temp_photos`, `BYTEA`, clave SHA-256), no en el disco efímero del
   dyno. Un redespliegue no borra las fotos.
 - Validación por firma de bytes y tamaño; deduplicación por contenido entre organizaciones.
@@ -215,10 +221,9 @@ Procedimientos, restricciones y estados: [`docs/AUTH_SUPABASE.md`](docs/AUTH_SUP
 - **Frontend en Lovable**: el repositorio `farmacia-frontend` está conectado a la rama `main`; cada
   push se sincroniza con el editor. La publicación al dominio final es manual.
 - El despliegue de Heroku es **manual** desde `master`; no hay despliegue automático.
-- Las migraciones se aplican en cada release. La cabeza del repositorio es **0027**; la `0027` (motor
-  de proveedores) **no está aplicada** a `farmacia`, `farmacia_demo` ni producción; solo se aplicó en
-  la base desechable usada para la validación local. Las migraciones `0021`–`0023` están reservadas
-  para compras e historial y no existen todavía.
+- Las migraciones se aplican en cada release. La cabeza del repositorio es **0032**. El último
+  estado de Heroku informado para la entrega es `0032 (head)`, con backend `6b61fa1`. El commit
+  documental `d0949a3` se publicó en GitHub.
 - El `Procfile` versionado define `web` y `release`. El polling de Telegram puede correr como proceso
   `worker`; esa línea está en el árbol de trabajo pero no en la versión versionada al cierre de este
   documento, así que debe confirmarse antes de escalar el proceso en Heroku.
@@ -281,6 +286,7 @@ aislada). Nunca a `farmacia`, `farmacia_demo` ni a la base de Heroku. Detalle y 
 backend/        API FastAPI, dominio, servicios, migraciones y pruebas
 database/       docker-compose de PostgreSQL y datos semilla
 docs/           arquitectura, módulos, despliegue, pruebas y decisiones
+prompts/        prompts de sistema, golden set y evaluación
 scripts/        utilidades de desarrollo y demostraciones
 requirements.txt / Procfile / .python-version   preparación de Heroku en la raíz
 ```

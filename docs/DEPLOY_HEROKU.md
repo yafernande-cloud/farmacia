@@ -1,7 +1,7 @@
 # Despliegue en Heroku y publicación en Lovable
 
-Actualizado: 2026-11-09. Procedimiento **manual**: nada se despliega ni se publica sin autorización
-explícita. No se escriben valores secretos en este documento, en el repositorio, en el chat ni en los
+El backend se despliega exclusivamente mediante **Manual Deploy** en el panel de Heroku,
+a cargo de la responsable del proyecto. No se escriben valores secretos en este documento, en el repositorio, en el chat ni en los
 logs.
 
 ## 1. Estado
@@ -13,11 +13,10 @@ logs.
   frontend como valor por defecto.
 - El frontend `farmacia-frontend` está conectado a Lovable por la rama `main`; la vista previa y el
   acceso del profesor fueron verificados. La publicación al dominio final es manual.
-- La cabeza de migraciones del repositorio es **0026**. Se verificó manualmente en Heroku con
-  `cd backend && alembic current`: **`0026 (head)`**. Repetir la consulta antes de cada despliegue y
-  no suponer la versión.
-- La última suite backend informada con `REQUIRE_DB=1` queda en 997 aprobadas y 8 omitidas; la de
-  frontend, en 238 aprobadas. Repetir antes de un despliegue que cambie código.
+- La cabeza de migraciones del repositorio es **0032**. Para la entrega se informó Heroku en
+  `0032 (head)` con el backend `6b61fa1` y Lovable en el commit `85de1d4`. El commit
+  `d0949a3` corresponde a la documentación publicada en GitHub.
+- Los resultados de las suites se registran en [Pruebas](PRUEBAS.md).
 
 ## 2. Cómo arranca
 
@@ -124,7 +123,7 @@ respaldo a `TEST_DATABASE_URL` ni a una URL local.
 cd backend && alembic upgrade head
 ```
 
-- La cabeza del repositorio es **0026**. `0024` baja de `0020` a propósito porque `0021`–`0023` están
+- La cabeza del repositorio es **0032**. `0024` baja de `0020` a propósito porque `0021`–`0023` están
   reservadas para compras e historial; `0025` y `0026` continúan la cadena.
 - Autorizar un despliegue implica autorizar las migraciones pendientes sobre la base de Heroku.
 - Para separar despliegue y migración, quitar `release:` del `Procfile` (requiere commit) o ejecutar
