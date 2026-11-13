@@ -80,20 +80,27 @@ class FakeStrategy:
 
     def __init__(self):
         self.calls = 0
+        self.queries: list[str] = []
         self.error: Exception | None = None
+        # Respuesta por consulta exacta; sin entrada se usa `offers`/`published`.
+        self.responses: dict[str, tuple[list[SupplierOffer], list[PublishedProduct]]] = {}
+        self.errors: dict[str, Exception] = {}
         self.fingerprint = "v2:huella-1"
         self.offers = [offer()]
         self.published = []
 
     async def search(self, query, *, config, field_map, limit, transport=None):
         self.calls += 1
-        if self.error is not None:
-            raise self.error
+        self.queries.append(query)
+        error = self.errors.get(query) or self.error
+        if error is not None:
+            raise error
+        offers, published = self.responses.get(query, (self.offers, self.published))
         return ConnectorResult(
-            offers=list(self.offers),
+            offers=list(offers),
             observed_at=datetime.now(UTC),
             fingerprint=self.fingerprint,
-            published=list(self.published),
+            published=list(published),
             warnings=[],
         )
 
@@ -309,6 +316,69 @@ async def test_busqueda_exitosa_no_persiste_ofertas(api, sessions, fake):
     assert row.last_error_kind is None
     assert row.schema_fingerprint == "v2:huella-1"
     assert await count(sessions, OfferSnapshot) == 0
+
+
+async def test_sin_directas_reintenta_solo_una_vez_con_la_consulta_reducida(api, fake):
+    """Un nombre largo puede no confirmar la consulta: se recupera con los términos de identidad."""
+    assert (await put(api)).status_code == 200
+    fake.responses = {
+        "Multiflora plus capsula 30": ([offer(external_id="PREG-1", name="Pregalex 75 mg")], []),
+        "multiflora plus": (
+            [offer(external_id="MULTI-1", name="Multiflora Plus x 30 Capsulas")],
+            [],
+        ),
+    }
+
+    body = (await search(api, query="Multiflora plus capsula 30")).json()
+
+    assert fake.queries == ["Multiflora plus capsula 30", "multiflora plus"]
+    # La respuesta declara la consulta original y la ampliación, sin mezclar ambas.
+    assert body["query"] == "Multiflora plus capsula 30"
+    assert body["relaxed_query"] == "multiflora plus"
+    assert [o["external_id"] for o in body["offers"]] == ["MULTI-1"]
+    assert body["offers"][0]["match_relation"] == "direct"
+
+
+async def test_el_respaldo_no_convierte_por_si_solo_una_oferta_en_directa(api, fake):
+    """La consulta reducida recupera candidatos; la clasificación usa la consulta original."""
+    assert (await put(api)).status_code == 200
+    fake.responses = {
+        "Multiflora plus capsula 30": ([], []),
+        "multiflora plus": ([offer(external_id="MULTI-30", name="Multiflora 30")], []),
+    }
+
+    body = (await search(api, query="Multiflora plus capsula 30")).json()
+
+    assert body["relaxed_query"] == "multiflora plus"
+    assert [o["external_id"] for o in body["offers"]] == ["MULTI-30"]
+    # Falta «plus» y «capsula» en el nombre: no se afirma coincidencia ni se habilita el carrito.
+    assert body["offers"][0]["match_relation"] == "related"
+    assert body["offers"][0]["cart_eligible"] is False
+    assert "match_not_direct" in body["offers"][0]["cart_blockers"]
+
+
+async def test_con_una_coincidencia_directa_no_hay_respaldo(api, fake):
+    assert (await put(api)).status_code == 200
+    fake.responses = {"predual": ([offer()], [])}
+
+    body = (await search(api, query="predual")).json()
+
+    assert fake.calls == 1
+    assert body["relaxed_query"] is None
+
+
+async def test_un_respaldo_fallido_conserva_la_respuesta_original(api, fake):
+    assert (await put(api)).status_code == 200
+    fake.responses = {"predual 30": ([offer(name="Pregalex 75 mg")], [])}
+    fake.errors = {"predual": ConnectorError("timeout")}
+
+    body = (await search(api, query="predual 30")).json()
+
+    assert fake.queries == ["predual 30", "predual"]
+    assert body["state"] == "connected"
+    assert body["relaxed_query"] is None
+    assert [o["name"] for o in body["offers"]] == ["Pregalex 75 mg"]
+    assert body["offers"][0]["match_relation"] == "related"
 
 
 async def test_un_conector_con_otra_identidad_no_hereda_la_excepcion_de_farmaloop(api, fake):

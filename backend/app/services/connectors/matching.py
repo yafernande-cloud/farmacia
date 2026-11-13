@@ -13,13 +13,19 @@ Relaciones:
                   no la confirma.
 * `unverified`  — falta el nombre o la consulta para poder comparar.
 
-La comparación es conservadora: no usa similitud difusa ni prefijos, porque una coincidencia
-parcial de texto no demuestra que sea el mismo producto.
+La comparación es conservadora: **no** usa similitud difusa, prefijos ni distancia de edición. Solo
+reconoce variantes de escritura que no cambian la identidad: singular/plural, abreviaturas
+farmacéuticas del diccionario (`FORMS`), envases (`PACKAGING`) y formas que se escriben juntas
+(«x30», «caja30», «500mg»). La concentración y la forma farmacéutica siguen siendo obligatorias: una
+dosis o una forma distinta deja el resultado como `related`.
 """
 
 from __future__ import annotations
 
-from app.domain.products import normalize_name
+import re
+
+from app.domain.products import FORMS, PACKAGING, normalize_name
+from app.domain.units import UNITS
 
 MATCH_RELATIONS = ("direct", "related", "unverified")
 
@@ -41,14 +47,74 @@ _STOPWORDS = {
     "una",
 }
 
+# Los envases no son una forma farmacéutica: si el nombre no declara ninguno, no invalidan.
+_PACKAGING_TOKENS = frozenset(PACKAGING.values())
+
+# Términos que no identifican un producto para la consulta de respaldo del proveedor.
+_DROPPED = _STOPWORDS | set(FORMS) | set(PACKAGING) | set(UNITS)
+
+
+def _raw_tokens(value: str) -> list[str]:
+    """Separa compuestos que suelen escribirse juntos: «x30», «caja30», «500mg»."""
+    tokens: list[str] = []
+    for word in normalize_name(value).split():
+        tokens.extend(re.findall(r"[a-z]+|\d+", word))
+    return tokens
+
+
+def _canonical(token: str) -> str:
+    """Forma comparable: diccionario farmacéutico y plural conservador."""
+    if token in FORMS:
+        return FORMS[token]
+    if token in PACKAGING:
+        return PACKAGING[token]
+    if len(token) > 4 and token.endswith("es"):
+        return token[:-2]
+    if len(token) > 3 and token.endswith("s"):
+        return token[:-1]
+    return token
+
 
 def _tokens(value: str) -> list[str]:
-    return [token for token in normalize_name(value).split() if token]
+    return [_canonical(token) for token in _raw_tokens(value)]
 
 
 def _meaningful(tokens: list[str]) -> list[str]:
     filtered = [token for token in tokens if token not in _STOPWORDS]
     return filtered or tokens
+
+
+def _confirmed(query_tokens: list[str], name_tokens: list[str]) -> bool:
+    """¿Están todos los términos significativos? Solo se admite omitir un envase."""
+    name_set = set(name_tokens)
+    missing = [token for token in query_tokens if token not in name_set]
+    if not missing:
+        return True
+    # «caja», «frasco» o «blister» describen el empaque, no la forma farmacéutica. Si el nombre
+    # publicado no declara ningún envase, no se exige; si declara otro, tampoco confirma.
+    if not any(token in _PACKAGING_TOKENS for token in name_tokens):
+        return all(token in _PACKAGING_TOKENS for token in missing)
+    return False
+
+
+def reduce_query(query: str) -> str | None:
+    """Consulta de respaldo: solo los términos que identifican el producto.
+
+    Descarta conectores, formas, envases, unidades y cifras. Nunca inventa ni completa términos: si
+    no queda nada distinto de la consulta original, devuelve `None` y no hay reintento. El texto
+    reducido solo sirve para que el proveedor devuelva candidatos; la clasificación se hace siempre
+    contra la consulta original.
+    """
+    kept = [
+        token
+        for token in _raw_tokens(query)
+        if not token.isdigit() and token not in _DROPPED
+    ]
+    reduced = " ".join(kept).strip()
+    original = " ".join((query or "").split())
+    if not reduced or reduced.casefold() == original.casefold():
+        return None
+    return reduced
 
 
 def classify_match(query: str, name: str | None) -> tuple[str, list[str]]:
@@ -60,7 +126,7 @@ def classify_match(query: str, name: str | None) -> tuple[str, list[str]]:
     if not name_tokens:
         return "unverified", ["name_missing"]
 
-    if all(token in name_tokens for token in query_tokens):
+    if _confirmed(query_tokens, name_tokens):
         return "direct", ["all_query_terms_in_name"]
 
     # Una marca de varias palabras puede publicarse sin espacios o con guiones.

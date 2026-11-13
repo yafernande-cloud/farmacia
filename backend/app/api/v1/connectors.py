@@ -142,6 +142,9 @@ class SupplierSearchOut(BaseModel):
     source_id: uuid.UUID
     source_name: str
     query: str
+    # Consulta reducida con la que se recuperaron candidatos, si hubo respaldo. `query` sigue
+    # siendo la consulta original y la única que decide `match_relation`.
+    relaxed_query: str | None = None
     state: Literal["not_configured", "connected", "error", "requires_intervention"]
     reason: str | None
     outcome: Literal["matches", "no_matches"] | None

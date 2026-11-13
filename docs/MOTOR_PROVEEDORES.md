@@ -137,23 +137,51 @@ nombre publicado confirma la consulta:
 
 | Relación | Significado | Ejemplo real (consulta «predual») |
 |---|---|---|
-| `direct` | El nombre contiene todos los términos significativos de la consulta, o la consulta completa como frase | «Predual 125 comprimidos», «Predual x 10 Comprimidos» |
+| `direct` | El nombre contiene todos los términos significativos de la consulta, o la consulta completa como frase | «Predual 125 comprimidos», «Predual x 10 Comprimidos»; «Multiflora plus capsula 30» → «Multiflora Plus x 30 Capsulas» |
 | `related` | El proveedor lo devolvió, pero el nombre solo confirma parte de la consulta o no la confirma | «Pregalex Pregabalina 150 mg 30 comprimidos», «Pregalin 75 mg x 30 Comprimidos» |
 | `unverified` | Falta el nombre o la consulta para comparar | ítem sin `fullName` |
 
 Reglas deliberadas:
 
 - **No se elimina ni se filtra ninguna oferta.** Lo que el proveedor devolvió sigue visible; los
-  relacionados se distinguen para no presentarlos como coincidencias. Descartar en silencio
-  escondería resultados que una persona podría necesitar.
-- Comparar palabras **no demuestra equivalencia farmacéutica**: no se comparan principios activos,
-  dosis ni formas, y dos nombres parecidos pueden ser productos distintos. La clasificación no
-  reemplaza la revisión de una persona autorizada ni el clasificador de `app/domain/matching.py`.
-- No hay similitud difusa, prefijos ni distancia de edición: una coincidencia parcial de texto no
+  relacionados se muestran en una sección aparte («Resultados relacionados») y nunca se presentan
+  como la oferta buscada ni habilitan el alta. Descartar en silencio escondería resultados que una
+  persona podría necesitar.
+- **Canonicalización conservadora.** Antes de comparar se normalizan tildes, mayúsculas y puntuación
+  con `normalize_name`; «x30» y «500mg» se separan en número y palabra; los términos se reducen a su
+  forma canónica con los diccionarios existentes (`FORMS` para formas y abreviaturas como «caps»,
+  `PACKAGING`, `UNITS`) y con una regla conservadora de singular/plural (`capsulas` → `capsula`).
+  No hay similitud difusa, prefijos ni distancia de edición: una coincidencia parcial de texto no
   demuestra que sea el mismo producto.
-- La comparación normaliza tildes, mayúsculas y puntuación con `normalize_name` e ignora conectores
-  comunes («de», «x», «con», …). Las causas (`match_reasons`) explican el resultado en lugar de
-  maquillarlo.
+- **La concentración, la forma y la identidad siguen decidiendo.** La consulta solo se confirma
+  (`direct`) cuando todos sus términos aparecen en el nombre, o como frase completa. Una cifra
+  distinta («30» frente a «60»), una forma distinta («comprimidos» frente a «capsulas», «jarabe»
+  frente a cápsulas) o un envase distinto («frasco» frente a «caja», cuando el nombre declara uno)
+  dejan el resultado en `related`. Términos de envase («caja») se toleran solo cuando el nombre no
+  declara ninguno.
+- Comparar palabras **no demuestra equivalencia farmacéutica**: no se comparan principios activos,
+  dosis ni formas más allá del texto. La clasificación no reemplaza la revisión de una persona
+  autorizada ni el clasificador de `app/domain/matching.py`.
+- Las causas (`match_reasons`) explican el resultado en lugar de maquillarlo.
+
+### Respaldo con consulta reducida
+
+Cuando el proveedor devuelve ítems pero **ninguno** es una coincidencia directa, el backend hace
+**un solo** reintento con una consulta reducida: se conservan solo los términos de identidad
+(producto y marca) y se descartan conectores, formas, envases, unidades y cifras. Por ejemplo,
+«Multiflora plus capsula 30 caja» se reintenta como «multiflora plus».
+
+- El reintento es **best effort**: si falla, se conserva la respuesta original; si no mejora la
+  cantidad de coincidencias directas, también. Nunca hay más de una llamada extra al proveedor.
+- **La clasificación siempre se hace contra la consulta original.** El respaldo recupera
+  candidatos, no convierte una oferta en coincidencia: «Multiflora 30» devuelto al buscar
+  «Multiflora plus capsula 30» sigue siendo `related`.
+- La lógica vive en el backend (`app/services/connectors/service.py`), de modo que vale para
+  búsquedas manuales y para las que nacen de un faltante de Telegram; la pantalla ya no encadena
+  reintentos propios sobre proveedores en vivo.
+- La caché sigue indexada por la consulta original y la respuesta informa `relaxed_query` (la
+  consulta reducida usada, o `null`) sin cambiar `query`.
+
 
 ### Unidad de venta y base del precio
 
@@ -270,8 +298,10 @@ La respuesta nunca incluye el valor de una clave: solo el nombre de la variable 
 { "source_id": "<uuid>", "query": "predual", "limit": 10 }
 ```
 
-Devuelve `search_id`, estado, motivo, ofertas normalizadas, `published`, `discarded`, `warnings` y
-`cached`. Cada oferta incluye `external_id`, `name`, `laboratory`, `presentation`,
+Devuelve `search_id`, estado, motivo, `query` (la búsqueda original), `relaxed_query` (la consulta
+reducida con la que se recuperaron candidatos, o `null`), ofertas normalizadas, `published`,
+`discarded`, `warnings` y `cached`. Cada oferta incluye `external_id`, `name`, `laboratory`,
+`presentation`,
 `price.amount`/`price.currency`, `price_basis`, `sale_unit`, `stock_status`, `stock_quantity`,
 `stock_unit`, `image_url`, `product_url`, `ean`, `match_relation`, `match_reasons`, `cart_eligible`
 y `cart_blockers`.
@@ -376,13 +406,17 @@ Limitaciones de esa evidencia:
 La suite no hace llamadas externas:
 
 - `tests/test_supplier_matching.py` prueba la clasificación textual (directo, relacionado, sin
-  nombre, normalización de tildes/mayúsculas, consulta parcial) y el bloqueo comercial del carrito;
+  nombre, normalización de tildes/mayúsculas, consulta parcial, singular/plural, abreviaturas y
+  cantidades como «x30», concentraciones, formas y envases distintos, y la consulta reducida del
+  respaldo) y el bloqueo comercial del carrito;
 - `tests/test_supplier_connectors.py` prueba la estrategia Algolia con `httpx.MockTransport`
   (normalización, descarte de ítems inválidos, 401/403/429/4xx/5xx, redirecciones, secreto faltante,
   tamaño máximo, stock sin unidad, plantillas de URL, huella de estructura y tipos canónicos);
 - `tests/test_supplier_connectors_api.py` usa PostgreSQL real y una estrategia doble para probar
   configuración, `If-Match`, estados, caché, límite de tasa, aislamiento por organización, la
-  clasificación de Predual frente a Pregalex/Pregalin y la ausencia de `offer_snapshot`;
+  clasificación de Predual frente a Pregalex/Pregalin, el respaldo con consulta reducida (una sola
+  llamada extra, solo sin coincidencias directas, sin convertir un relacionado en directo y
+  conservando la respuesta original si falla) y la ausencia de `offer_snapshot`;
 - `tests/test_db_schema.py` verifica que el modelo y la migración `0027` estén sincronizados.
 
 ## 10. Cómo validar la búsqueda de Predual antes de conectar Lovable

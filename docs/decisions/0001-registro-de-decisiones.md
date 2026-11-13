@@ -2950,3 +2950,46 @@ organización, listado de accesos vigentes, atribución cross-org y relleno `003
 `src/routes/usuarios.tsx`, con pruebas en `src/test/web-access-api.test.ts`, `src/test/campanita-solicitudes.test.tsx`,
 `src/test/gestion-usuarios.test.tsx` y `src/test/acceso-web-estados.test.tsx`. D-130 sigue rigiendo el significado del
 acceso web; esta decisión precisa dónde vive la autorización y cómo se elimina.
+
+### D-159 — Búsqueda flexible conservadora: normalización, un respaldo en el backend y resultados relacionados visibles (2026-11-12)
+
+**Contexto.** En el cotizador, la búsqueda «Multiflora plus capsula 30» no mostraba nada aunque FarmaLoop
+ofrecía «Multiflora Plus x 30 Capsulas». La causa no estaba en Algolia sino en la capa propia: la clasificación
+exigía coincidencia exacta de términos, de modo que el producto real quedaba `related` por el plural
+(«capsula» frente a «capsulas»), y la interfaz ocultaba por completo los `related`; el respaldo corto solo se
+disparaba cuando el proveedor no devolvía nada, no cuando devolvía ítems descartados como no directos. La
+documentación (`docs/MOTOR_PROVEEDORES.md` §4) ya exigía mostrar los relacionados, pero la interfaz los
+escondía.
+
+**Decisión.**
+
+1. **Normalización textual conservadora.** Se reutilizan los diccionarios existentes (`FORMS`, `PACKAGING`,
+   `UNITS`) para abreviaturas y formas, se separan cantidades juntas («x30», «500mg») y se aplica una regla
+   limitada de singular/plural. No hay similitud difusa, prefijos ni distancia de edición.
+2. **La identidad sigue mandando.** Una concentración distinta, una forma farmacéutica distinta o un envase
+   declarado distinto mantienen el resultado en `related`; los términos de envase se toleran solo cuando el
+   nombre no declara ninguno.
+3. **Un respaldo centralizado en el backend.** Si no hay ninguna coincidencia directa, se hace una única
+   consulta reducida con los términos de identidad (sin conectores, formas, envases, unidades ni cifras). Si
+   falla o no mejora las coincidencias directas, se conserva la respuesta original. Vale para búsquedas
+   manuales y de Telegram; la pantalla ya no reintenta por su cuenta sobre proveedores en vivo (catálogo y
+   cadenas mantienen su respaldo corto).
+4. **Seguridad de coincidencias.** El respaldo recupera candidatos, no confirma productos: `match_relation` se
+   calcula siempre contra la consulta original y un relacionado nunca queda `cart_eligible` (sigue bloqueado
+   por `match_not_direct`).
+5. **Resultados relacionados visibles.** La interfaz muestra las coincidencias directas como resultados y los
+   relacionados en una sección aparte, etiquetada y sin acción de alta; «sin resultados» solo aparece si no
+   hay nada de ninguna de las dos clases.
+
+**Estado.** Implementada en código y probada el 2026-11-12, **sin commit, push, despliegue ni Lovable
+Publish**. Backend: `app/services/connectors/matching.py` (canonicalización y `reduce_query`),
+`app/services/connectors/service.py` (un reintento best effort y `relaxed_query`), `app/api/v1/connectors.py`
+(`query` y `relaxed_query` en `SupplierSearchOut`), con 16 pruebas en `tests/test_supplier_matching.py` y 4
+nuevas en `tests/test_supplier_connectors_api.py` (además de la estrategia doble ampliada). Frontend:
+`src/lib/proveedores-en-vivo.ts`, `src/components/OfertasProveedorEnVivo.tsx` (sección «Resultados
+relacionados» sin alta) y `src/routes/index.tsx` (una sola consulta por fuente en vivo), con pruebas en
+`src/test/ofertas-proveedor-en-vivo.test.tsx` y `src/test/flujo-proveedores-en-vivo.test.tsx`. Suite completa:
+1356 pruebas de backend con `REQUIRE_DB=1` y 493 de frontend, todas exitosas; `ruff` y `tsc` sin errores. **No
+se modificó Algolia ni la configuración del proveedor.** La verificación de lectura contra el índice real de
+FarmaLoop con «Multiflora plus capsula 30» quedó **pendiente** por falta de las variables
+`FARMALOOP_ALGOLIA_APP_ID`/`FARMALOOP_ALGOLIA_API_KEY` en el entorno local.

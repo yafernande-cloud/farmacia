@@ -45,7 +45,7 @@ from app.services.connectors.base import (
 )
 from app.services.connectors.commercial import cart_blockers, published_blockers
 from app.services.connectors.config import validate_profile
-from app.services.connectors.matching import classify_match
+from app.services.connectors.matching import classify_match, reduce_query
 from app.services.connectors.store import store
 from app.services.events import advisory_lock, emit
 from app.services.offer_equivalence import resolve_equivalent_item_ids
@@ -401,6 +401,60 @@ def _clean_query(query: str) -> str:
     return text
 
 
+def _score_matches(
+    query: str, offers: list[SupplierOffer], published: list[PublishedProduct]
+) -> tuple[int, int]:
+    """(coincidencias directas, resultados totales) **según la consulta original**.
+
+    La consulta reducida solo amplía lo que se pide al proveedor: nunca cambia el criterio con el
+    que se confirma cada nombre publicado.
+    """
+    direct = sum(
+        1
+        for item in [*offers, *published]
+        if classify_match(query, item.name)[0] == "direct"
+    )
+    return direct, len(offers) + len(published)
+
+
+async def _retry_with_reduced_query(
+    strategy: Any,
+    query: str,
+    result: ConnectorResult,
+    *,
+    config: dict[str, Any],
+    field_map: dict[str, Any],
+    limit: int,
+) -> tuple[ConnectorResult, str | None]:
+    """Un único respaldo cuando no hay ninguna coincidencia directa.
+
+    Devuelve la respuesta que conserva más coincidencias directas (y, en empate, más resultados)
+    junto con la consulta reducida usada. Un fallo del respaldo nunca convierte un acierto previo
+    en error: se conserva la respuesta original.
+    """
+    direct, total = _score_matches(query, result.offers, result.published)
+    if direct > 0:
+        return result, None
+    reduced = reduce_query(query)
+    if reduced is None:
+        return result, None
+    try:
+        retry = await strategy.search(
+            reduced, config=config, field_map=field_map, limit=limit
+        )
+    except Exception:  # noqa: BLE001 - el respaldo es best effort
+        logger.warning(
+            "Motor de proveedores: el respaldo «%s» falló; se conserva la respuesta original.",
+            reduced,
+            exc_info=True,
+        )
+        return result, None
+    retry_direct, retry_total = _score_matches(query, retry.offers, retry.published)
+    if (retry_direct, retry_total) > (direct, total):
+        return retry, reduced
+    return result, None
+
+
 def _published_payload(product: PublishedProduct, *, query: str) -> dict[str, Any]:
     """Publicación sin precio comercial: se muestra, nunca es una oferta ni entra a un carrito."""
     relation, reasons = classify_match(query, product.name)
@@ -643,6 +697,7 @@ def _snapshot(
     published: list[PublishedProduct] | None = None,
     warnings: list[str] | None = None,
     profile: SupplierConnectorProfile | None,
+    relaxed_query: str | None = None,
 ) -> dict[str, Any]:
     settings = get_settings()
     now = _now()
@@ -661,6 +716,9 @@ def _snapshot(
         "source_id": source.id,
         "source_name": source.name,
         "query": query,
+        # Texto reducido con el que se recuperaron candidatos, si hizo falta. `query` sigue siendo
+        # la consulta original y la única que clasifica `match_relation`.
+        "relaxed_query": relaxed_query,
         "state": state,
         "reason": reason,
         # Una publicación sin precio también es una coincidencia del catálogo, aunque no se pueda
@@ -745,10 +803,21 @@ async def search_live(
         return snapshot
 
     assert profile is not None  # lo garantiza `_precondition`
+    relaxed_query: str | None = None
     try:
         strategy = registry.get_strategy(profile.mechanism)
         result: ConnectorResult = await strategy.search(
             clean_query,
+            config=profile.config,
+            field_map=profile.field_map,
+            limit=limit,
+        )
+        # Sin coincidencias directas, un único respaldo con la consulta reducida. Recupera
+        # candidatos; la clasificación de cada nombre sigue usando `clean_query`.
+        result, relaxed_query = await _retry_with_reduced_query(
+            strategy,
+            clean_query,
+            result,
             config=profile.config,
             field_map=profile.field_map,
             limit=limit,
@@ -820,6 +889,7 @@ async def search_live(
             published=result.published,
             warnings=warnings,
             profile=profile,
+            relaxed_query=relaxed_query,
         )
 
     snapshot = await _resolve_trade_item_ids(session, snapshot)
