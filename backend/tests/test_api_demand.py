@@ -415,3 +415,26 @@ async def test_api_expone_el_origen_de_la_cantidad_solicitada(api, ctx):
         assert body["target_quantity"] is None  # solicitud del auxiliar ≠ cantidad de compra
         (obs,) = body["observations"]
         assert obs["quantity_origin"] == expected[2]
+
+
+async def test_api_expone_la_cantidad_escrita_al_comienzo_sin_unidad_ni_medida_falsa(api):
+    """Caso real «10 acidos mefenamicos»: 10 es cantidad, no una característica del producto."""
+    item = (await report(api, "ana", "10 acidos mefenamicos")).json()["item"]
+    assert item["display_name"] == "Acidos mefenamicos"  # ya no «Acidos mefenamicos 10 (sin unidad)»
+    assert item["display_parts"]["details"] == []
+    assert item["search_query"] == "Acidos mefenamicos"
+    assert item["search_query_full"] == "Acidos mefenamicos"  # la cantidad no entra a la búsqueda
+    assert (item["requested_quantity"], item["requested_unit"]) == ("10", None)  # sin asumir cajas
+    assert item["requested_quantity_origin"] == "explicit"
+    assert item["target_quantity"] is None and item["needs_quantity"] is True
+
+
+async def test_el_objetivo_se_fija_sobre_la_cantidad_escrita_sin_unidad(api, ctx):
+    """El SET auditado de Pao parte de la cantidad reportada; la solicitada no se altera."""
+    item = (await report(api, "ana", "10 acidos mefenamicos")).json()["item"]
+    r = await command(api, item["id"], item["version"], "SET", "10", "unit")
+    assert r.status_code == 200, r.text
+    body = (await api.get(f"/api/v1/demand-items/{item['id']}", headers=H(api, "pao"))).json()
+    assert (body["target_quantity"], body["quantity_unit"]) == ("10", "unit")
+    assert (body["requested_quantity"], body["requested_unit"]) == ("10", None)  # intacta
+    assert body["quantity_status"] == "defined" and body["needs_quantity"] is False

@@ -1418,6 +1418,107 @@ async def test_d147_14_unidad_inicial_generica_se_aclara_por_texto_antes_de_suma
     assert "Listo, actualicé tu solicitud de Loratadina 10 mg a 11 cajas." in tg_api.texts()[-1]
 
 
+# ---- cantidad al comienzo del mensaje (caso real «10 acidos mefenamicos») ----
+
+
+async def test_caso_real_10_acidos_mefenamicos_es_cantidad_y_no_una_medida_del_producto(
+    chat, sessions, tg_api
+):
+    """El número del comienzo se anota como cantidad solicitada; la identidad queda limpia."""
+    await chat.pick("ana")
+    await chat.text("10 acidos mefenamicos")
+    text = tg_api.texts()[-1]
+    assert "✅ Anotado: Acidos mefenamicos — 10." in text
+    assert "sin unidad" not in text  # ya no es «10 (sin unidad)»
+    (o,) = await observations(sessions)
+    assert (o.declared_quantity, o.declared_unit) == (Decimal(10), None)  # sin asumir cajas
+    assert (o.interpretation or {}).get("quantity_origin") == "explicit"
+    assert o.raw_text == "10 acidos mefenamicos"  # se conserva siempre lo escrito
+    async with sessions() as s:
+        item = (await s.execute(select(DemandItem))).scalar_one()
+    assert item.ingredient == "acidos mefenamicos"
+    assert item.display_name == "Acidos mefenamicos"
+    assert item.attributes["unassigned"] == []  # la cantidad no quedó como atributo pendiente
+    assert (item.target_quantity, item.quantity_unit) == (None, None)  # Telegram no aplica
+
+
+async def test_la_cantidad_del_comienzo_no_asume_cajas_ni_comprimidos(chat, sessions, tg_api):
+    await chat.pick("ana")
+    await chat.text("100 mascarillas")
+    assert "✅ Anotado: Mascarillas — 100." in tg_api.texts()[-1]
+    (o,) = await observations(sessions)
+    assert (o.declared_quantity, o.declared_unit) == (Decimal(100), None)
+
+
+async def test_cantidad_concentracion_y_presentacion_se_separan_desde_telegram(
+    chat, sessions, tg_api
+):
+    await chat.pick("ana")
+    await chat.text("3 ibuprofeno 600mg x 20 comprimidos")
+    assert "✅ Anotado: Ibuprofeno 600 mg comprimido x 20 — 3." in tg_api.texts()[-1]
+    (o,) = await observations(sessions)
+    assert (o.declared_quantity, o.declared_unit) == (Decimal(3), None)
+    async with sessions() as s:
+        item = (await s.execute(select(DemandItem))).scalar_one()
+    from app.services import demand as demand_svc
+
+    parsed = demand_svc.parsed_of_item(item)
+    assert [s.measure.label for s in parsed.strengths] == ["600 mg"]
+    assert parsed.content.measure.value == 20
+    assert parsed.form.value == "comprimido"
+    assert parsed.search_query_full == "Ibuprofeno 600 mg comprimido 20"  # la cantidad no entra
+
+
+async def test_repetir_el_mismo_aviso_con_cantidad_sin_unidad_no_la_suma(chat, sessions, tg_api):
+    await chat.pick("ana")
+    await chat.text("10 acidos mefenamicos", now=mins(1))
+    await chat.text("10 acidos mefenamicos", now=mins(2))
+    assert "ya está en tu lista: no lo agregué de nuevo" in tg_api.texts()[-1]
+    obs = await observations(sessions)
+    assert len(obs) == 2  # el aviso queda registrado…
+    assert (obs[-1].declared_quantity, obs[-1].declared_unit) == (Decimal(10), None)  # …sin sumar
+    assert len(await ctx_items(sessions)) == 1
+    assert await _pending(sessions) == []  # no se pregunta por una cantidad que no cambió
+
+
+async def test_otra_auxiliar_reporta_su_propia_cantidad_sin_unidad(chat, sessions, seed, tg_api):
+    await chat.pick("ana")
+    await chat.text("10 acidos mefenamicos", now=mins(1))
+    await chat.text("Cambiar auxiliar", now=mins(2))
+    await chat.pick("luis", now=mins(2))
+    await chat.text("3 acidos mefenamicos", now=mins(3))
+    (pending,) = await _pending(sessions, "pending_other_report")
+    await chat.click(f"rp:ok:{pending.id}", now=mins(4))
+    items = await ctx_items(sessions)
+    assert len(items) == 2 and {i.reported_by for i in items} == {seed["ana"], seed["luis"]}
+    by_author = {
+        o.author_id: o.declared_quantity
+        for o in await observations(sessions)
+        if o.demand_item_id is not None
+    }
+    assert by_author == {seed["ana"]: Decimal(10), seed["luis"]: Decimal(3)}
+    assert all(i.target_quantity is None for i in items)  # nadie cambió la compra
+
+
+async def test_corregir_la_cantidad_sin_unidad_no_toca_la_cantidad_objetivo(
+    chat, sessions, tg_api
+):
+    await chat.pick("ana")
+    await chat.text("10 acidos mefenamicos", now=mins(1))
+    await chat.text("12 acidos mefenamicos", now=mins(2))
+    assert "¿Quieres agregar más o cambiar el total?" in tg_api.texts()[-1]
+    assert _buttons(tg_api) == []  # la corrección del mismo autor se responde por texto
+    await chat.text("en total 12", now=mins(3))
+    assert "actualicé tu solicitud de Acidos mefenamicos a 12" in tg_api.texts()[-1]
+    latest = [
+        o for o in await observations(sessions) if o.declared_quantity is not None
+    ][-1]
+    assert latest.declared_quantity == Decimal(12)
+    async with sessions() as s:
+        item = (await s.execute(select(DemandItem))).scalar_one()
+    assert (item.target_quantity, item.quantity_unit) == (None, None)  # D-147/§10.5 intactos
+
+
 # ---- interpretación de mensajes reales (texto) ----
 
 

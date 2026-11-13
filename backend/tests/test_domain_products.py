@@ -77,6 +77,95 @@ def test_5_cajas_de_20_no_inventa_una_potencia():
     assert r.requested_quantity == 5 and r.content.measure.value == 20
 
 
+# ---------- cantidad al comienzo del mensaje, sin unidad comercial ----------
+# Caso real: «10 acidos mefenamicos» se guardó como «10 (sin unidad)» —una característica del
+# producto— y la cantidad quedó «sin definir». Una o más cifras al comienzo, seguidas del nombre,
+# son la cantidad solicitada; no una potencia, ni un contenido, ni parte de la identidad.
+
+
+@pytest.mark.parametrize(
+    "txt,qty",
+    [
+        ("3 ibuprofeno", D(3)),
+        ("5 paracetamol", D(5)),
+        ("10 acidos mefenamicos", D(10)),
+        ("20 omeprazol", D(20)),
+        ("100 mascarillas", D(100)),
+        ("falta 3 ibuprofeno", D(3)),
+        ("anotar 12 algodon", D(12)),
+    ],
+)
+def test_una_o_mas_cifras_al_comienzo_son_la_cantidad_solicitada(txt, qty):
+    r = p(txt)
+    assert (r.requested_quantity, r.requested_unit) == (qty, None)  # sin unidad: no se asume
+
+
+@pytest.mark.parametrize(
+    "txt,ingredient,strengths,content,form",
+    [
+        ("5 paracetamol 500mg", "paracetamol", ["500 mg"], None, None),
+        ("10 omeprazol 20 mg", "omeprazol", ["20 mg"], None, None),
+        ("3 ibuprofeno 600mg", "ibuprofeno", ["600 mg"], None, None),
+        ("3 ibuprofeno 600mg x 20 comprimidos", "ibuprofeno", ["600 mg"], "20 un", "comprimido"),
+    ],
+)
+def test_cantidad_concentracion_y_presentacion_se_separan(txt, ingredient, strengths, content, form):
+    r = p(txt)
+    assert r.requested_quantity == D(txt.split()[0]) and r.requested_unit is None
+    assert r.ingredient == ingredient
+    assert [s.measure.label for s in r.strengths] == strengths
+    assert (r.content.measure.label if r.content else None) == content
+    assert (r.form.value if r.form else None) == form
+    assert r.unassigned == ()  # la cantidad no quedó como medida del producto
+
+
+def test_la_cantidad_del_comienzo_no_queda_como_medida_sin_unidad_ni_entra_a_la_identidad():
+    """Requisito del caso real: nada de «10 (sin unidad)» ni un «10» en la búsqueda."""
+    r = p("10 acidos mefenamicos")
+    assert r.original_text == "10 acidos mefenamicos"  # siempre se conserva lo escrito
+    assert r.ingredient == "acidos mefenamicos"
+    assert r.unassigned == ()
+    assert r.display_name == "Acidos mefenamicos"
+    assert r.search_query == "Acidos mefenamicos" and r.search_query_full == "Acidos mefenamicos"
+
+
+def test_la_cantidad_del_comienzo_no_cambia_la_identidad_del_producto():
+    assert rel("10 acidos mefenamicos", "acidos mefenamicos") is Relation.IDENTICAL
+    assert rel("3 ibuprofeno 600 mg", "ibuprofeno 600 mg") is Relation.IDENTICAL
+
+
+@pytest.mark.parametrize(
+    "txt,qty,unit",
+    [
+        ("2 cajas ibuprofeno 400mg", D(2), "box"),  # la unidad explícita sigue mandando
+        ("1 caja paracetamol 500mg x 20", D(1), "box"),
+    ],
+)
+def test_una_unidad_comercial_explicita_se_conserva_tal_cual(txt, qty, unit):
+    r = p(txt)
+    assert (r.requested_quantity, r.requested_unit) == (qty, unit)
+    assert r.unassigned == ()
+
+
+@pytest.mark.parametrize("txt", ["ibuprofeno 600mg", "ibuprofeno"])
+def test_sin_numero_al_comienzo_no_se_inventa_una_cantidad(txt):
+    r = p(txt)
+    assert (r.requested_quantity, r.requested_unit) == (None, None)
+
+
+def test_una_medida_farmaceutica_al_comienzo_no_es_cantidad_solicitada():
+    """«10 mg amoxicilina» habla de la dosis: 10 es mg, no diez unidades."""
+    r = p("10 mg amoxicilina")
+    assert r.requested_quantity is None and r.requested_unit is None
+    assert [s.measure.label for s in r.strengths] == ["10 mg"]
+    assert r.ingredient == "amoxicilina" and r.unassigned == ()
+
+
+def test_un_numero_seguido_de_una_unidad_o_forma_no_es_cantidad_al_comienzo():
+    """«2 en 1» no es una cantidad de 2: el número debe ir seguido del nombre del producto."""
+    assert p("2 en 1 shampoo").requested_quantity is None
+
+
 # ---------- mensajes reales de los auxiliares ----------
 
 

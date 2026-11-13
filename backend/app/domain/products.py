@@ -635,6 +635,28 @@ def parse_shortage_text(text: str, *, allow_no_product: bool = False) -> ParsedP
 
     spans = [(m.group().strip(".,/+"), m.start(), m.end()) for m in re.finditer(r"\S+", raw)]
     spans = [(t, a, b) for t, a, b in spans if t and t not in STOPWORDS]
+
+    # 4b) Cantidad solicitada al comienzo del mensaje, sin unidad comercial («10 acidos
+    # mefenamicos», «3 ibuprofeno 600mg»). Solo cuando no hubo una cantidad con unidad («2
+    # cajas») y el número no se consumió antes como medida farmacéutica («10 mg amoxicilina»:
+    # MEASURE_RE ya lo separó). El mensaje debe continuar con el nombre del producto, nunca con
+    # una unidad, una forma, un envase ni otro número: «2 en 1» no es una cantidad de 2. El
+    # número se consume, así que no queda además como medida sin unidad en la identidad.
+    if req_q is None and len(spans) >= 2:
+        token, start, end = spans[0]
+        siguiente = spans[1][0].lower()
+        if (
+            re.fullmatch(r"\d{1,6}", token)
+            and parse_number(token) > 0
+            and any(ch.isalpha() for ch in siguiente)
+            and siguiente not in FORMS
+            and siguiente not in PACKAGING
+            and siguiente not in RELEASE
+            and canonical_unit(siguiente) is None
+        ):
+            req_q, req_u = parse_number(token), None
+            spans = spans[1:]
+
     tokens = [t for t, _, _ in spans]
     forms |= {FORMS[t] for t in tokens if t in FORMS}
     hand_cream = _HAND_CREAM_RE.search(_norm_map(original)[0])
