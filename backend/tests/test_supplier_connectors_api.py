@@ -547,6 +547,18 @@ async def test_una_intervencion_se_informa_como_tal(api, sessions, fake):
     assert row.last_error_kind == "intervention"
 
 
+async def test_una_respuesta_ilegible_no_se_presenta_como_sin_resultados(api, fake):
+    """Si no se pudo leer la lista, no se declara `no_matches`: la pantalla debe avisar y reintentar."""
+
+    assert (await put(api)).status_code == 200
+    fake.error = ConnectorIntervention("field_mapping_failed")
+    body = (await search(api, query="predual")).json()
+    assert body["state"] == "requires_intervention"
+    assert body["reason"] == "field_mapping_failed"
+    assert body["outcome"] is None
+    assert body["offers"] == [] and body["published"] == []
+
+
 async def test_un_secreto_faltante_es_no_configurado_no_un_error(api, sessions, fake):
     assert (await put(api)).status_code == 200
     fake.error = ConnectorNotConfigured("secret_missing:FARMALOOP_ALGOLIA_API_KEY")
@@ -601,7 +613,9 @@ async def test_un_cambio_de_estructura_pide_revision_pero_devuelve_lo_que_valido
     body = drift.json()
     assert body["state"] == "requires_intervention"
     assert body["reason"] == "schema_changed"
+    # Las ofertas que sí validaron viajan con la respuesta y la pantalla debe mostrarlas.
     assert body["offers"]
+    assert body["outcome"] == "matches"
     assert any("estructura" in w.lower() for w in body["warnings"])
 
     # La huella nueva ya quedó registrada: la siguiente consulta no vuelve a alertar.

@@ -698,6 +698,7 @@ def _snapshot(
     warnings: list[str] | None = None,
     profile: SupplierConnectorProfile | None,
     relaxed_query: str | None = None,
+    readable: bool = True,
 ) -> dict[str, Any]:
     settings = get_settings()
     now = _now()
@@ -723,9 +724,11 @@ def _snapshot(
         "reason": reason,
         # Una publicación sin precio también es una coincidencia del catálogo, aunque no se pueda
         # cotizar: el mensaje de «sin resultados» solo corresponde cuando no hay nada que mostrar.
+        # Si la respuesta no se pudo leer (`readable=False`), no se declara ningún resultado:
+        # afirmar «sin coincidencias» exigiría haber leído la lista de productos.
         "outcome": (
             ("matches" if (offers or published) else "no_matches")
-            if state in {"connected", "requires_intervention"}
+            if readable and state in {"connected", "requires_intervention"}
             else None
         ),
         "observed_at": observed_at,
@@ -848,6 +851,9 @@ async def search_live(
             state="requires_intervention",
             reason=exc.reason,
             profile=profile,
+            # La intervención interrumpió la lectura: no hay lista de productos que permita
+            # afirmar «sin coincidencias».
+            readable=False,
         )
     except Exception:
         logger.exception("Motor de proveedores: fallo inesperado en la fuente %s", source.id)
