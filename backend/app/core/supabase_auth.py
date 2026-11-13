@@ -9,6 +9,7 @@
 
 import asyncio
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +24,15 @@ JWKS_TTL_SECONDS = 300
 JWKS_TIMEOUT_SECONDS = 5
 ALLOWED_ALGORITHMS = frozenset({"RS256", "ES256"})
 REQUIRED_ROLE = "authenticated"
+
+# Proveedores de identidad que solo entregan una sesión cuando avalaron el correo.
+# GoTrue no incluye `email_verified` ni `email_confirmed_at` de nivel superior en el access token:
+# la confirmación vive en el registro de la cuenta. Para OAuth, GoTrue confirma la cuenta cuando el
+# proveedor informa el correo como verificado y, con la configuración por defecto de Supabase
+# (`GOTRUE_MAILER_ALLOW_UNVERIFIED_EMAIL_SIGN_INS` = false), rechaza la sesión si el proveedor lo
+# informa sin verificar. `app_metadata` lo escribe GoTrue dentro del JWT firmado y la persona no
+# puede modificarlo. `user_metadata` sí es editable: nunca se usa como prueba.
+OAUTH_PROVIDERS_WITH_VERIFIED_EMAIL = frozenset({"google"})
 
 
 @dataclass
@@ -111,6 +121,33 @@ class JwtClaims:
     display_name: str | None
 
 
+def email_verified_from_claims(claims: Mapping[str, Any]) -> bool:
+    """¿El JWT ya validado aporta evidencia fiable de que el correo está verificado?
+
+    Solo se consideran datos que Supabase firma:
+
+    1. `email_verified` / `email_confirmed_at` de nivel superior, por si el proyecto los añade con
+       un hook de access token (los claims estándar de GoTrue no los incluyen).
+    2. `app_metadata.provider` de un proveedor OAuth que solo entrega sesión con correo avalado
+       (ver `OAUTH_PROVIDERS_WITH_VERIFIED_EMAIL`). Es identidad del proveedor firmada, no la
+       confirmación en sí: la inferencia depende de la configuración por defecto de Supabase, que
+       rechaza los inicios con correo sin verificar.
+
+    `user_metadata` se ignora siempre, aunque contenga `email_verified: true`: es editable por la
+    persona autenticada.
+    """
+    if claims.get("email_verified") is True:
+        return True
+    if claims.get("email_confirmed_at"):
+        return True
+    app_metadata = claims.get("app_metadata")
+    if isinstance(app_metadata, dict):
+        provider = app_metadata.get("provider")
+        if isinstance(provider, str):
+            return provider.strip().lower() in OAUTH_PROVIDERS_WITH_VERIFIED_EMAIL
+    return False
+
+
 async def verify_supabase_jwt_claims(token: str, settings: Settings) -> JwtClaims:
     """Valida el JWT y devuelve los claims mínimos; lanza `DomainError` 401/503 si no es válido."""
     claims = await _decode(token, settings)
@@ -131,10 +168,11 @@ async def verify_supabase_jwt_claims(token: str, settings: Settings) -> JwtClaim
         raw_name = claims.get("name")
         if isinstance(raw_name, str) and raw_name.strip():
             name = raw_name.strip()
-    # Supabase puede entregar `email_verified` o `email_confirmed_at`; ambos son verificaciones.
-    verified = claims.get("email_verified") is True or bool(claims.get("email_confirmed_at"))
     return JwtClaims(
-        subject=subject.strip(), email=email, email_verified=verified, display_name=name
+        subject=subject.strip(),
+        email=email,
+        email_verified=email_verified_from_claims(claims),
+        display_name=name,
     )
 
 
