@@ -1,0 +1,895 @@
+{
+  "generado_en": "2026-11-13T03:44:29+00:00",
+  "tipo": "validacion_offline_sin_openai",
+  "advertencia": "Las salidas del modelo están pregrabadas en casos.json. Esto valida el contrato y las reglas del backend, no la calidad del prompt ni del modelo real.",
+  "resumen": {
+    "casos": 17,
+    "casos_con_verificaciones": 16,
+    "casos_cumplen_todo": 16,
+    "verificaciones": 60,
+    "verificaciones_cumplen": 60
+  },
+  "resultados": [
+    {
+      "id": "V1",
+      "titulo": "Foto legible de Predual: manda el nombre comercial",
+      "estado": "aceptada",
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "campos.product_name.0",
+          "esperado": {
+            "igual": "Predual"
+          },
+          "obtenido": "Predual",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.search_query",
+          "esperado": {
+            "igual": "Predual"
+          },
+          "obtenido": "Predual",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.variant",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "contiene": "variant_not_commercial"
+          },
+          "obtenido": [
+            "variant_not_commercial",
+            "strength_not_visible"
+          ],
+          "cumple": true
+        }
+      ],
+      "resultado": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "Predual"
+          ],
+          "ingredient": [
+            "Paracetamol",
+            "Mefenamina"
+          ],
+          "variant": [
+            "ANALGÉSICO FEMENINO"
+          ],
+          "form": [
+            "comprimido"
+          ],
+          "content": [
+            "10"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Predual comprimido x 10",
+          "search_query": "Predual",
+          "variant": null,
+          "uncertainties": [
+            "variant_not_commercial",
+            "strength_not_visible"
+          ],
+          "ignored": []
+        }
+      }
+    },
+    {
+      "id": "V2",
+      "titulo": "Medicamento combinado con dos principios y dos dosis",
+      "estado": "aceptada",
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "campos.ingredient",
+          "esperado": {
+            "longitud": 2
+          },
+          "obtenido": [
+            "tramadol clorhidrato",
+            "paracetamol"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "campos.strength",
+          "esperado": {
+            "longitud": 2
+          },
+          "obtenido": [
+            "37,5 mg",
+            "325 mg"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "contiene": "Tramadol"
+          },
+          "obtenido": "Tramadol/Paracetamol 37.5 mg 325 mg comprimido x 30",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "no_contiene": "low_confidence"
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "resultado": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "Tramadol/Paracetamol"
+          ],
+          "ingredient": [
+            "tramadol clorhidrato",
+            "paracetamol"
+          ],
+          "strength": [
+            "37,5 mg",
+            "325 mg"
+          ],
+          "form": [
+            "comprimidos"
+          ],
+          "content": [
+            "30 comprimidos"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Tramadol/Paracetamol 37.5 mg 325 mg comprimido x 30",
+          "search_query": "Tramadol/Paracetamol",
+          "variant": null,
+          "uncertainties": [],
+          "ignored": []
+        }
+      }
+    },
+    {
+      "id": "V3",
+      "titulo": "Foto parcial: falta la dosis y no se inventa",
+      "estado": "aceptada",
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "legibility",
+          "esperado": {
+            "igual": "partial"
+          },
+          "obtenido": "partial",
+          "cumple": true
+        },
+        {
+          "ruta": "campos.strength",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        },
+        {
+          "ruta": "warnings",
+          "esperado": {
+            "longitud": 1
+          },
+          "obtenido": [
+            "No se pudo leer la dosis."
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "reading.uncertainties",
+          "esperado": {
+            "contiene": "active_ingredient_not_visible"
+          },
+          "obtenido": [
+            "active_ingredient_not_visible",
+            "strength_not_visible",
+            "image_partially_legible"
+          ],
+          "cumple": true
+        }
+      ],
+      "resultado": {
+        "estado": "aceptada",
+        "legibility": "partial",
+        "campos": {
+          "product_name": [
+            "Ibuprofeno"
+          ],
+          "form": [
+            "comprimido"
+          ]
+        },
+        "warnings": [
+          "No se pudo leer la dosis."
+        ],
+        "reading": {
+          "status": "needs_review",
+          "display_name": "Ibuprofeno comprimido",
+          "search_query": "Ibuprofeno",
+          "variant": null,
+          "uncertainties": [
+            "active_ingredient_not_visible",
+            "strength_not_visible",
+            "image_partially_legible"
+          ],
+          "ignored": []
+        }
+      }
+    },
+    {
+      "id": "V4",
+      "titulo": "Imagen sin producto reconocible",
+      "estado": "aceptada",
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "legibility",
+          "esperado": {
+            "igual": "unreadable"
+          },
+          "obtenido": "unreadable",
+          "cumple": true
+        },
+        {
+          "ruta": "campos",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": {},
+          "cumple": true
+        },
+        {
+          "ruta": "reading.status",
+          "esperado": {
+            "igual": "needs_review"
+          },
+          "obtenido": "needs_review",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "es_null": true
+          },
+          "obtenido": null,
+          "cumple": true
+        }
+      ],
+      "resultado": {
+        "estado": "aceptada",
+        "legibility": "unreadable",
+        "campos": {},
+        "warnings": [
+          "No se distingue ningún envase."
+        ],
+        "reading": {
+          "status": "needs_review",
+          "display_name": null,
+          "search_query": null,
+          "variant": null,
+          "uncertainties": [
+            "image_unreadable"
+          ],
+          "ignored": []
+        }
+      }
+    },
+    {
+      "id": "V5",
+      "titulo": "Salida inválida: dos contenidos distintos",
+      "estado": "rechazada",
+      "codigo": "invalid_response",
+      "detalle": "duplicate_attribute:content",
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "rechazada"
+          },
+          "obtenido": "rechazada",
+          "cumple": true
+        },
+        {
+          "ruta": "codigo",
+          "esperado": {
+            "igual": "invalid_response"
+          },
+          "obtenido": "invalid_response",
+          "cumple": true
+        },
+        {
+          "ruta": "detalle",
+          "esperado": {
+            "contiene": "duplicate_attribute:content"
+          },
+          "obtenido": "duplicate_attribute:content",
+          "cumple": true
+        }
+      ]
+    },
+    {
+      "id": "V6",
+      "titulo": "Cantidad visible no es cantidad solicitada",
+      "estado": "aceptada",
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "reading.ignored",
+          "esperado": {
+            "contiene": "visible_quantity_not_a_requested_quantity"
+          },
+          "obtenido": [
+            "visible_quantity_not_a_requested_quantity"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "reading.display_name",
+          "esperado": {
+            "contiene": "Migranol"
+          },
+          "obtenido": "Migranol comprimido recubierto x 10",
+          "cumple": true
+        }
+      ],
+      "resultado": {
+        "estado": "aceptada",
+        "legibility": "clear",
+        "campos": {
+          "product_name": [
+            "Migranol"
+          ],
+          "brand": [
+            "Bagó"
+          ],
+          "form": [
+            "comprimido recubierto"
+          ],
+          "content": [
+            "10"
+          ],
+          "visible_quantity": [
+            "3"
+          ]
+        },
+        "warnings": [],
+        "reading": {
+          "status": "identified",
+          "display_name": "Migranol comprimido recubierto x 10",
+          "search_query": "Migranol",
+          "variant": null,
+          "uncertainties": [
+            "active_ingredient_not_visible",
+            "strength_not_visible"
+          ],
+          "ignored": [
+            "visible_quantity_not_a_requested_quantity"
+          ]
+        }
+      }
+    },
+    {
+      "id": "V7",
+      "titulo": "Foto con dos productos distintos",
+      "estado": "brecha",
+      "detalle": "El esquema actual devuelve un solo objeto con una lista de atributos, no una lista de productos. El caso no se puede cumplir sin cambiar el esquema y el flujo de revisión; queda registrado como pendiente y no se ejecuta en la evaluación offline.",
+      "verificaciones": []
+    },
+    {
+      "id": "O1",
+      "titulo": "Proveedor identificado sin ambigüedad",
+      "estado": "aceptada",
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_kind",
+          "esperado": {
+            "igual": "supplier"
+          },
+          "obtenido": "supplier",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_label",
+          "esperado": {
+            "igual": "Proveedor Norte"
+          },
+          "obtenido": "Proveedor Norte",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.effect",
+          "esperado": {
+            "igual": "prefer"
+          },
+          "obtenido": "prefer",
+          "cumple": true
+        }
+      ],
+      "resultado": {
+        "estado": "aceptada",
+        "preferencias": [
+          {
+            "subject_kind": "supplier",
+            "subject_label": "Proveedor Norte",
+            "effect": "prefer",
+            "tolerance_kind": "none",
+            "price_reference_kind": "none",
+            "price_reference_amount": null,
+            "confidence": 0.92
+          }
+        ],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      }
+    },
+    {
+      "id": "O2",
+      "titulo": "Proveedor ambiguo",
+      "estado": "rechazada",
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "rechazada"
+          },
+          "obtenido": "rechazada",
+          "cumple": true
+        },
+        {
+          "ruta": "codigo",
+          "esperado": {
+            "igual": "ambiguous"
+          },
+          "obtenido": "ambiguous",
+          "cumple": true
+        },
+        {
+          "ruta": "aclaracion",
+          "esperado": {
+            "igual": true
+          },
+          "obtenido": true,
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "resultado": {
+        "estado": "rechazada",
+        "codigo": "ambiguous",
+        "aclaracion": true,
+        "preferencias": [],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      }
+    },
+    {
+      "id": "O3",
+      "titulo": "Intento de cambiar las instrucciones del modelo",
+      "estado": "aceptada",
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": [],
+          "cumple": true
+        },
+        {
+          "ruta": "prompt_neutralizado",
+          "esperado": {
+            "igual": true
+          },
+          "obtenido": true,
+          "cumple": true
+        }
+      ],
+      "resultado": {
+        "estado": "aceptada",
+        "preferencias": [],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": true
+      }
+    },
+    {
+      "id": "O4",
+      "titulo": "Precio inventado que no está en el texto",
+      "estado": "rechazada",
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "rechazada"
+          },
+          "obtenido": "rechazada",
+          "cumple": true
+        },
+        {
+          "ruta": "codigo",
+          "esperado": {
+            "igual": "validation_error"
+          },
+          "obtenido": "validation_error",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "resultado": {
+        "estado": "rechazada",
+        "codigo": "validation_error",
+        "aclaracion": false,
+        "preferencias": [],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      }
+    },
+    {
+      "id": "O5",
+      "titulo": "Precio máximo expresado en el texto",
+      "estado": "aceptada",
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_kind",
+          "esperado": {
+            "igual": "price"
+          },
+          "obtenido": "price",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.price_reference_kind",
+          "esperado": {
+            "igual": "maximum"
+          },
+          "obtenido": "maximum",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.price_reference_amount",
+          "esperado": {
+            "igual": 2100
+          },
+          "obtenido": 2100.0,
+          "cumple": true
+        }
+      ],
+      "resultado": {
+        "estado": "aceptada",
+        "preferencias": [
+          {
+            "subject_kind": "price",
+            "subject_label": "Precio máximo",
+            "effect": "prefer",
+            "tolerance_kind": "none",
+            "price_reference_kind": "maximum",
+            "price_reference_amount": 2100.0,
+            "confidence": 0.9
+          }
+        ],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      }
+    },
+    {
+      "id": "O6",
+      "titulo": "Retiro explícito de una preferencia",
+      "estado": "aceptada",
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "retiros",
+          "esperado": {
+            "contiene": "laboratory"
+          },
+          "obtenido": [
+            "laboratory"
+          ],
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "resultado": {
+        "estado": "aceptada",
+        "preferencias": [],
+        "preferencias_articulo": [],
+        "retiros": [
+          "laboratory"
+        ],
+        "prompt_neutralizado": false
+      }
+    },
+    {
+      "id": "O7",
+      "titulo": "Laboratorio del catálogo sin oferta para este artículo",
+      "estado": "aceptada",
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_kind",
+          "esperado": {
+            "igual": "laboratory"
+          },
+          "obtenido": "laboratory",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias.0.subject_label",
+          "esperado": {
+            "igual": "Laboratorios Andes"
+          },
+          "obtenido": "Laboratorios Andes",
+          "cumple": true
+        }
+      ],
+      "resultado": {
+        "estado": "aceptada",
+        "preferencias": [
+          {
+            "subject_kind": "laboratory",
+            "subject_label": "Laboratorios Andes",
+            "effect": "prefer",
+            "tolerance_kind": "none",
+            "price_reference_kind": "none",
+            "price_reference_amount": null,
+            "confidence": 0.9
+          }
+        ],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      }
+    },
+    {
+      "id": "O8",
+      "titulo": "Texto sin preferencia comercial",
+      "estado": "aceptada",
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": [],
+          "cumple": true
+        },
+        {
+          "ruta": "retiros",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "resultado": {
+        "estado": "aceptada",
+        "preferencias": [],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      }
+    },
+    {
+      "id": "O9",
+      "titulo": "Confianza insuficiente",
+      "estado": "rechazada",
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "rechazada"
+          },
+          "obtenido": "rechazada",
+          "cumple": true
+        },
+        {
+          "ruta": "codigo",
+          "esperado": {
+            "igual": "low_confidence"
+          },
+          "obtenido": "low_confidence",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias",
+          "esperado": {
+            "longitud": 0
+          },
+          "obtenido": [],
+          "cumple": true
+        }
+      ],
+      "resultado": {
+        "estado": "rechazada",
+        "codigo": "low_confidence",
+        "aclaracion": true,
+        "preferencias": [],
+        "preferencias_articulo": [],
+        "retiros": [],
+        "prompt_neutralizado": false
+      }
+    },
+    {
+      "id": "O10",
+      "titulo": "Preferencia entre dos artículos distintos",
+      "estado": "aceptada",
+      "verificaciones": [
+        {
+          "ruta": "estado",
+          "esperado": {
+            "igual": "aceptada"
+          },
+          "obtenido": "aceptada",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias_articulo.0.effect",
+          "esperado": {
+            "igual": "prefer"
+          },
+          "obtenido": "prefer",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias_articulo.0.article_label",
+          "esperado": {
+            "igual": "Losartán 50 mg x 20 comprimidos"
+          },
+          "obtenido": "Losartán 50 mg x 20 comprimidos",
+          "cumple": true
+        },
+        {
+          "ruta": "preferencias_articulo.0.relative_to_article_label",
+          "esperado": {
+            "igual": "Migranol caja 20"
+          },
+          "obtenido": "Migranol caja 20",
+          "cumple": true
+        }
+      ],
+      "resultado": {
+        "estado": "aceptada",
+        "preferencias": [],
+        "preferencias_articulo": [
+          {
+            "article_label": "Losartán 50 mg x 20 comprimidos",
+            "relative_to_article_label": "Migranol caja 20",
+            "effect": "prefer",
+            "confidence": 0.9
+          }
+        ],
+        "retiros": [],
+        "prompt_neutralizado": false
+      }
+    }
+  ]
+}
