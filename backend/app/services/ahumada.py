@@ -26,9 +26,11 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from app.services.connectors.matching import classify_match
+
 AHUMADA_BASE_URL = "https://www.farmaciasahumada.cl"
 CURRENCY = "CLP"
-PARSER_VERSION = "ahumada-html-1"
+PARSER_VERSION = "ahumada-html-2"
 MAX_RESULTS = 24
 MAX_HTML_BYTES = 2_000_000
 DEFAULT_TIMEOUT_SECONDS = 10
@@ -64,6 +66,15 @@ _PER_UNIT_RE = re.compile(
     r"unidades?|un\.?|dosis|ampollas?|sobres?|sachets?)",
     re.IGNORECASE,
 )
+# Precio por unidad de medida (volumen o peso): «$12.900 por litro», «$2.190 por 100 ml».
+# Es un precio de referencia, nunca el precio del envase. A diferencia de las unidades contables,
+# aquí el marcador debe ser «por» o «/»: «x 15 ml» describe la presentación, no una razón.
+_PER_MEASURE_RE = re.compile(
+    r"^\s*[(]?\s*(?:por|/)\s*(?P<cantidad>\d+(?:[.,]\d+)?)?\s*"
+    r"(?P<unidad>litros?|lts?\.?|l|mililitros?|mls?\.?|cc|kilos?|kgs?\.?|kg|gramos?|grs?\.?|g)"
+    r"(?![a-záéíóúñ])",
+    re.IGNORECASE,
+)
 _UNIT_ALIASES = {
     "comp": "comprimido",
     "comp.": "comprimido",
@@ -75,8 +86,38 @@ _UNIT_ALIASES = {
     "tab.": "tableta",
     "un": "unidad",
     "un.": "unidad",
+    # Unidades de medida: se normalizan para que la ficha muestre «por litro», no «por L».
+    "litro": "litro",
+    "litros": "litro",
+    "lt": "litro",
+    "lts": "litro",
+    "lt.": "litro",
+    "lts.": "litro",
+    "l": "litro",
+    "mililitro": "ml",
+    "mililitros": "ml",
+    "ml": "ml",
+    "mls": "ml",
+    "ml.": "ml",
+    "mls.": "ml",
+    "cc": "ml",
+    "kilo": "kg",
+    "kilos": "kg",
+    "kg": "kg",
+    "kgs": "kg",
+    "kg.": "kg",
+    "kgs.": "kg",
+    "gramo": "g",
+    "gramos": "g",
+    "g": "g",
+    "gr": "g",
+    "grs": "g",
+    "gr.": "g",
+    "grs.": "g",
 }
 _SKIP_PRICE_RE = re.compile(r"\b(cuotas?|meses|paga en)\b", re.IGNORECASE)
+# Causa de `classify_match` para una ficha cuyo nombre no confirma ninguna parte de la consulta.
+_UNCONFIRMED = "query_not_confirmed_by_name"
 
 _NAME_CLASSES = ("product-name", "tile-name", "product-title", "pdp-link")
 # En las fichas de Ahumada el laboratorio se publica en el bloque de marca de la tarjeta
@@ -405,6 +446,25 @@ def _description(node: _Node, pid: str, name: str | None) -> str | None:
     return None
 
 
+def _fractional_unit(after: str) -> str | None:
+    """Unidad de una razón publicada justo después de un importe («$82 x Comp.», «$12.900 por litro»).
+
+    Devuelve `None` cuando el importe es del envase. El marcador debe seguir de inmediato al
+    importe: «x 15 ml» de la presentación no convierte el precio en una razón.
+    """
+    count = _PER_UNIT_RE.search(after)
+    if count:
+        unit = _collapse(count.group(1)).lower()
+        return _UNIT_ALIASES.get(unit, unit)
+    measure = _PER_MEASURE_RE.search(after)
+    if measure:
+        unit = _collapse(measure.group("unidad")).lower()
+        unit = _UNIT_ALIASES.get(unit, unit)
+        quantity = (measure.group("cantidad") or "").strip()
+        return f"{quantity} {unit}".strip() if quantity else unit
+    return None
+
+
 def _amounts(text: str) -> list[tuple[str, str | None]]:
     """Devuelve `(importe, unidad_fraccionada)` por cada importe publicado en el texto."""
     found: list[tuple[str, str | None]] = []
@@ -414,11 +474,7 @@ def _amounts(text: str) -> list[tuple[str, str | None]]:
             continue
         amount = str(int(digits))
         after = text[match.end() : match.end() + 50]
-        per_unit = _PER_UNIT_RE.search(after)
-        unit = _collapse(per_unit.group(1)).lower() if per_unit else None
-        if unit:
-            unit = _UNIT_ALIASES.get(unit, unit)
-        found.append((amount, unit))
+        found.append((amount, _fractional_unit(after)))
     return found
 
 
@@ -566,11 +622,19 @@ def parse_search_results(
     *,
     observed_at: datetime | None = None,
     limit: int = MAX_RESULTS,
+    query: str | None = None,
 ) -> list[dict[str, Any]]:
     """Extrae las fichas publicadas de una página de resultados de Ahumada.
 
     No hace red ni persiste nada. Una tarjeta sin nombre o sin URL oficial se omite en lugar de
     completarse con datos de otro producto.
+
+    Con `query` cada ficha declara su relación con lo pedido (`direct` o `related` + causa). La
+    página de resultados de Ahumada puede ser una vitrina de destacados cuando la consulta no
+    existe: si **ninguna** ficha confirma la consulta, la página no es un resultado y se devuelve
+    vacío. Si al menos una confirma, se conservan todas —una ficha de marca legítima («Xumadol»
+    para «paracetamol») no se descarta por no repetir la palabra— y la que no confirma queda como
+    `related`, nunca presentada como coincidencia.
     """
     moment = observed_at or datetime.now(UTC)
     root = _parse_html(html_text)
@@ -579,9 +643,14 @@ def parse_search_results(
         product = _product(node, pid, moment)
         if product is None:
             continue
+        if query:
+            relation, causes = classify_match(query, product["published_name"])
+            product["match"] = {"level": relation, "causes": causes}
         results.append(product)
         if len(results) >= limit:
             break
+    if query and results and all(_UNCONFIRMED in item["match"]["causes"] for item in results):
+        return []
     return results
 
 

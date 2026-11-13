@@ -1916,3 +1916,62 @@ async def test_la_tarjeta_del_proveedor_informa_sus_ofertas_vigentes(api, sessio
     )
     assert detalle.status_code == 200, detalle.text
     assert detalle.json()["offer_count"] == 4
+
+
+async def test_una_oferta_fuera_de_vigencia_no_se_cuenta_como_vigente(api, sessions):
+    """La tarjeta no cuenta como vigente una oferta cuya vigencia terminó.
+
+    Una oferta vencida (`valid_to` pasado) sigue visible como dato histórico en «Ver precios», pero
+    ya no es una oferta vigente: no se cuenta en la tarjeta. El detalle la conserva como
+    referencia con `validity.is_current = false`, y ese precio no entra en agregados, comparación
+    ni cotización.
+    """
+    async with sessions() as s, s.begin():
+        original = await s.get(OfferSnapshot, api.farm["offers"]["A-N"])
+        # `offer_snapshot` es de solo agregar: la vigencia vencida llega como observación nueva.
+        s.add(
+            OfferSnapshot(
+                organization_id=original.organization_id,
+                supplier_id=original.supplier_id,
+                source_id=original.source_id,
+                trade_item_id=original.trade_item_id,
+                external_id=original.external_id,
+                price_amount="2050.00",
+                currency="CLP",
+                price_basis="per_commercial_unit",
+                sale_unit="box",
+                sale_unit_text="caja",
+                stock_status="known",
+                stock_quantity="90",
+                stock_unit="box",
+                tax_included=True,
+                discount_included=True,
+                minimum_known=False,
+                multiple_known=False,
+                observed_at=NOW + timedelta(minutes=2),
+                valid_to=NOW + timedelta(minutes=1),
+                data_origin="simulated",
+            )
+        )
+
+    listado = await api.get("/api/v1/suppliers", headers=H(api))
+    assert listado.status_code == 200, listado.text
+    conteos = {s["name"]: s["offer_count"] for s in listado.json()["suppliers"]}
+    assert conteos["Proveedor Norte"] == 3
+
+    # El detalle E3 conserva la última observación de cada fuente como referencia y la marca
+    # `is_current = false`. No se oculta el dato, pero tampoco se presenta como oferta vigente:
+    # ese precio no entra en agregados, comparación ni cotización.
+    detalle = await api.get(f"/api/v1/articles/{api.farm['items']['a']}", headers=H(api))
+    assert detalle.status_code == 200, detalle.text
+    ofertas = {o["external_id"]: o for o in detalle.json()["offers"]}
+    assert "A-N" in ofertas
+    vencida = ofertas["A-N"]
+    assert vencida["price"]["money"]["amount"] == "2050.00"
+    assert vencida["validity"]["is_current"] is False
+    # Ninguna oferta presentada como vigente lleva el precio de la observación vencida.
+    assert [
+        o
+        for o in ofertas.values()
+        if o["validity"]["is_current"] and o["price"]["money"]["amount"] == "2050.00"
+    ] == []

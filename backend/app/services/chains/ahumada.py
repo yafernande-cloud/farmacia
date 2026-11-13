@@ -27,6 +27,6 @@ async def search(query: str) -> list[dict[str, Any]]:
             url=settings.ahumada_live_search_url,
             timeout_seconds=settings.ahumada_live_search_timeout_seconds,
         )
-        return ahumada.parse_search_results(html_text)
+        return ahumada.parse_search_results(html_text, query=query)
     except ahumada.AhumadaFetchError as exc:
         raise ChainUnavailable("fetch_failed") from exc

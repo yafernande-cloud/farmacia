@@ -248,6 +248,117 @@ def test_limite_de_resultados(results: list[dict]) -> None:
     )) == 2
 
 
+# --- Precio por unidad de medida (regresión QA) ---------------------------------------------
+# Las fichas de abajo son SINTÉTICAS: reproducen la estructura publicada, no una captura del
+# caso reportado. Comprueban la regla, no el dato que originó el informe.
+
+
+def test_el_precio_por_litro_no_se_publica_como_precio_normal() -> None:
+    html = """
+    <div class="product-tile" data-pid="96003">
+      <a href="/producto-96003.html"><h2>Alcohol Etílico 96 Grados 1 L</h2></a>
+      <div class="product-price">
+        <del class="old-price">$218.980 por litro</del>
+        <span class="promo-price">$10.949</span>
+      </div>
+    </div>
+    """
+    product = ahumada.parse_search_results(html)[0]
+    # El precio por litro es una razón publicada: no es «Normal» ni se usa como envase.
+    assert product["price"]["normal"] is None
+    assert product["price"]["promotional"] == {"amount": "10949", "currency": "CLP"}
+    assert product["price"]["fractional"] == {
+        "amount": "218980",
+        "currency": "CLP",
+        "per_unit": "litro",
+    }
+
+
+def test_sin_precio_de_envase_identificable_no_se_inventa_uno() -> None:
+    html = """
+    <div class="product-tile" data-pid="91096">
+      <a href="/producto-91096.html"><h2>Ácido Bórico 100 g</h2></a>
+      <div class="product-price">$218.980 por litro</div>
+    </div>
+    """
+    product = ahumada.parse_search_results(html)[0]
+    assert product["price"]["normal"] is None
+    assert product["price"]["promotional"] is None
+    assert product["price"]["fractional"]["per_unit"] == "litro"
+
+
+def test_la_presentacion_no_es_una_razon_por_unidad_de_medida() -> None:
+    html = """
+    <div class="product-tile" data-pid="2783">
+      <a href="/producto-2783.html"><h2>Paracetamol 100 mg/mL x 15 mL Gotas</h2></a>
+      <div class="product-price">$3.990 x 15 mL</div>
+    </div>
+    """
+    product = ahumada.parse_search_results(html)[0]
+    assert product["price"]["normal"] == {"amount": "3990", "currency": "CLP"}
+    assert product["price"]["fractional"] is None
+
+
+@pytest.mark.parametrize(
+    ("texto", "esperado"),
+    [
+        ("$2.190 por 100 ml", ("2190", "100 ml")),
+        ("$12.900 /litro", ("12900", "litro")),
+        ("$5.990 por kg", ("5990", "kg")),
+        ("$82 x Comp.", ("82", "comprimido")),
+        ("$3.490 por caja", ("3490", None)),
+        ("$1.309 x 15 mL", ("1309", None)),
+    ],
+)
+def test_unidad_fraccionada_reconoce_medidas_y_descarta_la_presentacion(
+    texto: str, esperado: tuple[str, str | None]
+) -> None:
+    assert ahumada._amounts(texto) == [esperado]
+
+
+# --- Relación con la consulta (regresión QA) -------------------------------------------------
+
+
+def test_una_pagina_sin_ninguna_coincidencia_no_es_un_resultado() -> None:
+    """Una vitrina de destacados no se presenta como resultado de la búsqueda."""
+    html = FIXTURE.read_text(encoding="utf-8")
+    assert ahumada.parse_search_results(html, query="acido mefenamico") == []
+    assert ahumada.parse_search_results(html, query="Ácido Mefenámico") == []
+
+
+def test_una_ficha_de_marca_se_conserva_cuando_la_pagina_confirma() -> None:
+    """La ficha que no repite la consulta no se descarta si la página sí la confirma."""
+    html = FIXTURE.read_text(encoding="utf-8")
+    results = ahumada.parse_search_results(html, query="paracetamol")
+    assert {item["chain_item_id"] for item in results} == {"84574", "84575", "70000", "99999"}
+    assert _by_id(results, "84574")["match"] == {
+        "level": "direct",
+        "causes": ["all_query_terms_in_name"],
+    }
+    assert _by_id(results, "84575")["match"] == {
+        "level": "related",
+        "causes": ["query_not_confirmed_by_name"],
+    }
+
+
+def test_la_coincidencia_se_reconoce_con_y_sin_tildes() -> None:
+    # Fixture sintético: comprueba la comparación sin tildes, no el caso reportado.
+    html = """
+    <div class="product-tile" data-pid="140196">
+      <a href="/producto-140196.html"><h2>Ácido Mefenámico 500 mg x 10 Comprimidos</h2></a>
+      <div class="product-price">$2.990</div>
+    </div>
+    """
+    for query in ("acido mefenamico", "Ácido Mefenámico"):
+        results = ahumada.parse_search_results(html, query=query)
+        assert [item["chain_item_id"] for item in results] == ["140196"]
+        assert results[0]["match"]["level"] == "direct"
+
+
+def test_sin_query_el_parser_no_evalua_la_coincidencia(results: list[dict]) -> None:
+    assert all(item["match"] == {"level": "not_evaluated", "causes": []} for item in results)
+
+
 @pytest.mark.asyncio
 async def test_la_fuente_en_vivo_rechaza_url_no_http() -> None:
     with pytest.raises(ahumada.AhumadaFetchError):

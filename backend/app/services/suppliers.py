@@ -10,7 +10,7 @@ import uuid
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.credentials import encrypt_portal_password
@@ -398,6 +398,12 @@ async def _current_offer_count(
 
     Es un dato aditivo para la tarjeta del proveedor. No crea ofertas ni snapshots y no altera
     ninguna importación: cuenta lo que ya se muestra en «Ver precios».
+
+    «Vigente» usa la misma regla que la búsqueda (`valid_from`/`valid_to`): una oferta cuya
+    vigencia terminó se sigue listando como referencia, pero no se cuenta ni se encuentra. Antes
+    la tarjeta la contaba y la búsqueda la excluía, de modo que el mismo número no coincidía.
+    El estado de revisión y la antigüedad de la fuente son dimensiones distintas y no filtran
+    aquí: se informan aparte en cada oferta.
     """
     if not source_ids:
         return 0
@@ -409,7 +415,12 @@ async def _current_offer_count(
         )
         .label("rank")
     )
-    query = select(OfferSnapshot.id.label("offer_id"), rank).where(
+    query = select(
+        OfferSnapshot.id.label("offer_id"),
+        OfferSnapshot.valid_from.label("valid_from"),
+        OfferSnapshot.valid_to.label("valid_to"),
+        rank,
+    ).where(
         OfferSnapshot.organization_id == organization_id,
         OfferSnapshot.supplier_id == supplier_id,
     )
@@ -419,10 +430,19 @@ async def _current_offer_count(
     if run_filter is not None:
         query = query.where(run_filter)
     ranked = query.subquery()
+    # La vigencia se evalúa sobre la última observación de cada SKU, igual que la búsqueda: una
+    # observación vencida no cede su lugar a una anterior de la lista.
+    now = datetime.now(UTC)
     return int(
         (
             await session.execute(
-                select(func.count()).select_from(ranked).where(ranked.c.rank == 1)
+                select(func.count())
+                .select_from(ranked)
+                .where(
+                    ranked.c.rank == 1,
+                    or_(ranked.c.valid_from.is_(None), ranked.c.valid_from <= now),
+                    or_(ranked.c.valid_to.is_(None), ranked.c.valid_to >= now),
+                )
             )
         ).scalar_one()
     )
