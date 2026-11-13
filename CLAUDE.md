@@ -2,6 +2,19 @@
 
 Asistente de compras con IA (demo → producción). Idioma de trabajo y UI: español de Chile.
 
+## Estado de referencia para la entrega
+
+- El [Prompt Maestro](PROMPT_MAESTRO.md) reúne el objetivo, las reglas de negocio y los criterios de
+  aceptación para el desarrollo. [Prompts de la aplicación](prompts/README.md) documenta las versiones
+  de Visión y Observaciones Comerciales.
+- En Telegram se envía una foto por producto. V7 conserva el escenario de varios productos por
+  foto como referencia fuera de alcance y sin ejecutar.
+- La evaluación offline registró 16 de 16 casos evaluables y 60 de 60 comprobaciones con salidas
+  preparadas. La comparación entre versiones con OpenAI sigue pendiente.
+- La migración más reciente del repositorio es `0032`. Para el estado de despliegue informado y el
+  procedimiento, consultar [la guía de Heroku](docs/DEPLOY_HEROKU.md). El backend se publica
+  exclusivamente mediante Manual Deploy por la responsable del proyecto.
+
 ## Fuentes de verdad
 - `docs/Farmacia_Parque_Lantano_HLD_LLD.md`: requisitos, invariantes (§2), AC01–AC40. **No editar**; registrar
   cambios en `docs/decisions/`. Si el prompt del usuario contradice el HLD, rige el usuario y se registra.
@@ -100,8 +113,9 @@ Asistente de compras con IA (demo → producción). Idioma de trabajo y UI: espa
   obligada al auxiliar. Toda unidad/forma nueva = fila en `domain/units.py`/`domain/products.py` + prueba.
 - **Canal/fotos (D-025 a D-036):** sin identidad vigente el mensaje queda pendiente y NUNCA se atribuye solo; el bot no aplica
   cantidades ni compra. Lo leído de una imagen es `inferred` con `origin=image`; la cantidad visible no es cantidad solicitada;
-  laboratorio/fabricante/titular/comercializador son entidades distintas y desconocidas hasta que alguien las diga. La IA solo
-  sugiere (`AIInterpreter`) y no hay proveedor de visión real: todo lo simulado debe decir `simulated`. No declarar que algo se
+  laboratorio/fabricante/titular/comercializador son entidades distintas y desconocidas hasta que alguien las diga. El backend dispone del
+  adaptador de Visión con OpenAI, configurable mediante `VISION_PROVIDER=openai` y `OPENAI_VISION_MODEL`.
+  Identificar las simulaciones como `simulated`. No declarar que algo se
   probó con Telegram real o con visión real si solo se probó con simulador. El token de Telegram nunca en chat/logs/git.
 - **Separación de datos (D-037 a D-047):** simulaciones y pruebas automatizadas SOLO en la organización `simulation` (chats `555000x`); el bot real
   en `real_test`. Nunca usar la organización real por defecto ni vaciar tablas en demos. `data_origin` (simulated/captured/ai_derived) NO es confianza.
